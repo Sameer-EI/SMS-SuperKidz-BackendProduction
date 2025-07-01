@@ -1332,12 +1332,12 @@ class OfficeStaffView(viewsets.ModelViewSet):
     
     def get_permissions(self):
         # Public access to list and retrieve
-        if self.action in ['list', 'retrieve']:
+        if self.action in ['list', 'retrieve', 'update', 'partial_update']:
             return [AllowAny()]
         return [IsAuthenticated()]
 
     # ******************JWT***************
-    @action(detail=False, methods=['get', 'put', 'patch'], url_path='OfficeStaff_my_profile', permission_classes=[IsAuthenticated])
+    @action(detail=False, methods=['get','put', 'patch'], url_path='OfficeStaff_my_profile', permission_classes=[IsAuthenticated])
     def OfficeStaff_my_profile(self, request):
         user = request.user
 
