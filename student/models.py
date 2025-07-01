@@ -32,7 +32,7 @@ class Student(models.Model):
     number_of_siblings = models.IntegerField(null=True, blank=True)
     roll_number = models.CharField(max_length=50, null=True, blank=True) 
     contact_number = models.CharField(max_length=15, null=True, blank=True)
-    scholar_number = models.CharField(max_length=50, unique=True, null=True, blank=True)
+    scholar_number = models.CharField(max_length=50, null=True, blank=True)
 
 
     # Many-to-many relationship with classPeriod
