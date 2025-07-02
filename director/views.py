@@ -1321,6 +1321,7 @@ class TermView(viewsets.ModelViewSet):
 class AdmissionView(viewsets.ModelViewSet):
     queryset = Admission.objects.all()
     serializer_class = AdmissionSerializer
+
     # parser_classes=[MultiPartParser,FormParser]
     
     # ***************OfficeStaffView**************

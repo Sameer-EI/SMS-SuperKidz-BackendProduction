@@ -2,8 +2,8 @@ import random
 import string
 import uuid
 from django.db import models
-# from authentication.models import User
-# from student.models import Student, Guardian,StudentYearLevel
+from authentication.models import User
+from student.models import Student, Guardian,StudentYearLevel
 from .utils import Document_folder 
 from teacher.models import Teacher 
 from django.utils.timezone import now
