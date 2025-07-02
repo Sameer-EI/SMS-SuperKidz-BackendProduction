@@ -1448,13 +1448,46 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         return queryset.distinct()
 
+    # API to submit fee more than a single month
+    # https://187gwsw1-7000.inc1.devtunnels.ms/d/fee-record/submit_single_multi_month_fees/
+    # @action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
+    # def submit_single_multi_month_fees(self, request):
+    #     student_id = request.data.get('student_id')
+    #     months = request.data.get('months', [])
+    #     year_level_fees = request.data.get('year_level_fees', [])
+    #     paid_amount = request.data.get('paid_amount')
+    #     payment_mode = request.data.get('payment_mode')
+    #     remarks = request.data.get('remarks')
+    #     received_by = request.data.get('received_by')
+
+    #     if not months or not isinstance(months, list):
+    #         return Response({"error": "Months must be a non-empty list."}, status=status.HTTP_400_BAD_REQUEST)
+
+    #     responses = []
+    #     for month in months:
+    #         serializer = self.get_serializer(data={
+    #             "student_id": student_id,
+    #             "month": month,
+    #             "year_level_fees": year_level_fees,
+    #             "paid_amount": paid_amount,
+    #             "payment_mode": payment_mode,
+    #             "remarks": f"{remarks or ''} ({month})",
+    #             "received_by": received_by
+    #         })
+    #         if serializer.is_valid():
+    #             serializer.save()
+    #             responses.append(serializer.data)
+    #         else:
+    #             responses.append({"month": month, "errors": serializer.errors})
+
+    #     return Response(responses, status=status.HTTP_200_OK)
     
     @action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
     def submit_single_multi_month_fees(self, request):
         student_id = request.data.get('student_id')
         months = request.data.get('months', [])
         year_level_fees = request.data.get('year_level_fees', [])
-        paid_amount = request.data.get('paid_amount')
+        paid_amount = Decimal(request.data.get('paid_amount', "0.00"))
         payment_mode = request.data.get('payment_mode')
         remarks = request.data.get('remarks')
         received_by = request.data.get('received_by')
@@ -1462,7 +1495,12 @@ class FeeRecordView(viewsets.ModelViewSet):
         if not months or not isinstance(months, list):
             return Response({"error": "Months must be a non-empty list."}, status=status.HTTP_400_BAD_REQUEST)
 
-        responses = []
+        receipt_number = FeeRecord().generate_unique_receipt_number()
+        total_amount = Decimal("0.00")
+        total_late_fee = Decimal("0.00")
+        total_due = Decimal("0.00")
+        saved_records = []
+
         for month in months:
             serializer = self.get_serializer(data={
                 "student_id": student_id,
@@ -1471,15 +1509,45 @@ class FeeRecordView(viewsets.ModelViewSet):
                 "paid_amount": paid_amount,
                 "payment_mode": payment_mode,
                 "remarks": f"{remarks or ''} ({month})",
-                "received_by": received_by
+                "received_by": received_by,
+                "receipt_number": receipt_number  
             })
-            if serializer.is_valid():
-                serializer.save()
-                responses.append(serializer.data)
-            else:
-                responses.append({"month": month, "errors": serializer.errors})
 
-        return Response(responses, status=status.HTTP_200_OK)
+            if serializer.is_valid():
+                instance = serializer.save()
+                total_amount += instance.total_amount
+                total_late_fee += instance.late_fee
+                total_due += instance.due_amount
+                saved_records.append(instance)
+            else:
+                return Response({"month": month, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Use the first record as base
+        first_record = saved_records[0]
+        combined_response = {
+            "id": first_record.id,
+            "student": {
+                "id": first_record.student.id,
+                "name": first_record.student.user.get_full_name()
+            },
+            "months": months,
+            "year_level_fees_grouped": FeeRecordSerializer(first_record).data["year_level_fees_grouped"],
+            "total_amount": f"{total_amount:.2f}",
+            "paid_amount": f"{paid_amount:.2f}",
+            "due_amount": f"{total_due:.2f}",
+            "payment_date": str(date.today()),
+            "payment_mode": payment_mode,
+            "is_cheque_cleared": False,
+            "receipt_number": receipt_number,
+            "late_fee": f"{total_late_fee:.2f}",
+            "payment_status": "Paid" if total_due == 0 else "Unpaid",
+            "remarks": remarks,
+            "received_by": received_by
+        }
+
+        return Response(combined_response, status=status.HTTP_200_OK)
+    
+    
 
     ### Razorpay custom views
     # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/initiate-payment/
@@ -1727,3 +1795,72 @@ class FeeRecordView(viewsets.ModelViewSet):
                 })
 
         return Response(defaulters_list)
+    
+    
+# Added as of 30June25 at 01:46 PM
+# Fee card API for individual student
+    # https://187gwsw1-7000.inc1.devtunnels.ms/d/fee-record/student-fee-card/?student_id=12
+    
+    @action(detail=False, methods=["get"], url_path="student-fee-card")
+    def student_fee_card(self, request):
+        student_id = request.query_params.get("student_id")
+        if not student_id:
+            return Response({"error": "student_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            student = Student.objects.get(id=student_id)
+        except Student.DoesNotExist:
+            return Response({"error": "Student not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Get year level
+        student_year_level = student.student_year_levels.first()
+        year_level_name = student_year_level.level.level_name if student_year_level and student_year_level.level else "N/A"
+
+        # Fetch all fee records
+        fee_qs = FeeRecord.objects.filter(student=student).prefetch_related("year_level_fees__fee_type")
+
+        # Group data by month
+        monthly_data = defaultdict(list)
+        for fee in fee_qs:
+            monthly_data[fee.month].append(fee)
+
+        result = {
+            "student_id": student.id,
+            "student_name": f"{student.user.first_name} {student.user.last_name}",
+            "year_level": year_level_name,
+            "monthly_summary": []
+        }
+
+        for month, fees in monthly_data.items():
+            total_amount = sum((f.total_amount or 0) + (f.late_fee or 0) for f in fees)
+            paid_amount = sum(f.paid_amount or 0 for f in fees)
+            due_amount = max(Decimal("0.00"), total_amount - paid_amount)
+
+            # Type-wise summary
+            type_summary = defaultdict(lambda: {"amount": Decimal("0.00"), "paid": Decimal("0.00")})
+
+            for f in fees:
+                for ylf in f.year_level_fees.all():
+                    fee_type = ylf.fee_type.name if ylf.fee_type else "Unknown"
+                    amount = ylf.amount or 0
+                    share_ratio = amount / f.total_amount if f.total_amount else 0
+
+                    # Split late fee and paid_amount proportionally among all year_level_fees
+                    type_summary[fee_type]["amount"] += amount
+                    type_summary[fee_type]["paid"] += (f.paid_amount or 0) * share_ratio
+
+            result["monthly_summary"].append({
+                "month": month,
+                "total_amount": float(total_amount),
+                # "paid_amount": float(paid_amount),
+                "due_amount": float(due_amount),
+                "fee_type": [
+                    {
+                        "type": ft,
+                        "amount": float(val["amount"]),
+                        # "paid": round(float(val["paid"]), 2)
+                    } for ft, val in type_summary.items()
+                ]
+            })
+
+        return Response(result, status=status.HTTP_200_OK)
