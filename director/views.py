@@ -1318,10 +1318,32 @@ class TermView(viewsets.ModelViewSet):
     serializer_class = TermSerializer
 
 
+from django_filters.rest_framework import DjangoFilterBackend  
+from .filters import AdmissionFilter
 class AdmissionView(viewsets.ModelViewSet):
     queryset = Admission.objects.all()
     serializer_class = AdmissionSerializer
 
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = AdmissionFilter
+
+    search_fields = [
+        "student__user__first_name",
+        "student__user__last_name",
+        "student__user__email",
+        "guardian__user__first_name",
+        "guardian__user__last_name",
+        "tc_letter",
+        "enrollment_no",
+        "previous_school_name",
+    ]
+
+    ordering_fields = [
+        "admission_date",
+        "year_level__level_name",
+        "student__user__first_name",
+        "previous_percentage",
+    ]
     # parser_classes=[MultiPartParser,FormParser]
     
     # ***************OfficeStaffView**************
