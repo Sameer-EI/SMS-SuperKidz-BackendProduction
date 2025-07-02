@@ -3,7 +3,6 @@ from rest_framework.routers import DefaultRouter
 from .views import *
 
 router = DefaultRouter()
-router.register(r'studentattendance', StudentAttendanceViewSet, basename='studentattendance')
 router.register(r'multiple-attendance', MultipleAttendanceViewSet1, basename='MultipleAttendanceViewSet1')
 router.register(r'api/report', AttendanceReportViewSet, basename='attendance-report')
 router.register(r'director-dashboard', DirectorAttendanceDashboard, basename='attendance-text-summary')

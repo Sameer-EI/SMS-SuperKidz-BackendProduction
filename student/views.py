@@ -141,7 +141,7 @@ class StudentView(ModelViewSet):
     
     def get_permissions(self):
         """Public access for list/retrieve; JWT required for others."""
-        if self.action in ['list', 'retrieve','create']:
+        if self.action in ['list', 'retrieve','create','update', 'partial_update']:
             return [AllowAny()]
         return [IsAuthenticated()]
 
@@ -238,7 +238,7 @@ class GuardianProfileView(viewsets.ModelViewSet):
     pagination_class = CreatePagination
     
     def get_permissions(self):
-        if self.action in ['list', 'retrieve','create']:
+        if self.action in ['list', 'retrieve','create','update', 'partial_update']:
             return [AllowAny()]  # Public access
         return [IsAuthenticated()]  # JWT required for update, my-profile, delete
 

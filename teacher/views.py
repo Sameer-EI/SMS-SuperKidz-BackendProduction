@@ -13,7 +13,15 @@ from rest_framework.filters import SearchFilter
 from rest_framework.decorators import action
 from director.models import *
 from django.db.models import Prefetch
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated,BasePermission
+
+
+class IsDirector(BasePermission):
+    def has_permission(self, request, view):
+        return request.user and request.user.is_authenticated and (
+            request.user.is_staff or request.user.is_superuser
+        )
+
 
 
 class TeacherView(viewsets.ModelViewSet):
@@ -26,16 +34,15 @@ class TeacherView(viewsets.ModelViewSet):
     
     # ***************with out JWT******************
     def get_permissions(self):
-        if self.action in ['list', 'create','assign_teacher_details', 'get_all_teacher_assignments']:
-            # Anyone can list all teachers or create a new one
-            permission_classes = [AllowAny]
-        else:
-            # For retrieve, update, partial_update, destroy - only logged in users
-            permission_classes = [IsAuthenticated]
-        return [permission() for permission in permission_classes]
+        if self.action in ['assign_teacher_details', 'get_all_teacher_assignments']:
+            return [IsAuthenticated(), IsDirector()]
+        elif self.action in ['list', 'create', 'retrieve','update', 'partial_update']:
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
     
     
-    @action(detail=False, methods=['post'], url_path='assign-teacher-details',permission_classes=[AllowAny])
+    @action(detail=False, methods=['post'], url_path='assign-teacher-details')
     def assign_teacher_details(self, request):
         teacher_id = request.data.get("teacher_id")
         yearlevel_id = request.data.get("yearlevel_id")
@@ -120,49 +127,51 @@ class TeacherView(viewsets.ModelViewSet):
         }, status=status.HTTP_200_OK)
 
 
-    @action(detail=False, methods=['get'], url_path='all-teacher-assignments',permission_classes=[AllowAny])
+
+
+    @action(detail=False, methods=['get'], url_path='all-teacher-assignments')
     def get_all_teacher_assignments(self, request):
         teachers = Teacher.objects.prefetch_related(
-            'year_levels',  # Fetch the teacher's YearLevel through the ManyToMany relationship
-            'classperiod_set',  # Fetch periods associated with the teacher
-        ).all()
+            'year_levels',
+            'classperiod_set__start_time',
+            'classperiod_set__end_time',
+            'classperiod_set__subject',
+        ).select_related('user')
 
         response_data = []
 
         for teacher in teachers:
-            yearlevel_map = {}
-
-            # Populating the yearlevel_map with available year levels for this teacher
-            for tyl in teacher.year_levels.all():
-                yearlevel_map[tyl.id] = {
-                    "year_level_id": tyl.id,
-                    "year_level_name": tyl.level_name,
+            # Step 1: Build yearlevel map
+            yearlevel_map = {
+                yl.id: {
+                    "year_level_id": yl.id,
+                    "year_level_name": yl.level_name,
                     "periods": []
                 }
+                for yl in teacher.year_levels.all()
+            }
 
-            # Process each period and categorize it into the corresponding year level
+            # Step 2: Assign each period to the FIRST year level from teacher's year_levels
+            year_level_ids = list(yearlevel_map.keys())
+
+            if not year_level_ids:
+                continue  # skip if teacher has no assigned year level
+
+            index = 0  # for round-robin assignment
+
             for period in teacher.classperiod_set.all():
-                matched = False
-                for y_id in yearlevel_map:
-                    # If the period matches a year level, assign it
-                    if not matched:
-                        yearlevel_map[y_id]["periods"].append({
-                            'period_id': period.id,
-                            'period_name': period.name,
-                            'start_time': period.start_time.start_period_time.strftime("%H:%M") if period.start_time else None,
-                            'end_time': period.end_time.end_period_time.strftime("%H:%M") if period.end_time else None,
-                            'subject_id': period.subject.id,
-                            'subject_name': period.subject.subject_name
-                        })
-                        matched = True
-                        break
+                assigned_year_level_id = year_level_ids[index % len(year_level_ids)]
+                yearlevel_map[assigned_year_level_id]["periods"].append({
+                    'period_id': period.id,
+                    'period_name': period.name,
+                    'start_time': period.start_time.start_period_time.strftime("%H:%M") if period.start_time else None,
+                    'end_time': period.end_time.end_period_time.strftime("%H:%M") if period.end_time else None,
+                    'subject_id': period.subject.id,
+                    'subject_name': period.subject.subject_name
+                })
+                index += 1
 
-                # If no match (i.e., the period doesn't belong to any year level), we can skip it or handle it differently.
-                if not matched:
-                    
-                    pass
-
-            # Add the teacher's information to the response data
+            # Step 3: Build teacher assignment response
             response_data.append({
                 'teacher_id': teacher.id,
                 'teacher_name': teacher.user.get_full_name() if teacher.user else str(teacher),
@@ -172,6 +181,18 @@ class TeacherView(viewsets.ModelViewSet):
             })
 
         return Response(response_data, status=status.HTTP_200_OK)
+
+
+
+
+
+    
+
+
+
+
+
+
     
     
     # ********************Jwt get/PUT***************
@@ -193,3 +214,11 @@ class TeacherView(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(teacher)
         return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    
+    
+    # **********************TeacherYearLevelView************************
+class TeacherYearLevelView(viewsets.ModelViewSet):
+    queryset = TeacherYearLevel.objects.all()
+    serializer_class = TeacherYearLevelSerializer
+    

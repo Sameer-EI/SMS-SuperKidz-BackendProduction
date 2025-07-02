@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from . models import Teacher
+from . models import Teacher, TeacherYearLevel
 from authentication . models import User
 from director . models import Role
 from django.db import IntegrityError
@@ -114,3 +114,9 @@ class TeacherSerializer(serializers.ModelSerializer):
         return representation
 
 
+# ******************TeacherYearLevelSerializer***********************************
+class TeacherYearLevelSerializer(serializers.ModelSerializer):
+    class Meta:
+        model =TeacherYearLevel
+        fields ="__all__"
+        

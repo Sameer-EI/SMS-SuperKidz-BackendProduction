@@ -5,6 +5,7 @@ from . views import *
 
 router = DefaultRouter()
 router.register(r'teacher', TeacherView)
+router.register(r'teacheryearlevel', TeacherYearLevelView)
 
 
 

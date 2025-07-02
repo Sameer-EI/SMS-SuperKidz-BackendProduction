@@ -49,6 +49,10 @@ class StudentSerializer(serializers.ModelSerializer):
     weight = serializers.FloatField(required=False, allow_null=True)
     blood_group = serializers.CharField(required=False, allow_null=True)
     number_of_siblings = serializers.IntegerField(required=False, allow_null=True)
+    roll_number = serializers.CharField(required=False, allow_null=True) 
+    contact_number = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    scholar_number = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
 
     # Classes many-to-many
     classes = serializers.PrimaryKeyRelatedField(queryset=ClassPeriod.objects.all(), many=True,required=False,allow_empty=True,default=[])
@@ -58,7 +62,7 @@ class StudentSerializer(serializers.ModelSerializer):
         fields = ['id',
             'first_name', 'middle_name', 'last_name', 'email', 'password', 'user_profile',
             'father_name', 'mother_name', 'date_of_birth', 'gender', 'religion', 'category',
-            'height', 'weight', 'blood_group', 'number_of_siblings', 'classes'
+            'height', 'weight', 'blood_group', 'number_of_siblings', 'roll_number','contact_number','scholar_number','classes'
         ]
 
     def to_representation(self, instance):
@@ -271,10 +275,11 @@ class StudentYearLevelSerializer(serializers.ModelSerializer):
     level_name = serializers.CharField(source='level.level_name', read_only=True)
     year_name = serializers.CharField(source='year.year_name', read_only=True)
     student_id = serializers.IntegerField(source='student.id', read_only=True)  # added as of 24June25 at 04:13 PM
+    student_email = serializers.SerializerMethodField(read_only=True)  # Added email as of 26June25 at 02:07 PM
 
     class Meta:
         model = StudentYearLevel
-        fields = ['id', 'student', 'level', 'year','student_id', 'student_name', 'level_name', 'year_name']
+        fields = ['id', 'student', 'level', 'year','student_id', 'student_name','student_email', 'level_name', 'year_name']
         extra_kwargs = {
             'student': {'write_only': True},
             'level': {'write_only': True},
@@ -285,6 +290,9 @@ class StudentYearLevelSerializer(serializers.ModelSerializer):
         first_name = obj.student.user.first_name or ''
         last_name = obj.student.user.last_name or ''
         return f"{first_name} {last_name}".strip()
+    
+    def get_student_email(self, obj):           #  Added email as of 26June25 at 02:07 PM
+        return obj.student.user.email if obj.student and obj.student.user else ''
 
 
 

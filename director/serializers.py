@@ -138,7 +138,7 @@ class AddressSerializer(serializers.ModelSerializer):
     class Meta:
         model = Address
         fields = [
-            'id', 'user', 'house_no', 'habitation', 'word_no', 'zone_no', 'block', 'district', 'division', 'area_code',
+            'id', 'user', 'house_no', 'habitation', 'ward_no', 'zone_no', 'block', 'district', 'division', 'area_code',
             'country', 'state', 'city', 'address_line',
             'country_name', 'state_name', 'city_name'
         ]
@@ -319,6 +319,7 @@ class DirectorProfileSerializer(serializers.ModelSerializer):
 
 # ***************chnag varilable name *****************************
 class AdmissionSerializer(serializers.ModelSerializer):
+    # enrollment_no = serializers.ReadOnlyField()
     # Use SerializerMethodField to output nested student and guardian data
     student_input = serializers.SerializerMethodField(read_only=True)
     guardian_input = serializers.SerializerMethodField(read_only=True)
@@ -366,8 +367,8 @@ class AdmissionSerializer(serializers.ModelSerializer):
             'guardian_type', 'guardian_type_input',
             'year_level', 'school_year',
             'admission_date', 'previous_school_name', 'previous_standard_studied',
-            'tc_letter', 'emergency_contact_n0', 'entire_road_distance_from_home_to_school',
-            'obtain_marks', 'total_marks', 'previous_percentage',
+            'tc_letter', 'emergency_contact_no', 'entire_road_distance_from_home_to_school',
+            'obtain_marks', 'total_marks', 'previous_percentage','enrollment_no'
         ]
         read_only_fields = [
             'admission_date',
@@ -375,7 +376,8 @@ class AdmissionSerializer(serializers.ModelSerializer):
             'guardian_input',
             'guardian_type',
             'address',
-            'banking_detail'
+            'banking_detail',
+            'enrollment_no'
         ]
 
     def get_student_input(self, obj):
@@ -485,11 +487,12 @@ class AdmissionSerializer(serializers.ModelSerializer):
             tc_letter=validated_data.get('tc_letter'),
             year_level=year_level,
             school_year=school_year,
-            emergency_contact_n0=validated_data.get('emergency_contact_n0'),
+            emergency_contact_no=validated_data.get('emergency_contact_no'),
             entire_road_distance_from_home_to_school=validated_data.get('entire_road_distance_from_home_to_school'),
             obtain_marks=validated_data.get('obtain_marks'),
             total_marks=validated_data.get('total_marks'),
             previous_percentage=validated_data.get('previous_percentage'),
+            enrollment_no=validated_data.get('enrollment_no'),
         )
 
         if guardian_type:
@@ -778,48 +781,6 @@ class FeeRecordSerializer(serializers.ModelSerializer):
             })
         return [{"year_level": yl, "fees": fees} for yl, fees in grouped.items()]
     
-    # def validate(self, data):  # commented as of 26june25 at 12:43 PM
-    #     student = data.get('student')
-    #     month = data.get('month')
-    #     year_level_fees = data.get('year_level_fees', [])
-    #     paid_amount = data.get('paid_amount', 0)
-    #     # total_amount = data.get('total_amount',0)   # Added as of 09June25
-
-    #     # Prevent duplicate fee entry for same student + month
-    #     if self.instance is None:  # Only during creation
-    #         if FeeRecord.objects.filter(student=student, month=month).exists():
-    #             raise serializers.ValidationError(f"Fee already submitted for {month} for this student.")
-
-    #     # Validate fees
-    #     if not year_level_fees:
-    #         raise serializers.ValidationError("At least one year level fee must be selected.")
-
-    #     total = 0
-    #     for fee in year_level_fees:
-    #         total += fee.amount
-
-    #     # caluculate total amount based on year level fee
-    #     data['total_amount'] = total
-
-    #     # calculate late fee, if submitted after 15th
-    #     today = date.today()
-    #     data['late_fee'] = 25 if today.day > 15 else 0
-        
-    #     # corrected late fee logic here as of 26June25 at 12:35 PM
-        
-        
-        
-    #     # calculate due amount
-    #     due = total + data['late_fee'] - paid_amount
-    #     data['due_amount'] = due if due > 0 else 0
-        
-    #     # Determine payment status  commented as of 11June25
-    #     # data['payment_status'] = 'Paid' if data['due_amount'] == 0 else 'Unpaid'
-
-    #     return data               # commented as of 26june25 at 12:43 PM
-    
-    
-
     def validate(self, data):
         student = data.get('student')
         month = data.get('month')  # e.g., 'July'
@@ -833,40 +794,25 @@ class FeeRecordSerializer(serializers.ModelSerializer):
         if not year_level_fees:
             raise serializers.ValidationError("At least one year level fee must be selected.")
 
-        # Calculate total
-        total = sum(fee.amount for fee in year_level_fees)
+        total = 0
+        for fee in year_level_fees:
+            total += fee.amount
+
+        # caluculate total amount based on year level fee
         data['total_amount'] = total
 
-        # --- Late Fee Logic ---
+        # calculate late fee, if submitted after 15th
         today = date.today()
-        month_names = [m[0] for m in FeeRecord.MONTH_CHOICES]
+        data['late_fee'] = 25 if today.day > 15 else 0
         
-        try:
-            selected_month_index = month_names.index(month) + 1
-        except ValueError:
-            raise serializers.ValidationError(f"Invalid month: {month}")
-
-        selected_month_date = date(today.year, selected_month_index, 1)
-        current_month_date = date(today.year, today.month, 1)
-
-        late_fee = 0
-        if selected_month_date < current_month_date:
-            late_fee = 25
-        elif selected_month_date == current_month_date and today.day > 15:
-            late_fee = 25
-
-        data['late_fee'] = late_fee
-        # -------------------------
-
-        due = total + late_fee - paid_amount
+        # calculate due amount
+        due = total + data['late_fee'] - paid_amount
         data['due_amount'] = due if due > 0 else 0
+        
+        # Determine payment status  commented as of 11June25
+        # data['payment_status'] = 'Paid' if data['due_amount'] == 0 else 'Unpaid'
 
         return data
-
-
-    
-    
-    
     
     ### Added this as of 11June25 at 01:39 PM
     def create(self, validated_data):
@@ -919,7 +865,10 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
 
     
     # just added as of 16June25 at 12:29 PM
-    def validate(self, data):
+            # just added as of 16June25 at 12:29 PM
+
+    
+    def validate(self, data):       # corrected late fee logic for advanced fee payment
         student = data.get('student')
         month = data.get('month')
         year_level_fees = data.get('year_level_fees', [])
@@ -931,22 +880,40 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
         if FeeRecord.objects.filter(student=student, month=month).exists():
             raise serializers.ValidationError(f"Fee already submitted for {month} month for this student.")
 
+        # Calculate total fees
         total = sum(fee.amount for fee in year_level_fees)
-        late_fee = Decimal("25.00") if date.today().day > 15 else Decimal("0.00")
+
+        # Calculate late fee based on current or past month logic (same as cash serializer)
+        month_map = {
+            'January': 1, 'February': 2, 'March': 3, 'April': 4,
+            'May': 5, 'June': 6, 'July': 7, 'August': 8,
+            'September': 9, 'October': 10, 'November': 11, 'December': 12
+        }
+        today = date.today()
+        fee_month_num = month_map.get(month)
+
+        if fee_month_num is not None and fee_month_num <= today.month:
+            late_fee = Decimal("25.00") if today.day > 15 else Decimal("0.00")
+        else:
+            late_fee = Decimal("0.00")
+
         due_amount = total + late_fee - paid_amount
 
         data['total_amount'] = total
         data['late_fee'] = late_fee
         data['due_amount'] = due_amount if due_amount > 0 else Decimal("0.00")
 
-        # Extract Razorpay fields explicitly
+        # Set payment status based on due amount
+        data['payment_status'] = 'Paid' if data['due_amount'] == 0 else 'Unpaid'
+
+        # Extract Razorpay fields explicitly from input data
         data['razorpay_order_id'] = self.initial_data.get('razorpay_order_id')
         data['razorpay_payment_id'] = self.initial_data.get('razorpay_payment_id')
         data['razorpay_signature_id'] = self.initial_data.get('razorpay_signature_id')
 
-        return data         # just added as of 16June25 at 12:29 PM
-
+        return data
     
+        
 
     # just commented as of 13June25 at 04:23 PM as it is not saving Razorpay payment id,Razorpay signature id: in the FeeRecord DB
     
