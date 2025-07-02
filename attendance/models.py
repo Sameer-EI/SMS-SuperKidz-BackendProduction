@@ -27,7 +27,7 @@ class StudentAttendance(models.Model):
     student = models.ForeignKey(Student, on_delete=models.CASCADE)
     status = models.CharField(max_length=1, choices=STATUS_CHOICES)
     marked_at = models.DateField()
-    teacher=models.ForeignKey(Teacher,on_delete=models.CASCADE)
+    teacher=models.ForeignKey(Teacher,on_delete=models.CASCADE,null=True,blank=True)
     year_level=models.ForeignKey(YearLevel,on_delete=models.CASCADE)
 
 
