@@ -13,7 +13,15 @@ from rest_framework.filters import SearchFilter
 from rest_framework.decorators import action
 from director.models import *
 from django.db.models import Prefetch
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated,BasePermission
+
+
+class IsDirector(BasePermission):
+    def has_permission(self, request, view):
+        return request.user and request.user.is_authenticated and (
+            request.user.is_staff or request.user.is_superuser
+        )
+
 
 
 class TeacherView(viewsets.ModelViewSet):
@@ -26,16 +34,15 @@ class TeacherView(viewsets.ModelViewSet):
     
     # ***************with out JWT******************
     def get_permissions(self):
-        if self.action in ['list', 'create','assign_teacher_details', 'get_all_teacher_assignments']:
-            # Anyone can list all teachers or create a new one
-            permission_classes = [AllowAny]
-        else:
-            # For retrieve, update, partial_update, destroy - only logged in users
-            permission_classes = [IsAuthenticated]
-        return [permission() for permission in permission_classes]
+        if self.action in ['assign_teacher_details', 'get_all_teacher_assignments']:
+            return [IsAuthenticated(), IsDirector()]
+        elif self.action in ['list', 'create', 'retrieve','update', 'partial_update']:
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
     
     
-    @action(detail=False, methods=['post'], url_path='assign-teacher-details',permission_classes=[AllowAny])
+    @action(detail=False, methods=['post'], url_path='assign-teacher-details')
     def assign_teacher_details(self, request):
         teacher_id = request.data.get("teacher_id")
         yearlevel_id = request.data.get("yearlevel_id")
@@ -120,7 +127,7 @@ class TeacherView(viewsets.ModelViewSet):
         }, status=status.HTTP_200_OK)
 
 
-    @action(detail=False, methods=['get'], url_path='all-teacher-assignments',permission_classes=[AllowAny])
+    @action(detail=False, methods=['get'], url_path='all-teacher-assignments')
     def get_all_teacher_assignments(self, request):
         teachers = Teacher.objects.prefetch_related(
             'year_levels',  # Fetch the teacher's YearLevel through the ManyToMany relationship

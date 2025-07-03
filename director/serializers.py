@@ -138,7 +138,7 @@ class AddressSerializer(serializers.ModelSerializer):
     class Meta:
         model = Address
         fields = [
-            'id', 'user', 'house_no', 'habitation', 'word_no', 'zone_no', 'block', 'district', 'division', 'area_code',
+            'id', 'user', 'house_no', 'habitation', 'ward_no', 'zone_no', 'block', 'district', 'division', 'area_code',
             'country', 'state', 'city', 'address_line',
             'country_name', 'state_name', 'city_name'
         ]
@@ -366,7 +366,7 @@ class AdmissionSerializer(serializers.ModelSerializer):
             'guardian_type', 'guardian_type_input',
             'year_level', 'school_year',
             'admission_date', 'previous_school_name', 'previous_standard_studied',
-            'tc_letter', 'emergency_contact_n0', 'entire_road_distance_from_home_to_school',
+            'tc_letter', 'emergency_contact_no', 'entire_road_distance_from_home_to_school',
             'obtain_marks', 'total_marks', 'previous_percentage',
         ]
         read_only_fields = [
@@ -485,7 +485,7 @@ class AdmissionSerializer(serializers.ModelSerializer):
             tc_letter=validated_data.get('tc_letter'),
             year_level=year_level,
             school_year=school_year,
-            emergency_contact_n0=validated_data.get('emergency_contact_n0'),
+            emergency_contact_no=validated_data.get('emergency_contact_no'),
             entire_road_distance_from_home_to_school=validated_data.get('entire_road_distance_from_home_to_school'),
             obtain_marks=validated_data.get('obtain_marks'),
             total_marks=validated_data.get('total_marks'),

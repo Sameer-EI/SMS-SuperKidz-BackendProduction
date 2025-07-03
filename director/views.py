@@ -65,13 +65,29 @@ def generate_receipt_number():
 #   ---------------------------------------------  Director Dashboard view   ----------------------------------------------------------
 
 
+
 @api_view(["GET"])
 def Director_Dashboard_Summary(request):
+    current_date = datetime.now().date()
 
-    current_year = datetime.now().year
+    # Get current SchoolYear (academic year)
+    current_school_year = (
+        SchoolYear.objects
+        .filter(start_date__lte=current_date, end_date__gte=current_date)
+        .order_by('-start_date')
+        .first()
+    )
+
+    if current_school_year:
+        new_admissions_count = Admission.objects.filter(
+            admission_date__gte=current_school_year.start_date,
+            admission_date__lte=current_school_year.end_date
+        ).count()
+    else:
+        new_admissions_count = 0
 
     summary = {
-        "new_admissions": Admission.objects.filter(admission_date__year=current_year).count(),
+        "new_admissions": new_admissions_count,
         "students": Student.objects.count(),
         "teachers": Teacher.objects.count()
     }
@@ -79,6 +95,7 @@ def Director_Dashboard_Summary(request):
     student_total = summary["students"]
     teacher_total = summary["teachers"]
 
+    # Gender count
     student_male = Student.objects.filter(gender__iexact="Male").count()
     student_female = Student.objects.filter(gender__iexact="Female").count()
 
@@ -98,7 +115,6 @@ def Director_Dashboard_Summary(request):
                 "male": get_percentage(student_male, student_total),
                 "female": get_percentage(student_female, student_total)
             },
-          
         },
         "teachers": {
             "count": {
@@ -109,14 +125,14 @@ def Director_Dashboard_Summary(request):
                 "male": get_percentage(teacher_male, teacher_total),
                 "female": get_percentage(teacher_female, teacher_total)
             },
-            
         }
     }
 
+    # Class-wise strength
     class_data = StudentYearLevel.objects.values("level__level_name").annotate(total=Count("student"))
     class_strength = {entry["level__level_name"]: entry["total"] for entry in class_data}
 
-
+    # Academic Year-wise strength
     school_years = SchoolYear.objects.order_by("start_date")
     students_per_year = OrderedDict()
 
@@ -126,12 +142,12 @@ def Director_Dashboard_Summary(request):
         students_per_year[year_range] = count
 
     return Response({
-      
         "summary": summary,
         "gender_distribution": gender_distribution,
         "class_strength": class_strength,
         "students_per_year": students_per_year
     })
+
 
 
 # ---------------------------------------------------------   Teacher Dashboard View  ----------------------------------------------------------
@@ -176,12 +192,12 @@ def teacher_dashboard(request, id):
 
 
 @api_view(["GET"])
-def guardian_dashboard(request,id=None):
+def guardian_dashboard(request, id=None):
     if not id:
         return Response({"error": "Guardian ID is required"}, status=400)
 
     try:
-        guardian = Guardian.objects.get(id=id)
+        guardian = Guardian.objects.get(user__id=id)  # Corrected line
     except Guardian.DoesNotExist:
         return Response({"error": "Guardian not found"}, status=404)
 
@@ -196,7 +212,8 @@ def guardian_dashboard(request,id=None):
 
         children_data.append({
             "student_name": f"{student.user.first_name} {student.user.last_name}",
-            "class": f"{year_level_info.level.level_name} ({year_level_info.year.year_name})" if year_level_info else "Not Assigned"
+            "class": f"{year_level_info.level.level_name} ({year_level_info.year.year_name})"
+            if year_level_info else "Not Assigned"
         })
 
     return Response({
@@ -205,18 +222,49 @@ def guardian_dashboard(request,id=None):
         "children": children_data
     })
 
+@api_view(["GET"])
+def student_dashboard(request, id=None):
+    if not id:
+        return Response({"error": "Student ID is required"}, status=400)
+
+    try:
+        student = Student.objects.get(user__id=id)
+    except Student.DoesNotExist:
+        return Response({"error": "Student not found"}, status=404)
+
+    year_level_info = StudentYearLevel.objects.filter(student=student).last()
+
+    guardian_links = StudentGuardian.objects.filter(student=student)
+    guardians_data = []
+
+    for link in guardian_links:
+        guardian = link.guardian
+        guardians_data.append({
+            "guardian_name": f"{guardian.user.first_name} {guardian.user.last_name}"
+        })
+
+    return Response({
+        "guardian": guardians_data, 
+        "total_children": 1,
+        "children": [{
+            "student_name": f"{student.user.first_name} {student.user.last_name}",
+            "class": f"{year_level_info.level.level_name} ({year_level_info.year.year_name})"
+            if year_level_info else "Not Assigned"
+        }]
+    })
+
 # --------------------------------------------------------- office Staff Dashboard View  ----------------------------------------------------------
+
 
 
 @api_view(["GET"])
 def office_staff_dashboard(request):
-    
     staff = OfficeStaff.objects.first()
     if not staff or not staff.user:
         return Response({"error": "No office staff found"}, status=404)
 
-    
     current_date = datetime.now().date()
+
     current_year = (
         SchoolYear.objects
         .filter(start_date__lte=current_date, end_date__gte=current_date)
@@ -227,25 +275,39 @@ def office_staff_dashboard(request):
     if not current_year:
         return Response({"error": "Current academic year not found"}, status=404)
 
-    new_admissions = Admission.objects.filter(
-       admission_date__gte=current_year.start_date,
-       admission_date__lte=current_year.end_date
-   ).count()
+    # Academic Year-wise Admissions & Students
+    school_years = SchoolYear.objects.order_by("start_date")
+    admissions_trend = OrderedDict()
+    students_per_year = OrderedDict()
 
-    admission_stats = Admission.objects.values("admission_date__year").annotate(
-       total=Count("id")
-   ).order_by("admission_date__year")
+    for year in school_years:
+        year_range = f"{year.start_date.year}-{year.end_date.year}"
 
-    trend = OrderedDict()
-    for stat in admission_stats:
-        year = stat["admission_date__year"]
-        trend[str(year)] = stat["total"]
+        # Admissions in that academic year
+        admissions_count = Admission.objects.filter(
+            admission_date__gte=year.start_date,
+            admission_date__lte=year.end_date
+        ).count()
+        admissions_trend[year_range] = admissions_count
+
+        # Students enrolled in that academic year
+        students_count = StudentYearLevel.objects.filter(year=year).count()
+        students_per_year[year_range] = students_count
+
+    # Current year admissions
+    new_admissions = admissions_trend.get(
+        f"{current_year.start_date.year}-{current_year.end_date.year}", 0
+    )
+
+    total_admissions = sum(admissions_trend.values())
 
     return Response({
-        "staff_name": f"{staff.user.first_name} {staff.user.last_name}",
+        # "staff_name": f"{staff.user.first_name} {staff.user.last_name}",
         "current_academic_year": f"{current_year.start_date.year}-{current_year.end_date.year}",
         "new_admissions_this_year": new_admissions,
-        "admissions_per_year": trend
+        "admissions_per_year": admissions_trend,
+        "total_admissions": total_admissions,
+        "students_per_year": students_per_year
     })
 
 
@@ -1195,7 +1257,7 @@ class DirectorView(viewsets.ModelViewSet):
     serializer_class = DirectorProfileSerializer
     
     def get_permissions(self):
-        if self.action in ['list', 'retrieve']:
+        if self.action in ['list', 'retrieve','update', 'partial_update']:
             return [AllowAny()]  # Public access
         return [IsAuthenticated()]  # JWT required for others
 
