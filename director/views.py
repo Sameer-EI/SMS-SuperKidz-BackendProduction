@@ -169,28 +169,40 @@ def teacher_dashboard(request, id):
 
     periods = ClassPeriod.objects.filter(teacher=teacher)
     class_data = []
+    seen = set()
 
     for period in periods:
         students = Student.objects.filter(classes=period).distinct()
 
-        # Fetch YearLevel names for these students
+        # ✅ FIXED: Use correct reverse relation from YearLevel
         year_levels = YearLevel.objects.filter(
             studentyearlevel__student__in=students
-        ).distinct().values_list('level_name', flat=True)
+        ).distinct()
 
-        class_data.append({
-            "class_period": period.name,
-            "subject": period.subject.subject_name,
-            "classroom": period.classroom.room_name,
-            "student_count": students.count(),
-             "level_name": ", ".join(year_levels) if year_levels else "N/A"
-        })
+        for level in year_levels:
+            key = (level.id, period.id)
+            if key not in seen:
+                seen.add(key)
+
+                student_count = Student.objects.filter(
+                    student_year_levels__level=level,
+                    classes=period
+                ).distinct().count()
+
+                class_data.append({
+                    "level_name": level.level_name,
+                    "student_count": student_count,
+                    "class_period": period.name,
+                    "subject": period.subject.subject_name,
+                    "classroom": period.classroom.room_name,
+                })
 
     return Response({
         "teacher": f"{teacher.user.first_name} {teacher.user.last_name}",
         "total_classes": periods.count(),
         "class_details": class_data
     })
+
 
 #   -------------------------------------------  Guardian Dashboard  ----------------------------------------------------------
 

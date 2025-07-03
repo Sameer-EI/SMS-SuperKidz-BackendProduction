@@ -7,7 +7,7 @@ from django.db import models
 from .utils import Document_folder 
 from teacher.models import Teacher 
 from django.utils.timezone import now
-
+from student.models import Student, Guardian, StudentYearLevel
 
 
 
