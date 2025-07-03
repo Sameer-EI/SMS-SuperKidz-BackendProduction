@@ -1819,3 +1819,51 @@ class FeeRecordView(viewsets.ModelViewSet):
                 })
 
         return Response(defaulters_list)
+    
+
+
+### --------------------- Income Distribution Dashboard API (Guardian name and student name and id added) --------------------------- ###
+### ------------------- As of 03 JUly at 12:35 --------------- ###   By daniyal
+
+@api_view(["GET"])
+def guardian_income_distribution_with_student(request):
+    # Define updated income brackets
+    brackets = {
+        "Below 1 Lakh": (0, 100000),
+        "1 – 3 Lakhs": (100001, 300000),
+        "3 – 5 Lakhs": (300001, 500000),
+        "5 – 8 Lakhs": (500001, 800000),
+        "8 – 10 Lakhs": (800001, 1000000),
+        "Above 10 Lakhs": (1000001, None),
+    }
+
+    total_guardians = Guardian.objects.exclude(annual_income__isnull=True).count()
+    results = []
+    #---------- Count and guardian filter as it is
+    for label, (min_income, max_income) in brackets.items():
+        if max_income is not None:
+            qs = Guardian.objects.filter(
+                annual_income__gte=min_income,
+                annual_income__lte=max_income
+            )
+        else:
+            qs = Guardian.objects.filter(
+                annual_income__gte=min_income,
+            )  
+        count = qs.count() 
+        guardian_names = [f"{g.user.first_name} {g.user.last_name}" for g in qs]  
+
+        student_data = [f" id:{s.studentguardian.get().student.id} {s.studentguardian.get().student.user.first_name} {s.studentguardian.get().student.user.last_name}" for s in qs]
+
+        percentage = round((count / total_guardians) * 100, 2) if total_guardians > 0 else 0.0
+
+        results.append({
+            "income_range": label,
+            "guardians":guardian_names,
+            "count": count,
+            "percentage": percentage,
+            "student info": student_data
+        })
+        
+    return Response(results, status=status.HTTP_200_OK)
+### -------------------------------------------------------------- ###    

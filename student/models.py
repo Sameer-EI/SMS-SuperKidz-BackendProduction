@@ -99,7 +99,7 @@ class GuardianType(models.Model):
 
 class StudentGuardian(models.Model):
     student = models.ForeignKey(Student, on_delete=models.DO_NOTHING)
-    guardian = models.ForeignKey(Guardian, on_delete=models.DO_NOTHING)
+    guardian = models.ForeignKey(Guardian, on_delete=models.DO_NOTHING,related_name="studentguardian")
     guardian_type = models.ForeignKey(GuardianType, on_delete=models.DO_NOTHING)
 
     def __str__(self):

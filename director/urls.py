@@ -60,6 +60,7 @@ urlpatterns = [
     # As of 25June25 at 12:35
     path('student-category-dashboard/', student_category, name='student-category'),
     path('income-distribution-dashboard/', guardian_income_distribution, name='guardian-income-distribution'), 
+    path('income-distribution-dashboard-student/', guardian_income_distribution_with_student, name='guardian-income-distribution-student'), 
     path("fee-dashboard/", fee_dashboard, name="fee-dashboard-summary"),    # complete dashboard
 ]
 
