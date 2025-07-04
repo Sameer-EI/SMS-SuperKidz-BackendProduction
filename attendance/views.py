@@ -447,8 +447,6 @@ class BulkHolidayAttendanceViewSet(ViewSet):
         start_date_str = request.data.get('start_date')
         end_date_str = request.data.get('end_date')
         title = request.data.get('title', 'Unnamed Holiday')
-        teacher_id = request.data.get('teacher_id')
-
         if not start_date_str or not end_date_str:
             return Response({"error": "Start and end date are required."}, status=400)
 
