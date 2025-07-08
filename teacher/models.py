@@ -9,7 +9,7 @@ class Teacher(models.Model):
     phone_no = models.CharField(max_length=100,null=True,blank=True)
     gender = models.CharField(max_length=50,null=True,blank=True)
     adhaar_no = models.BigIntegerField(null=True,blank=True)
-    pan_no = models.BigIntegerField(null=True,blank=True)
+    pan_no = models.CharField(max_length=50,null=True,blank=True)
     qualification = models.CharField(max_length=250,null=True,blank=True)
 
     year_levels = models.ManyToManyField('director.YearLevel', through='TeacherYearLevel')

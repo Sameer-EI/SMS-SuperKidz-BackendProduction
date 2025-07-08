@@ -1,7 +1,7 @@
 from rest_framework.exceptions import ValidationError
 from rest_framework import serializers
 
-from authentication.models import User
+from authentication.models import ErrorLog, User
 from director.models import Director, OfficeStaff, Role,YearLevel, SchoolYear, ClassPeriod, Director, Guardian
 from director.serializers import RoleSerializer
 from student.models import Guardian, Student, StudentYearLevel
@@ -157,3 +157,11 @@ class ForgotSerializers(serializers.Serializer):
             raise serializers.ValidationError('Passswrod dont match')
         return data
 
+# ******************ErrorLog************************
+
+
+
+class ErrorLogSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ErrorLog
+        fields = '__all__'
