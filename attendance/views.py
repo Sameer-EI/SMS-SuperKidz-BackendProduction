@@ -10,12 +10,9 @@ from django.db.models import Count, Q
 from rest_framework.viewsets import ViewSet
 from teacher.models import TeacherYearLevel
 from student.models import Guardian,StudentGuardian, StudentYearLevel, Student
+from django.shortcuts import get_object_or_404
 
 
-class StudentAttendanceViewSet(ModelViewSet):
-    queryset = StudentAttendance.objects.all()
-    serializer_class = StudentAttendanceSerializer
-    
 
 class MultipleAttendanceViewSet1(ModelViewSet):
     queryset = StudentAttendance.objects.all()
@@ -24,17 +21,16 @@ class MultipleAttendanceViewSet1(ModelViewSet):
     def create(self, request, *args, **kwargs):
         data = request.data
 
-        # ➤ Date Handling
+        # Validate marked_at
         try:
-            marked_at_str = data.get("marked_at", None)
-            if marked_at_str:
-                marked_at = datetime.strptime(marked_at_str, "%Y-%m-%d").date()
-            else:
-                marked_at = date.today()
+            marked_at_str = data.get("marked_at")
+            marked_at = datetime.strptime(marked_at_str, "%Y-%m-%d").date() if marked_at_str else date.today()
+            if marked_at > date.today():
+                return Response({"error": "You cannot mark attendance for a future date."}, status=status.HTTP_400_BAD_REQUEST)
         except ValueError:
             return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ➤ Teacher Check
+        # Validate teacher
         teacher_id = data.get("teacher_id")
         if not teacher_id:
             return Response({"error": "teacher_id is required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -44,58 +40,114 @@ class MultipleAttendanceViewSet1(ModelViewSet):
         except Teacher.DoesNotExist:
             return Response({"error": "Invalid teacher_id."}, status=status.HTTP_404_NOT_FOUND)
 
-        # ➤ Validate All Students First
+        # Validate year level
+        year_level_id = data.get("year_level_id")
+        if not year_level_id:
+            return Response({"error": "year_level_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate presence of at least one status
         allowed_statuses = {'P', 'A', 'L'}
-        conflict_students = []
+        all_student_ids = []
+        status_provided = False
 
         for status_code in allowed_statuses:
             student_ids = data.get(status_code, [])
-            for sid in student_ids:
-                if StudentAttendance.objects.filter(student_id=sid, marked_at=marked_at).exists():
-                    conflict_students.append(sid)
+            if student_ids:
+                if not isinstance(student_ids, list):
+                    return Response({
+                        "error": f"Value for status '{status_code}' must be a list of student IDs."
+                    }, status=status.HTTP_400_BAD_REQUEST)
 
-        # ➤ If Any Conflict Found
-        if conflict_students:
+                # Validate all IDs are integers
+                for sid in student_ids:
+                    if not isinstance(sid, int):
+                        return Response({
+                            "error": f"All student IDs under status '{status_code}' must be integers."
+                        }, status=status.HTTP_400_BAD_REQUEST)
+
+                status_provided = True
+                all_student_ids.extend(student_ids)
+
+        if not status_provided:
             return Response({
-                "error": "Attendance already exists for the following student(s) on this date."
+                "error": "At least one attendance status ('P', 'A', or 'L') with student IDs must be provided."
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # ➤ Proceed with Attendance Creation
+        # Check if attendance already exists
+        already_marked_ids = StudentAttendance.objects.filter(
+            student_id__in=all_student_ids,
+            marked_at=marked_at
+        ).values_list("student_id", flat=True)
+
+        if already_marked_ids:
+            return Response({
+                "error": "Attendance for one or more students already exists on this date.",
+                "student_ids": list(already_marked_ids)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate student assignments
+        invalid_students = []
+        for sid in all_student_ids:
+            try:
+                student = Student.objects.get(id=sid)
+            except Student.DoesNotExist:
+                invalid_students.append(sid)
+                continue
+
+            if not student.student_year_levels.filter(level_id=year_level_id).exists():
+                invalid_students.append(sid)
+
+        if invalid_students:
+            return Response({
+                "error": "Some students are not assigned to the given year level or do not exist.",
+                "student_ids": invalid_students
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Create attendance records
         created_records = []
         for status_code in allowed_statuses:
-            student_ids = data.get(status_code, [])
-            for sid in student_ids:
-                try:
-                    student = Student.objects.get(id=sid)
-                    year_level = student.studentyearlevel_set.last().level
-
-                    attendance = StudentAttendance.objects.create(
-                        student=student,
-                        status=status_code,
-                        marked_at=marked_at,
-                        teacher=teacher,
-                        year_level=year_level
-                    )
-                    created_records.append(attendance)
-                except Student.DoesNotExist:
-                    continue
+            for sid in data.get(status_code, []):
+                student = Student.objects.get(id=sid)
+                attendance = StudentAttendance.objects.create(
+                    student=student,
+                    status=status_code,
+                    marked_at=marked_at,
+                    teacher=teacher,
+                    year_level_id=year_level_id
+                )
+                created_records.append(attendance)
 
         serializer = self.get_serializer(created_records, many=True)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
-
 
 class AttendanceReportViewSet(ReadOnlyModelViewSet):
     serializer_class = StudentAttendanceSerializer
 
     def get_queryset(self):
         queryset = StudentAttendance.objects.select_related('student', 'year_level')
+
         class_name = self.request.query_params.get('class')
         month = self.request.query_params.get('month')
         year = self.request.query_params.get('year')
+        guardian_id = self.request.query_params.get('guardian_id')
+        student_id = self.request.query_params.get('student_id')
 
+        # Filter by guardian_id
+        if guardian_id:
+            student_ids = StudentGuardian.objects.filter(
+                guardian_id=guardian_id
+            ).values_list('student_id', flat=True)
+            queryset = queryset.filter(student_id__in=student_ids)
+
+        # Filter by student_id (overrides guardian filter if both given)
+        if student_id:
+            queryset = queryset.filter(student_id=student_id)
+
+        # Filter by class name
         if class_name:
             queryset = queryset.filter(year_level__level_name__iexact=class_name)
 
+        # Filter by month and year
         if month and year:
             try:
                 month = int(month)
@@ -118,6 +170,7 @@ class AttendanceReportViewSet(ReadOnlyModelViewSet):
             student_id = record.student.id
             student_name = str(record.student)
             date_obj = record.marked_at
+            # Format: 2/7/25 (Tuesday)
             date_str = date_format(date_obj, "j/n/y") + f" ({date_obj.strftime('%A')})"
 
             if student_id not in student_attendance_map:
@@ -173,11 +226,13 @@ class DirectorAttendanceDashboard(ViewSet):
 
 class TeacherAttendanceDashboard(ViewSet):
     def list(self, request):
+        # Get month & year from query params (or use today's values)
         today = date.today()
-        month = today.month
-        year = today.year
+        month = int(request.query_params.get("month", today.month))
+        year = int(request.query_params.get("year", today.year))
 
         class_name = request.query_params.get("class_name")
+
         student_levels = StudentYearLevel.objects.all()
 
         if class_name:
@@ -188,7 +243,7 @@ class TeacherAttendanceDashboard(ViewSet):
         for syl in student_levels:
             attendance_qs = StudentAttendance.objects.filter(student=syl.student)
 
-            # Monthly summary
+            # Monthly summary (filtered)
             monthly = attendance_qs.filter(marked_at__year=year, marked_at__month=month)
             m_present = monthly.filter(status='P').count()
             m_absent = monthly.filter(status='A').count()
@@ -196,7 +251,7 @@ class TeacherAttendanceDashboard(ViewSet):
             m_total = monthly.count()
             m_percentage = (m_present / m_total * 100) if m_total else 0.0
 
-            # Yearly summary
+            # Yearly summary (filtered)
             yearly = attendance_qs.filter(marked_at__year=year)
             y_present = yearly.filter(status='P').count()
             y_absent = yearly.filter(status='A').count()
@@ -205,8 +260,10 @@ class TeacherAttendanceDashboard(ViewSet):
             y_percentage = (y_present / y_total * 100) if y_total else 0.0
 
             result.append({
-                "student_name": str(syl.student),
+                "student_name": f"{syl.student.user.first_name} {syl.student.user.last_name}",
                 "class_name": syl.level.level_name,
+                "filter_month": month,
+                "filter_year": year,
                 "monthly_percentage": round(m_percentage, 1),
                 "yearly_percentage": round(y_percentage, 1),
                 "monthly_summary": {
@@ -223,19 +280,28 @@ class TeacherAttendanceDashboard(ViewSet):
                 }
             })
 
-        return Response(result)   
+        return Response(result)
+
+
 class StudentOwnAttendanceViewSet(ViewSet):
-    def retrieve(self, request, pk=None):  
+    def retrieve(self, request, pk=None):
         today = date.today()
-        month = today.month
-        year = today.year
+        month = int(request.query_params.get("month", today.month))
+        year = int(request.query_params.get("year", today.year))
 
-        try:
-            student_level = StudentYearLevel.objects.get(id=pk)
-        except StudentYearLevel.DoesNotExist:
-            return Response({"error": "Student not found."}, status=404)
+        # Get student by ID
+        student = get_object_or_404(Student, id=pk)
 
-        attendance_qs = StudentAttendance.objects.filter(student=student_level.student)
+        # Get all attendance records
+        attendance_qs = StudentAttendance.objects.filter(student=student)
+
+        # Get latest year_level from attendance
+        latest_attendance = attendance_qs.order_by('-marked_at').first()
+        year_level_name = (
+            latest_attendance.year_level.level_name
+            if latest_attendance and latest_attendance.year_level
+            else "N/A"
+        )
 
         # Monthly summary
         monthly = attendance_qs.filter(marked_at__year=year, marked_at__month=month)
@@ -254,8 +320,10 @@ class StudentOwnAttendanceViewSet(ViewSet):
         y_percentage = (y_present / y_total * 100) if y_total else 0.0
 
         return Response({
-            "student_name": str(student_level.student),
-            "class_name": student_level.level.level_name,
+            "student_name": f"{student.user.first_name} {student.user.last_name}",
+            "year_level": year_level_name,
+            "filter_month": month,
+            "filter_year": year,
             "monthly_percentage": round(m_percentage, 1),
             "yearly_percentage": round(y_percentage, 1),
             "monthly_summary": {
@@ -271,9 +339,10 @@ class StudentOwnAttendanceViewSet(ViewSet):
                 "total_days": y_total
             }
         })
-      
-        
-        
+
+
+
+
 class GuardianChildrenAttendanceViewSet(ViewSet):
     def list(self, request):
         guardian_id = request.query_params.get("guardian_id")
@@ -285,12 +354,13 @@ class GuardianChildrenAttendanceViewSet(ViewSet):
         except Guardian.DoesNotExist:
             return Response({"error": "Guardian not found"}, status=404)
 
+        # Get optional month and year from query params
+        today = date.today()
+        month = int(request.query_params.get("month", today.month))
+        year = int(request.query_params.get("year", today.year))
+
         student_links = StudentGuardian.objects.filter(guardian=guardian)
         children = [link.student for link in student_links]
-
-        today = date.today()
-        current_month = today.month
-        current_year = today.year
 
         response_data = []
 
@@ -303,8 +373,8 @@ class GuardianChildrenAttendanceViewSet(ViewSet):
             # Monthly
             monthly_qs = StudentAttendance.objects.filter(
                 student=student,
-                marked_at__year=current_year,
-                marked_at__month=current_month
+                marked_at__year=year,
+                marked_at__month=month
             )
             m_total = monthly_qs.count()
             m_present = monthly_qs.filter(status='P').count()
@@ -315,7 +385,7 @@ class GuardianChildrenAttendanceViewSet(ViewSet):
             # Yearly
             yearly_qs = StudentAttendance.objects.filter(
                 student=student,
-                marked_at__year=current_year
+                marked_at__year=year
             )
             y_total = yearly_qs.count()
             y_present = yearly_qs.filter(status='P').count()
@@ -327,6 +397,7 @@ class GuardianChildrenAttendanceViewSet(ViewSet):
                 'student_name': f"{student.user.first_name} {student.user.last_name}",
                 'class_name': year_level.level.level_name,
                 'monthly_summary': {
+                    "month": month,
                     "present": m_present,
                     "absent": m_absent,
                     "leave": m_leave,
@@ -334,6 +405,7 @@ class GuardianChildrenAttendanceViewSet(ViewSet):
                     "percentage": f"{m_percent}%"
                 },
                 'yearly_summary': {
+                    "year": year,
                     "present": y_present,
                     "absent": y_absent,
                     "leave": y_leave,
@@ -344,17 +416,27 @@ class GuardianChildrenAttendanceViewSet(ViewSet):
 
         return Response({
             "guardian_id": guardian.id,
+            "filter_month": month,
+            "filter_year": year,
             "total_children": len(response_data),
             "children": response_data
         })
-    
+   
     
     
 class TeacherYearLevelList(APIView):
     def get(self, request, teacher_id):
         levels = TeacherYearLevel.objects.filter(teacher_id=teacher_id).select_related('year_level')
-        data = [{'id': l.year_level.id, 'name': str(l.year_level)} for l in levels]
+        data = [
+            {
+                "teacher_year_level_id": l.id,  # This is the ID of the relation record
+                "year_level_id": l.year_level.id,
+                "year_level_name": str(l.year_level)
+            }
+            for l in levels
+        ]
         return Response(data)
+
     
 class BulkHolidayAttendanceViewSet(ViewSet):
     def list(self, request):
@@ -365,8 +447,6 @@ class BulkHolidayAttendanceViewSet(ViewSet):
         start_date_str = request.data.get('start_date')
         end_date_str = request.data.get('end_date')
         title = request.data.get('title', 'Unnamed Holiday')
-        teacher_id = request.data.get('teacher_id')
-
         if not start_date_str or not end_date_str:
             return Response({"error": "Start and end date are required."}, status=400)
 
@@ -386,12 +466,6 @@ class BulkHolidayAttendanceViewSet(ViewSet):
             end_date=end_date
         )
 
-        # Get Teacher
-        try:
-            teacher = Teacher.objects.get(id=teacher_id)
-        except Teacher.DoesNotExist:
-            return Response({"error": "Teacher not found."}, status=404)
-
         students = Student.objects.all()
         dates = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
 
@@ -405,7 +479,6 @@ class BulkHolidayAttendanceViewSet(ViewSet):
                             student=student,
                             status='H',
                             marked_at=date,
-                            teacher=teacher,
                             year_level=syl.level
                         )
                         count += 1

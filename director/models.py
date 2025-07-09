@@ -2,12 +2,12 @@ import random
 import string
 import uuid
 from django.db import models
-from authentication.models import User
-from student.models import Student, Guardian,StudentYearLevel
+# from authentication.models import User
+# from student.models import Student, Guardian,StudentYearLevel
 from .utils import Document_folder 
 from teacher.models import Teacher 
 from django.utils.timezone import now
-
+from student.models import Student, Guardian, StudentYearLevel
 
 
 
@@ -258,6 +258,7 @@ class Admission(models.Model):
     guardian = models.ForeignKey(Guardian, on_delete=models.DO_NOTHING)
     year_level = models.ForeignKey('YearLevel', on_delete=models.SET_NULL, null=True, blank=True)
     # year_level = models.ForeignKey('YearLevel', on_delete=models.DO_NOTHING)
+
     school_year = models.ForeignKey(SchoolYear, on_delete=models.DO_NOTHING)
     emergency_contact_no = models.CharField(max_length=100)
     entire_road_distance_from_home_to_school = models.CharField(max_length=100)
@@ -368,7 +369,7 @@ class FeeRecord(models.Model):
     late_fee = models.DecimalField(max_digits=8, decimal_places=2)
     payment_status = models.CharField(max_length=20, choices=[('Paid', 'Paid'), ('Unpaid', 'Unpaid')])
     remarks = models.TextField(blank=True, null=True)
-    signature = models.CharField(max_length=100)
+    received_by = models.CharField(max_length=100, null=True,blank=True)      # modified 24June25
     razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)
     razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
     razorpay_signature_id = models.CharField(max_length=255, blank=True, null=True)
