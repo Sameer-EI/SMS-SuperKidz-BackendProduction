@@ -1,7 +1,14 @@
-from django.urls import path
+from django.urls import path,include
 from . import views
 from rest_framework_simplejwt.views import TokenObtainPairView,TokenRefreshView
 from .views import UserView
+
+
+from rest_framework.routers import DefaultRouter
+from .views import  ErrorLogViewSet
+
+router = DefaultRouter()
+router.register(r'error-logs', ErrorLogViewSet, basename='error-logs')
 
 
 
@@ -15,6 +22,7 @@ urlpatterns = [
     path('refreshtoken/',TokenRefreshView.as_view(),name='token_refresh'),
     path("otp/", views.SendOtpView),
     path("reset_password/", views.ForgotPasswordView),
+    path('', include(router.urls)), 
 
 ]
 

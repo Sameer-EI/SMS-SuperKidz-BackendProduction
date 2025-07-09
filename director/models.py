@@ -402,8 +402,8 @@ class FeeRecord(models.Model):
 
 class OfficeStaff(models.Model):
     user = models.OneToOneField("authentication.User", on_delete=models.SET_NULL, null=True)
-    phone_no = models.CharField(max_length=20)
-    gender = models.CharField(max_length=20)
+    phone_no = models.CharField(max_length=20,null=True, blank=True)
+    gender = models.CharField(max_length=20,null=True, blank=True)
     department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True)
     date_joined = models.DateField(auto_now_add=True)
     student = models.ManyToManyField("student.Student", blank=True, related_name="managed_by_staff")
