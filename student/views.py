@@ -7,7 +7,7 @@ from rest_framework.response import Response
 
 from director.models import Address, Role, YearLevel
 
-from .models import GuardianType, Student, StudentYearLevel
+from .models import GuardianType, Student, StudentYearLevel, StudentGuardian
 from .serializers import GuardianTypeSerializer, StudentSerializer, StudentYearLevelSerializer
 from rest_framework import status
 from rest_framework import filters
@@ -16,7 +16,7 @@ from .serializers import GuardianSerializer
 from .models import Guardian
 from director.models import Role
 from rest_framework.filters import SearchFilter
-from rest_framework import viewsets
+from rest_framework import viewsets, permissions
 from .pagination import CreatePagination
 from datetime import date  
 from rest_framework.decorators import action 
@@ -302,4 +302,19 @@ class StudentYearLevelView(viewsets.ModelViewSet):
     
     # combine search endpoint GET /student-year-levels/?level__id=2&search=Nursery
 
-            
+
+# Added as of 18jul25 at 03:04 PM
+
+class StudentGuardianView(viewsets.ModelViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = StudentSerializer  # We only want to show Student info
+
+    def get_queryset(self):
+        user = self.request.user
+        guardian = get_object_or_404(Guardian, user=user)  # safer than direct access
+
+        student_ids = StudentGuardian.objects.filter(
+            guardian=guardian
+        ).values_list('student_id', flat=True)
+
+        return Student.objects.filter(id__in=student_ids)            
