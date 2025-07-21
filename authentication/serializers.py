@@ -1,8 +1,9 @@
 from rest_framework.exceptions import ValidationError
 from rest_framework import serializers
 
-from authentication.models import User
-from director.models import Director, OfficeStaff, Role,YearLevel, SchoolYear, ClassPeriod, Director
+from authentication.models import ErrorLog, User
+from director.models import Director, OfficeStaff, Role,YearLevel, SchoolYear, ClassPeriod, Director, Guardian
+
 from director.serializers import RoleSerializer
 from student.models import Guardian, Student, StudentYearLevel
 from teacher.models import Teacher
@@ -35,40 +36,40 @@ class UserSerializer(serializers.ModelSerializer):
             'password': {'write_only': True},
         }
 
-    # def validate(self, attrs):
-    #     validate_password(attrs["password"])
+    def validate(self, attrs):
+        validate_password(attrs["password"])
 
-    #     role = attrs.get("role")
-    #     if not role:
-    #         raise ValidationError({"role": "This field is required."})
+        role = attrs.get("role")
+        if not role:
+            raise ValidationError({"role": "This field is required."})
 
-    #     role_name = role.name.lower()
+        role_name = role.name.lower()
 
-    #     request = self.context.get("request", None)
-    #     if request is None or not hasattr(request, "user"):
-    #         raise ValidationError({"error": "Request context is missing or invalid."})
+        request = self.context.get("request", None)
+        if request is None or not hasattr(request, "user"):
+            raise ValidationError({"error": "Request context is missing or invalid."})
 
-    #     user = request.user
-    #     if not user.is_authenticated:
-    #          raise ValidationError({"error": "Authentication required to create users."})
+        user = request.user
+        if not user.is_authenticated:
+             raise ValidationError({"error": "Authentication required to create users."})
 
-    #     user_roles = user.role.all()
-    #     user_role = user_roles[0].name.lower() if user_roles else None
+        user_roles = user.role.all()
+        user_role = user_roles[0].name.lower() if user_roles else None
 
-    #     if user_role not in ["director", "office staff"]:
-    #         raise ValidationError({"error": "You are not allowed to create users."})
+        if user_role not in ["director", "office staff"]:
+            raise ValidationError({"error": "You are not allowed to create users."})
 
-    #     if user_role == "office staff" and role_name not in ["student", "guardian"]:
-    #         raise ValidationError({"error": "Office staff can only register students and guardians."})
+        if user_role == "office staff" and role_name not in ["student", "guardian"]:
+            raise ValidationError({"error": "Office staff can only register students and guardians."})
 
-    #     if role_name == "student":
-    #         required_fields = ["year_level", "school_year", "gender", "date_of_birth"]
-    #         # required_fields = ["year_level", "school_year", "gender", "date_of_birth", "enrolment_date"]
-    #         missing_fields = [field for field in required_fields if not attrs.get(field)]
-    #         if missing_fields:
-    #             raise ValidationError({field: "This field is required for students." for field in missing_fields})
+        if role_name == "student":
+            required_fields = ["year_level", "school_year", "gender", "date_of_birth"]
+            # required_fields = ["year_level", "school_year", "gender", "date_of_birth", "enrolment_date"]
+            missing_fields = [field for field in required_fields if not attrs.get(field)]
+            if missing_fields:
+                raise ValidationError({field: "This field is required for students." for field in missing_fields})
 
-    #     return attrs
+        return attrs
 
     def create(self, validated_data):
         role = validated_data.pop("role")
@@ -157,3 +158,11 @@ class ForgotSerializers(serializers.Serializer):
             raise serializers.ValidationError('Passswrod dont match')
         return data
 
+# ******************ErrorLog************************
+
+
+
+class ErrorLogSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ErrorLog
+        fields = '__all__'

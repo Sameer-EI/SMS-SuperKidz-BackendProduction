@@ -61,7 +61,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    'whitenoise.middleware.WhiteNoiseMiddleware',
+    'authentication.middleware.GlobalErrorLoggingMiddleware',
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -72,6 +72,8 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
 
 ]
+APPEND_SLASH = False
+
 
 ROOT_URLCONF = "core.urls"
 
@@ -118,22 +120,6 @@ DATABASES = {
 
 
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.mysql',
-#         'NAME': 'sms',                 # <-- your RDS DB name
-#         'USER': 'admin',               # <-- RDS username
-#         'PASSWORD': 'Noor8102',   # <-- RDS password
-#         'HOST': 'ggcc.c12wiiiiams8.eu-north-1.rds.amazonaws.com',
-#         'PORT': '3306',
-#     }
-# }
-
-
-
-
-
-
 
 
 
@@ -145,6 +131,7 @@ REST_FRAMEWORK = {
     'DEFAULT_FILTER_BACKENDS': [
         'django_filters.rest_framework.DjangoFilterBackend'
     ],
+    'EXCEPTION_HANDLER': 'authentication.exception_handlers.custom_exception_handler', 
 }
 
 
@@ -185,11 +172,7 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.0/howto/static-files/
 
-
-
-STATIC_URL = '/static/'
-STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+STATIC_URL = "static/"
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field

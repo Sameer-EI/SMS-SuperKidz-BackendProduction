@@ -437,18 +437,15 @@ class TeacherYearLevelList(APIView):
         ]
         return Response(data)
 
-
 class BulkHolidayAttendanceViewSet(ViewSet):
     def list(self, request):
         holidays = Holiday.objects.all().order_by('-start_date')
         serializer = HolidaySerializer(holidays, many=True)
         return Response(serializer.data)
-
     def create(self, request):
         start_date_str = request.data.get('start_date')
         end_date_str = request.data.get('end_date')
         title = request.data.get('title', 'Unnamed Holiday')
-
         if not start_date_str or not end_date_str:
             return Response({"error": "Start and end date are required."}, status=400)
 
@@ -479,19 +476,24 @@ class BulkHolidayAttendanceViewSet(ViewSet):
 
         count = 0
         for student in students:
-            syl = StudentYearLevel.objects.filter(student=student).last()
-            if not syl:
+            try:
+                syl = StudentYearLevel.objects.get(student=student)
+                for date in dates:
+                    if not StudentAttendance.objects.filter(student=student, marked_at=date).exists():
+                        StudentAttendance.objects.create(
+                            student=student,
+                            status='H',
+                            marked_at=date,
+                            year_level=syl.level
+                        )
+                        count += 1
+            except StudentYearLevel.DoesNotExist:
                 continue
-            for date in dates:
-                if not StudentAttendance.objects.filter(student=student, marked_at=date).exists():
-                    StudentAttendance.objects.create(
-                        student=student,
-                        status='H',
-                        marked_at=date,
-                        year_level=syl.level
-                    )
-                    count += 1
 
         return Response({
             "message": f"{count} holiday attendance records created from {start_date} to {end_date}."
         }, status=201)
+        
+        
+        
+

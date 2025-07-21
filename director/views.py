@@ -227,7 +227,10 @@ def guardian_dashboard(request, id=None):
         year_level_info = StudentYearLevel.objects.filter(student=student).last()
 
         children_data.append({
+<<<<<<< HEAD
             "student_id": student.id, 
+=======
+>>>>>>> d5cd230de01448c3929235e73eea35e13e4d28fb
             "student_name": f"{student.user.first_name} {student.user.last_name}",
             "class": f"{year_level_info.level.level_name} ({year_level_info.year.year_name})"
             if year_level_info else "Not Assigned"

@@ -113,8 +113,6 @@ class StudentSerializer(serializers.ModelSerializer):
         if user_data['user_profile']:
             user.user_profile = user_data['user_profile']
         user.save()
-        student_role = Role.objects.get(name='student')
-        user.role.add(student_role)
 
         student = Student.objects.create(user=user, **validated_data)
         # student.classes.set(classes_data)
