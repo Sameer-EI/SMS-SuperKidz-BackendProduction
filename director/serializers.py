@@ -781,53 +781,38 @@ class FeeRecordSerializer(serializers.ModelSerializer):
             })
         return [{"year_level": yl, "fees": fees} for yl, fees in grouped.items()]
     
-    
     def validate(self, data):
         student = data.get('student')
-        month = data.get('month')
+        month = data.get('month')  # e.g., 'July'
         year_level_fees = data.get('year_level_fees', [])
         paid_amount = data.get('paid_amount', 0)
 
-        # Prevent duplicate fee entry for same student + month
-        if self.instance is None:  # Only during creation
+        if self.instance is None:
             if FeeRecord.objects.filter(student=student, month=month).exists():
                 raise serializers.ValidationError(f"Fee already submitted for {month} for this student.")
 
-        # Validate fees
         if not year_level_fees:
             raise serializers.ValidationError("At least one year level fee must be selected.")
 
-        # Calculate total amount
         total = 0
         for fee in year_level_fees:
             total += fee.amount
+
+        # caluculate total amount based on year level fee
         data['total_amount'] = total
 
-        # Apply late fee only for current or past months
+        # calculate late fee, if submitted after 15th
         today = date.today()
-        month_map = {
-            'January': 1, 'February': 2, 'March': 3, 'April': 4,
-            'May': 5, 'June': 6, 'July': 7, 'August': 8,
-            'September': 9, 'October': 10, 'November': 11, 'December': 12
-        }
-
-        fee_month_num = month_map.get(month)
-
-        if fee_month_num is not None and (fee_month_num <= today.month):
-            # If the fee is for current/past month and today is after the 15th
-            data['late_fee'] = 25 if today.day > 15 else 0
-        else:
-            data['late_fee'] = 0
-
-        # Calculate due amount
+        data['late_fee'] = 25 if today.day > 15 else 0
+        
+        # calculate due amount
         due = total + data['late_fee'] - paid_amount
         data['due_amount'] = due if due > 0 else 0
         
-        # Set payment status based on due amount
-        data['payment_status'] = 'Paid' if data['due_amount'] == 0 else 'Unpaid'
+        # Determine payment status  commented as of 11June25
+        # data['payment_status'] = 'Paid' if data['due_amount'] == 0 else 'Unpaid'
 
         return data
-
     
     ### Added this as of 11June25 at 01:39 PM
     def create(self, validated_data):

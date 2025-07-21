@@ -437,6 +437,7 @@ class TeacherYearLevelList(APIView):
         ]
         return Response(data)
 
+    
 class BulkHolidayAttendanceViewSet(ViewSet):
     def list(self, request):
         holidays = Holiday.objects.all().order_by('-start_date')
@@ -457,12 +458,6 @@ class BulkHolidayAttendanceViewSet(ViewSet):
 
         if start_date > end_date:
             return Response({"error": "Start date must be before end date."}, status=400)
-
-        # ✅ Check if any holiday already exists in that range
-        if Holiday.objects.filter(
-            Q(start_date__lte=end_date) & Q(end_date__gte=start_date)
-        ).exists():
-            return Response({"error": "Holiday already exists on the given start or end date."}, status=400)
 
         # Save Holiday record
         Holiday.objects.create(
