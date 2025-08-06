@@ -1177,19 +1177,9 @@ class SubjectScoreSerializer(serializers.ModelSerializer):
         fields = ["marks_obtained"]
 
 """----------------------------------------NonScholasticGradeTermWise-------------------------------------------------"""
-# class TermDisplayField(serializers.PrimaryKeyRelatedField):
-#     def display_value(self, instance):
-#         return instance.term_number
 
-#     def to_representation(self, value):
-#         if hasattr(value, 'term'):
-#             return value.term_number
-#         else:
-#             obj = Term.objects.get(pk=value.pk)
-#             return obj.term_number
         
 class NonScholasticGradeTermWiseSerializer(serializers.ModelSerializer):
-    # term = TermDisplayField(queryset=Term.objects.all())
     ALLOWED_GRADES = ["A++", "A+", "A", "B", "C", "D"]
 
     def validate_non_scholastic_subject(self, subject):
@@ -1214,7 +1204,6 @@ class NonScholasticGradeTermWiseSerializer(serializers.ModelSerializer):
 """----------------------------------------PersonalSocialQualityTermWise-------------------------------------------------"""
       
 class PersonalSocialGradeSerializer(serializers.ModelSerializer):
-    # term = TermDisplayField(queryset=Term.objects.all())
 
     ALLOWED_GRADES = ["A++", "A+", "A", "B", "C", "D"]
 
@@ -1228,27 +1217,7 @@ class PersonalSocialGradeSerializer(serializers.ModelSerializer):
         fields = ['id', 'report_card', 'personal_quality', 'term', 'grade']
 
 """----------------------------------------ReportCard-------------------------------------------------"""
-class StandardDisplayField(serializers.PrimaryKeyRelatedField):
-    def display_value(self, instance):
-        return instance.level.level_name
-
-    def to_representation(self, value):
-        if hasattr(value, 'level'):
-            return value.level.level_name
-        else:
-            obj = StudentYearLevel.objects.get(pk=value.pk)
-            return obj.level.level_name
-class YearDisplayField(serializers.PrimaryKeyRelatedField):
-    def display_value(self, instance):
-        return instance.year.year_name
-
-    def to_representation(self, value):
-        if hasattr(value, 'year'):
-            return value.year.year_name
-        else:
-            obj = StudentYearLevel.objects.get(pk=value.pk)
-            return obj.year.year_name
-        
+    
 class ReportCardSerializer(serializers.ModelSerializer):
     PersonalSocialQualityTermWise = PersonalSocialGradeSerializer(many=True, read_only=True)
     subjects = SubjectScoreSerializer(many=True,read_only=True, source='subject_scores')

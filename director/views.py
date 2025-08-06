@@ -2253,7 +2253,7 @@ class ReportCardViewSet(viewsets.ModelViewSet):
         return attendance
 
     def get_promoted_class(self, report_card):
-        division = report_card.division
+        # division = report_card.division
         sup = report_card.supplementary_in
         failed_subjects = [s.strip() for s in ( sup or "").split(",") if s.strip()]
         
