@@ -732,6 +732,23 @@ class YearLevelFeeSerializer(serializers.ModelSerializer):
 
         return list(grouped_fees.values())
 
+# class DiscountedStudentSerializer(serializers.ModelSerializer):
+#     student = serializers.SerializerMethodField()
+#     student_id = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all(), source='student', write_only=True)    
+#     discount_amount = serializers.DecimalField(max_digits=8, decimal_places=2, required=False, default=0.0)
+#     discount_reason = serializers.CharField(required=False)
+#     is_allowed = serializers.BooleanField(default=True, required=False)
+#     created_at = serializers.DateTimeField(read_only=True)
+#     updated_at = serializers.DateTimeField(read_only=True)
+#     class Meta:
+#         model = DiscountedStudent
+#         fields = ['id', 'student', 'student_id', 'discount_amount', 'discount_reason', 'is_allowed', 'created_at', 'updated_at']
+#         read_only_fields = ['created_at', 'updated_at']
+class FeeDiscountSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FeeDiscount
+        fields = ["id","student","admission_fee_discount","tuition_fee_discount","discount_reason","is_allowed","created_at","updated_at",]
+        read_only_fields = ["created_at", "updated_at"]  
 
 
 ### just added to submit fee for multiple months as of 09Jun25 at 06:53 PM
@@ -787,9 +804,16 @@ class FeeRecordSerializer(serializers.ModelSerializer):
         year_level_fees = data.get('year_level_fees', [])
         paid_amount = data.get('paid_amount', 0)
 
+        # if self.instance is None:
+        #     if FeeRecord.objects.filter(student=student, month=month).exists():
+        #         raise serializers.ValidationError(f"Fee already submitted for {month} for this student.")
+
         if self.instance is None:
-            if FeeRecord.objects.filter(student=student, month=month).exists():
-                raise serializers.ValidationError(f"Fee already submitted for {month} for this student.")
+            for fee in year_level_fees:
+                if FeeRecord.objects.filter(student=student, month=month, year_level_fees=fee).exists():
+                    raise serializers.ValidationError(
+                        f"{fee.fee_type.name} of {month} is already submitted for {student}."
+                    )
 
         if not year_level_fees:
             raise serializers.ValidationError("At least one year level fee must be selected.")
@@ -877,8 +901,15 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
         if not year_level_fees:
             raise serializers.ValidationError("At least one year level fee must be selected.")
 
-        if FeeRecord.objects.filter(student=student, month=month).exists():
-            raise serializers.ValidationError(f"Fee already submitted for {month} month for this student.")
+        # if FeeRecord.objects.filter(student=student, month=month).exists():
+        #     raise serializers.ValidationError(f"Fee already submitted for {month} month for this student.")
+
+        if self.instance is None:
+            for fee in year_level_fees:
+                if FeeRecord.objects.filter(student=student, month=month, year_level_fees=fee).exists():
+                    raise serializers.ValidationError(
+                        f"{fee.fee_type.name} of {month} is already submitted for {student}."
+                    )
 
         # Calculate total fees
         total = sum(fee.amount for fee in year_level_fees)
