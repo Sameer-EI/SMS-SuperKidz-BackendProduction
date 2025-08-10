@@ -732,24 +732,15 @@ class YearLevelFeeSerializer(serializers.ModelSerializer):
 
         return list(grouped_fees.values())
 
-# class DiscountedStudentSerializer(serializers.ModelSerializer):
-#     student = serializers.SerializerMethodField()
-#     student_id = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all(), source='student', write_only=True)    
-#     discount_amount = serializers.DecimalField(max_digits=8, decimal_places=2, required=False, default=0.0)
-#     discount_reason = serializers.CharField(required=False)
-#     is_allowed = serializers.BooleanField(default=True, required=False)
-#     created_at = serializers.DateTimeField(read_only=True)
-#     updated_at = serializers.DateTimeField(read_only=True)
-#     class Meta:
-#         model = DiscountedStudent
-#         fields = ['id', 'student', 'student_id', 'discount_amount', 'discount_reason', 'is_allowed', 'created_at', 'updated_at']
-#         read_only_fields = ['created_at', 'updated_at']
+
 class FeeDiscountSerializer(serializers.ModelSerializer):
+    student_name = serializers.SerializerMethodField()
     class Meta:
         model = FeeDiscount
-        fields = ["id","student","admission_fee_discount","tuition_fee_discount","discount_reason","is_allowed","created_at","updated_at",]
+        fields = ["id","student","student_name","admission_fee_discount","tuition_fee_discount","discount_reason","is_allowed","created_at","updated_at",]
         read_only_fields = ["created_at", "updated_at"]  
-
+    def get_student_name(self, obj):
+        return f"{obj.student.user.first_name} {obj.student.user.last_name}".strip()
 
 ### just added to submit fee for multiple months as of 09Jun25 at 06:53 PM
 class FeeRecordSerializer(serializers.ModelSerializer):
@@ -757,7 +748,7 @@ class FeeRecordSerializer(serializers.ModelSerializer):
     student_id = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all(), source='student', write_only=True)
     year_level_fees = serializers.PrimaryKeyRelatedField(queryset=YearLevelFee.objects.all(), many=True, write_only=True)
     year_level_fees_grouped = serializers.SerializerMethodField(read_only=True)
-
+    discounted_amount = serializers.SerializerMethodField()
     total_amount = serializers.DecimalField(max_digits=8, decimal_places=2, read_only=True)
     paid_amount = serializers.DecimalField(max_digits=8, decimal_places=2)
     due_amount = serializers.DecimalField(max_digits=8, decimal_places=2, read_only=True)
@@ -776,7 +767,7 @@ class FeeRecordSerializer(serializers.ModelSerializer):
         model = FeeRecord
         fields = [
             'id', 'student', 'student_id', 'month', 'year_level_fees', 'year_level_fees_grouped',
-            'total_amount', 'paid_amount', 'due_amount', 'payment_date', 'payment_mode', 'is_cheque_cleared','receipt_number',
+            'total_amount', 'paid_amount', 'due_amount','discounted_amount', 'payment_date', 'payment_mode', 'is_cheque_cleared','receipt_number',
             'late_fee', 'payment_status', 'remarks', 'received_by'
         ]
         read_only_fields = ['receipt_number', 'payment_date', 'total_amount', 'due_amount', 'late_fee']

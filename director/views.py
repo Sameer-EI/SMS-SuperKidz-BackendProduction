@@ -3,6 +3,8 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.db.models import Count
 from collections import OrderedDict
+
+from director.permission import IsDirector
 from .serializers import *
 from rest_framework import filters
 from .models import *
@@ -1494,44 +1496,12 @@ class YearLevelFeeView(viewsets.ModelViewSet):
         return Response(grouped_fees[0] if grouped_fees else {})
 
 
-#discount for students
-
-# class DiscountedStudentView(viewsets.ModelViewSet):
-#     queryset = DiscountedStudent.objects.all()
-#     serializer_class = DiscountedStudentSerializer
-#     permission_classes = [IsAuthenticated]  
-
-#     def _check_director_role(self):
-#         user = self.request.user
-#         roles = [role.name.lower() for role in user.role.all()]
-#         if 'director' not in roles:
-#             raise PermissionDenied("Only directors can access discounts.")
-#     def get_queryset(self):
-#         self._check_director_role()
-#         return DiscountedStudent.objects.all()
-#     def perform_create(self, serializer):
-#         self._check_director_role()
-#         serializer.save()
-#     def perform_update(self, serializer):
-#         self._check_director_role()
-#         serializer.save()
-#     def perform_destroy(self, instance):
-#         self._check_director_role()
-#         instance.delete()
+#discount for students-----------
 class FeeDiscountView(viewsets.ModelViewSet):
     queryset = FeeDiscount.objects.all()
     serializer_class = FeeDiscountSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated,IsDirector]
 
-    def _check_director_role(self):
-        roles = [role.name.lower() for role in self.request.user.role.all()]
-        if 'director' not in roles:
-            raise PermissionDenied("Only directors can manage discounts.")
-
-    def initial(self, request, *args, **kwargs):
-        self._check_director_role()
-        return super().initial(request, *args, **kwargs)
-    
 # Fee Record View
 # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/
 class FeeRecordView(viewsets.ModelViewSet):
