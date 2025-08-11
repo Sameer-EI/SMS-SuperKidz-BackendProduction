@@ -734,11 +734,14 @@ class YearLevelFeeSerializer(serializers.ModelSerializer):
 
 
 class FeeDiscountSerializer(serializers.ModelSerializer):
+    student_id = serializers.SerializerMethodField()
     student_name = serializers.SerializerMethodField()
     class Meta:
         model = FeeDiscount
-        fields = ["id","student","student_name","admission_fee_discount","tuition_fee_discount","discount_reason","is_allowed","created_at","updated_at",]
+        fields = ["id","student_id","student_name","admission_fee_discount","tuition_fee_discount","discount_reason","is_allowed","created_at","updated_at",]
         read_only_fields = ["created_at", "updated_at"]  
+    def get_student_id(self, obj):
+        return obj.student.id
     def get_student_name(self, obj):
         return f"{obj.student.user.first_name} {obj.student.user.last_name}".strip()
 
