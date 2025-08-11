@@ -167,7 +167,7 @@ def calculate_subject_summary(subjects_data):
     if not subject_marks:
         return {
             "subject_avg": {
-                "error": "Missing exam data for: SA1, SA2. Both SA1 and SA2 are required."
+                "error": "SA1&SA2 Missing"
             },
             "total_marks": 0,
             "max_marks": 0,
