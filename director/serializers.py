@@ -795,7 +795,6 @@ class FeeRecordSerializer(serializers.ModelSerializer):
             discount = FeeDiscount.objects.get(student=obj.student, is_allowed=True)
         except FeeDiscount.DoesNotExist:
             return "0.00"
-        print("Discount:", discount)
 
         for fee in obj.year_level_fees.all():
             fee_type = fee.fee_type.name.lower()
