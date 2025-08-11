@@ -734,16 +734,37 @@ class YearLevelFeeSerializer(serializers.ModelSerializer):
 
 
 class FeeDiscountSerializer(serializers.ModelSerializer):
-    student_id = serializers.SerializerMethodField()
+    student_id = serializers.PrimaryKeyRelatedField(
+            queryset=Student.objects.all(),
+            source='student'
+        )
     student_name = serializers.SerializerMethodField()
     class Meta:
         model = FeeDiscount
         fields = ["id","student_id","student_name","admission_fee_discount","tuition_fee_discount","discount_reason","is_allowed","created_at","updated_at",]
         read_only_fields = ["created_at", "updated_at"]  
-    def get_student_id(self, obj):
-        return obj.student.id
+    
     def get_student_name(self, obj):
         return f"{obj.student.user.first_name} {obj.student.user.last_name}".strip()
+
+    def validate(self, attrs):
+        student = attrs.get("student")
+
+        # On create: block if any existing record for this student
+        if self.instance is None and FeeDiscount.objects.filter(student=student).exists():
+            raise serializers.ValidationError(
+                {"student_id": f"A discount already exists for this student."}
+            )
+
+        # On update: block if trying to assign to another student that already has a discount
+        if self.instance and student != self.instance.student:
+            if FeeDiscount.objects.filter(student=student).exists():
+                raise serializers.ValidationError(
+                    {"student_id": f"A discount already exists for this student."}
+                )
+
+        return attrs
+
 
 ### just added to submit fee for multiple months as of 09Jun25 at 06:53 PM
 class FeeRecordSerializer(serializers.ModelSerializer):
