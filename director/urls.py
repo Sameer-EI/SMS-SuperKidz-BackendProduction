@@ -31,6 +31,11 @@ router.register(r'year-level-fee', YearLevelFeeView, basename='year-level-fee')
 router.register(r'fee-record', FeeRecordView, basename='fee-record') #
 router.register(r'fee-discounts',FeeDiscountView, basename='fee-discounts')
 
+router.register(r'personal-social-grades', PersonalSocialGradeViewSet, basename='personal-social-grades')
+router.register(r'non-scholastic-grades', NonScholasticGradeViewSet, basename='non-scholastic')
+router.register(r'report-cards', ReportCardViewSet, basename='report-cards')
+
+
 
 urlpatterns = [
     path("year-levels/", YearLevelView),

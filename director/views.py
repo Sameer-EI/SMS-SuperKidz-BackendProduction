@@ -3,6 +3,10 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.db.models import Count
 from collections import OrderedDict
+from attendance.models import StudentAttendance
+from director.permission import RoleBasedPermission
+from director.utils import calculate_subject_summary
+
 
 from director.permission import IsDirector
 from .serializers import *
@@ -13,8 +17,9 @@ from rest_framework .views import APIView       # As of 07May25 at 12:30 PM
 from rest_framework.filters import SearchFilter
 from django.db.models import Sum
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from django.utils.dateparse import parse_date
 
+from rest_framework.exceptions import PermissionDenied
 from django.db.models.functions import Coalesce
 from django.db.models import Sum, DecimalField
 # views.py
@@ -1961,4 +1966,793 @@ class FeeRecordView(viewsets.ModelViewSet):
             })
 
         return Response(result, status=status.HTTP_200_OK)
+
+"""-------------------------------------------RESULT---------------------------------------------------"""
+from rest_framework.exceptions import PermissionDenied
+from collections import defaultdict
+
+class PersonalSocialGradeViewSet(viewsets.ModelViewSet):
+    queryset = PersonalSocialQualityTermWise.objects.all()
+    serializer_class = PersonalSocialGradeSerializer
+    permission_classes = [IsAuthenticated]
+
+    def _save_grade(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def _can_teacher_access_report_card(self, teacher, report_card_id):
+        if not teacher.year_levels.exists():
+            raise PermissionDenied("You are not assigned to any classes.")
+        return ReportCard.objects.filter(
+            id=report_card_id,
+            student_level__level__in=teacher.year_levels.all()
+        ).exists()
+
+    def get_queryset(self):
+        user = self.request.user
+        roles = [role.name for role in user.role.all()]
+        student_id = self.request.query_params.get("student_id")
+
+        qs = PersonalSocialQualityTermWise.objects.all()
+
+        if "office_staff" in roles or "director" in roles:
+            if student_id:
+                qs = qs.filter(report_card__student_level__student__id=student_id)
+            return qs
+
+        elif "teacher" in roles:
+            teacher = getattr(user, "teacher", None)
+            if not teacher:
+                return PersonalSocialQualityTermWise.objects.none()
+
+            if not teacher.year_levels.exists():
+                raise PermissionDenied("You are not assigned to any classes.")
+
+            qs = qs.filter(
+                report_card__student_level__level__in=teacher.year_levels.all()
+            )
+
+            if student_id:
+                qs = qs.filter(report_card__student_level__student__id=student_id)
+
+            return qs
+
+        return PersonalSocialQualityTermWise.objects.none()
+
+    def create(self, request, *args, **kwargs):
+        user = request.user
+        roles = [role.name for role in user.role.all()]
+
+        if "office_staff" in roles or "director" in roles:
+            return self._save_grade(request)
+
+        elif "teacher" in roles:
+            teacher = getattr(user, "teacher", None)
+            report_card_id = request.data.get("report_card")
+
+            if not teacher:
+                return Response({"error": "Teacher profile not found."}, status=400)
+            if not report_card_id:
+                return Response({"error": "report_card ID is required"}, status=400)
+
+            if self._can_teacher_access_report_card(teacher, report_card_id):
+                return self._save_grade(request)
+            else:
+                return Response(
+                    {"error": "You're not authorized to add grades for this report card."},
+                    status=403
+                )
+
+        return Response({"error": "Not allowed for your role."}, status=403)
+
+    def update(self, request, *args, **kwargs):
+        user = request.user
+        roles = [role.name for role in user.role.all()]
+        instance = self.get_object()
+
+        if "office_staff" in roles or "director" in roles:
+            return super().update(request, *args, **kwargs)
+
+        elif "teacher" in roles:
+            teacher = getattr(user, "teacher", None)
+            if not teacher:
+                return Response({"error": "Teacher profile not found."}, status=400)
+
+            report_card = instance.report_card
+            if report_card.student_level.level in teacher.year_levels.all():
+                return super().update(request, *args, **kwargs)
+            else:
+                return Response(
+                    {"error": "Not authorized to update this grade."}, status=403
+                )
+
+        return Response({"error": "Not allowed for your role."}, status=403)
+
+    def destroy(self, request, *args, **kwargs):
+        user = request.user
+        roles = [role.name for role in user.role.all()]
+        instance = self.get_object()
+
+        if "office_staff" in roles or "director" in roles:
+            return super().destroy(request, *args, **kwargs)
+
+        elif "teacher" in roles:
+            teacher = getattr(user, "teacher", None)
+            if not teacher:
+                return Response({"error": "Teacher profile not found."}, status=400)
+
+            report_card = instance.report_card
+            if report_card.student_level.level in teacher.year_levels.all():
+                return super().destroy(request, *args, **kwargs)
+            else:
+                return Response(
+                    {"error": "Not authorized to delete this grade."}, status=403
+                )
+
+        return Response({"error": "Not allowed for your role."}, status=403)
+
+class NonScholasticGradeViewSet(viewsets.ModelViewSet):
+    queryset = NonScholasticGradeTermWise.objects.all()
+    serializer_class = NonScholasticGradeTermWiseSerializer
+    permission_classes = [IsAuthenticated]
+
+    def _save_grade(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def _can_teacher_access_report_card(self, teacher, report_card_id):
+        return ReportCard.objects.filter(
+            id=report_card_id,
+            student_level__level__in=teacher.year_levels.all()
+        ).exists()
+    
+    def get_queryset(self):
+        user = self.request.user
+        roles = [role.name for role in user.role.all()]
+        print("role:",roles)
+        student_id = self.request.query_params.get("student_id")
+
+        if "office_staff" in roles or "director" in roles:
+            qs = NonScholasticGradeTermWise.objects.all()
+            if student_id:
+                qs = qs.filter(report_card__student_level__student__id=student_id)
+            return qs
+
+        elif "teacher" in roles:
+            teacher = getattr(user, "teacher", None)
+            if not teacher:
+                return PersonalSocialQualityTermWise.objects.none()
+
+            if not teacher.year_levels.exists():
+                raise PermissionDenied("You are not assigned to any classes.")
+
+            qs = qs.filter(
+                report_card__student_level__level__in=teacher.year_levels.all()
+            )
+
+            if student_id:
+                qs = qs.filter(report_card__student_level__student__id=student_id)
+
+            return qs
+
+
+        return NonScholasticGradeTermWise.objects.none()
+
+    def create(self, request, *args, **kwargs):
+        user = request.user
+        roles = [role.name for role in user.role.all()]
+
+        if "office_staff" in roles or "director" in roles:
+            return self._save_grade(request)
+
+        elif "teacher" in roles:
+            teacher = getattr(user, "teacher", None)
+            report_card_id = request.data.get("report_card")
+
+            if not teacher:
+                return Response({"error": "Teacher profile not found."}, status=400)
+            if not report_card_id:
+                return Response({"error": "report_card ID is required"}, status=400)
+
+            if self._can_teacher_access_report_card(teacher, report_card_id):
+                return self._save_grade(request)
+            else:
+                return Response({"error": "You're not authorized to add grades for this report card."}, status=403)
+
+        return Response({"error": "Not allowed for your role."}, status=403)
+
+    def update(self, request, *args, **kwargs):
+        user = request.user
+        roles =[role.name for role in user.role.all()]
+
+        instance = self.get_object()
+
+        if "office_staff" in roles or "director" in roles:
+            return super().update(request, *args, **kwargs)
+
+        elif "teacher" in roles:
+            teacher = user.teacher
+            if not teacher:
+                return Response({"error": "Teacher profile not found."}, status=400)
+
+            report_card = instance.report_card
+            if report_card.student_level.level in teacher.year_levels.all():
+                return super().update(request, *args, **kwargs)
+            else:
+                return Response({"error": "Not authorized to update this grade."}, status=403)
+
+        return Response({"error": "Not allowed for your role."}, status=403)
+
+    def destroy(self, request, *args, **kwargs):
+        user = request.user
+        roles = [role.name for role in user.role.all()]
+
+        instance = self.get_object()
+
+        if "office_staff" in roles or "director" in roles:
+            return super().destroy(request, *args, **kwargs)
+
+        elif "teacher" in roles:
+            teacher = user.teacher
+            if not teacher:
+                return Response({"error": "Teacher profile not found."}, status=400)
+
+            report_card = instance.report_card
+            if report_card.student_level.level in teacher.year_levels.all():
+                return super().destroy(request, *args, **kwargs)
+            else:
+                return Response({"error": "Not authorized to delete this grade."}, status=403)
+
+        return Response({"error": "Not allowed for your role."}, status=403)
+
+
+class ReportCardViewSet(viewsets.ModelViewSet):
+    queryset = ReportCard.objects.all()
+    serializer_class = ReportCardSerializer
+    permission_classes = [IsAuthenticated, RoleBasedPermission]
+
+    def get_user_roles(self):
+        user = self.request.user
+        return [role.name for role in user.role.all()]
+
+    def get_queryset(self):
+        user = self.request.user
+        roles = self.get_user_roles()
+
+        student_id = self.request.query_params.get('student_id')
+        standard_filter = self.request.query_params.get('standard')
+        division_filter = self.request.query_params.get('division')
+
+        if student_id:
+            return self.queryset.filter(student_level__student__id=student_id)
+
+        if standard_filter:
+            return self.queryset.filter(student_level__level__level_name=standard_filter)
+        
+        if division_filter:
+            return self.queryset.filter(report_card__division=division_filter)
+
+
+        if 'director' in roles or 'office staff' in roles:
+            return self.queryset
+
+        if 'teacher' in roles:
+            try:
+                teacher = user.teacher
+                return self.queryset.filter(
+                    student_level__level__in=teacher.year_levels.all()
+                )
+            except Teacher.DoesNotExist:
+                return self.queryset.none()
+
+        if 'guardian' in roles:
+            student_ids = StudentGuardian.objects.filter(
+                guardian__user=user
+            ).values_list('student_id', flat=True)
+            return self.queryset.filter(student_level__student__id__in=student_ids)
+
+        if 'student' in roles:
+            return self.queryset.filter(student_level__student__user=user)
+
+        return self.queryset.none()
+
+
+    def get_attendance_string(self, report_card):
+        student_level = report_card.student_level
+        attendance_qs = StudentAttendance.objects.filter(student=student_level.student)
+        present = attendance_qs.filter(status='P').count()
+        total = 230
+        attendance= f"{present}/{total}" 
+        return attendance
+
+    def get_promoted_class(self, report_card):
+        # division = report_card.division
+        sup = report_card.supplementary_in
+        failed_subjects = [s.strip() for s in ( sup or "").split(",") if s.strip()]
+        
+        if failed_subjects:
+            return None
+        
+        # if division=="Fail":
+        #     return None
+            
+        current_level = report_card.student_level.level
+        current_year = report_card.student_level.year
+        student = report_card.student_level.student
+
+        # Try getting the next level
+        next_level = YearLevel.objects.filter(level_order=current_level.level_order + 1).first()
+        if not next_level:
+
+            return None  # Already in the highest class
+        
+        next_year = SchoolYear.objects.filter(start_date__gt=current_year.start_date).order_by('start_date').first()
+        if not current_year or not current_year.start_date:
+            return None
+
+        
+        # Get or create the corresponding StudentYearLevel for next class in same year
+        promoted_to, _ = StudentYearLevel.objects.get_or_create(
+            student=student,
+            level=next_level,
+            year=next_year # or next academic year if needed
+        )
+        return promoted_to 
+
+    def get_document(self, report_card):
+        documents_data = []
+
+        for doc_rel in report_card.documents.select_related("documents").all():
+            document = doc_rel.documents
+            if document:
+                doc_types = list(document.document_types.values_list("name", flat=True))
+                documents_data.append({
+                    "identities": document.identities,
+                    "document_types": doc_types
+                })
+
+        return documents_data
+
+    def get_non_scholastic_data(self,report_card):
+        return [
+            {
+                "subject": item.non_scholastic_subject.subject_name,
+                "term": f"Term {item.term.term_number}",
+                "grade": item.grade
+            }
+            for item in report_card.non_scholastic_grades.select_related("term", "non_scholastic_subject")
+        ]
+        
+    def get_subject_score(self, report_card):
+        from collections import defaultdict
+
+        temp = defaultdict(dict)
+
+        for score in report_card.subject_scores.select_related(
+            "marks_obtained__student",
+            "marks_obtained__subject",
+            "marks_obtained__exam_type"
+        ).all():
+            mark = score.marks_obtained
+            if mark and mark.subject and mark.exam_type:
+                exam_type = mark.exam_type.name.lower()  # normalize to lowercase
+                subject = mark.subject.subject_name
+                temp[exam_type][subject] = float(mark.marks_obtained or 0)
+
+        examwise_subjects = []
+        for exam_type, subjects in temp.items():
+            subject_count = len(subjects)
+            is_fa = exam_type.startswith("fa")  # check if it's FA
+            max_per_subject = 10 if is_fa else 100  # apply correct max marks
+            total = sum(subjects.values())
+            max_marks = subject_count * max_per_subject
+            percentage = round((total / max_marks) * 100, 2) if max_marks else 0
+
+            #  Add grading logic
+            if percentage >= 90:
+                grade = "A+"
+            elif percentage >= 75:
+                grade = "A"
+            elif percentage >= 60:
+                grade = "B"
+            elif percentage >= 50:
+                grade = "C"
+            elif percentage >= 40:
+                grade = "D"
+            else:
+                grade = "F"
+
+            #  Append full exam summary
+            examwise_subjects.append({
+                "exam_type": exam_type,
+                "subjects": subjects,
+                "total": total,
+                "max_marks": max_marks,
+                "percentage": percentage,
+                "grade": grade
+            })
+
+        return examwise_subjects
+
+    def sync_subject_scores(self, report_card):
+        terms = Term.objects.filter(year=report_card.student_level.year)
+
+        student_marks = StudentMarks.objects.filter(
+            student=report_card.student_level,
+            term__in=terms
+        )
+        for mark in student_marks:
+            SubjectScore.objects.get_or_create(report_card=report_card, marks_obtained=mark)
+    
+    def save_documents(self, report_card):
+        student = report_card.student_level.student
+        student_docs = Document.objects.filter(
+            student=student,
+            document_types__isnull=False
+        ).distinct()
+
+        for doc in student_docs:
+            # Only link if not already linked
+            if not ReportCardDocument.objects.filter(report_card=report_card, documents=doc).exists():
+                ReportCardDocument.objects.create(report_card=report_card, documents=doc)
+
+    def save_subject_scores(self, report_card, subjects_data):
+        for subject_data in subjects_data:
+            subject_name = subject_data.get("subject")
+            if not subject_name:
+                continue
+            subject = Subject.objects.get(subject_name=subject_name)
+            for exam_key in ["fa1", "fa2", "fa3", "sa1", "sa2", "sa3"]:
+                marks = subject_data.get(exam_key)
+                if marks is not None:
+                    exam_type = ExamType.objects.get(name__iexact=exam_key.upper())
+                    term = Term.objects.filter(year=report_card.student_level.year.year_name).first()
+                    student_marks = StudentMarks.objects.create(
+                        exam_type=exam_type,
+                        subject=subject,
+                        term=term,
+                        student=report_card.student_level.student,
+                        teacher=Teacher.objects.first(),
+                        marks_obtained=marks
+                    )
+                    SubjectScore.objects.create(
+                        report_card=report_card,
+                        marks_obtained=student_marks
+                    )
+                    # print("RC ID", report_card.id)  
+
+    def save_non_scholastic(self, report_card, grades):
+        for subject_name, values in grades.items():
+            subject = Subject.objects.get(subject_name=subject_name)
+            for term_key, grade in values.items():
+                term = Term.objects.get(name__iexact=term_key)
+                NonScholasticGradeTermWise.objects.create(
+                    report_card=report_card,
+                    non_scholastic_subject=subject,
+                    term=term,
+                    grade=grade
+                )
+
+    def save_personal_social(self, report_card, data):
+        all_qualities = PersonalSocialQuality.objects.all()
+        for term_key, quality_dict in data.items():
+            term_number = 1 if term_key == "Term 1" else 2
+            term = Term.objects.get(term_number=term_number, year=report_card.student_level.year)
+            for quality in all_qualities:
+                grade = quality_dict.get(quality.quality_name)
+                if grade:
+                    NonScholasticGradeTermWise.objects.create(
+                        report_card=report_card,
+                        personal_quality=quality,
+                        term=term,
+                        grade=grade
+                    )
+
+
+
+    def create(self, request, *args, **kwargs):
+        roles = self.get_user_roles()
+        if 'director' not in roles:
+            if 'teacher' in roles:
+                teacher = getattr(request.user, 'teacher', None)
+                student_level_id = request.data.get("student_level")
+                if teacher and student_level_id:
+                    try:
+                        student_level = StudentYearLevel.objects.get(id=student_level_id)
+                        if student_level.level not in teacher.year_levels.all():
+                            return Response({"error": "Permission denied."}, status=403)
+                    except StudentYearLevel.DoesNotExist:
+                        return Response({"error": "Invalid student_level ID."}, status=400)
+                else:
+                    return Response({"error": "Permission denied."}, status=403)
+            else:
+                return Response({"error": "Permission denied."}, status=403)
+            
+        data = request.data.copy()
+        student_level = StudentYearLevel.objects.get(id=data.get("student_level"))
+        student = student_level.student
+        academic_year = student_level.year
+        student_level = StudentYearLevel.objects.get(student=student, year=academic_year)
+
+        existing = ReportCard.objects.filter(student_level=student_level).first()
+        if existing:
+            return Response(
+                {"error": "Report card for this student and academic year already exists."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # STEP 1: Create report_card first with temporary placeholder values
+        report_card = ReportCard.objects.create(
+            student_level=student_level,
+            total_marks=0,
+            max_marks=0,
+            percentage=0.0,
+            grade="F",
+            division="Fail",
+            rank=data.get("rank"),
+            attendance=None,
+            supplementary_in = [],
+            teacher_remark=data.get("teacher_remark"),
+            promoted_to_class= None,#self.get_promoted_class(ReportCard),  
+            school_reopen_date=parse_date(data.get("school_reopen_date"))
+        )
+
+        # STEP 2: Save related data (required for subject score calc)
+        self.save_documents(report_card)
+        self.save_subject_scores(report_card, data.get("subjects", []))
+        self.save_non_scholastic(report_card, data.get("non_scholastic", {}))
+        self.save_personal_social(report_card, data.get("personal_social", {}))
+
+        # STEP 3: Sync marks to SubjectScore and recalculate
+        self.sync_subject_scores(report_card)
+        subjects = self.get_subject_score(report_card)
+        subject_avg = calculate_subject_summary(subjects)
+
+        total_obtained = subject_avg["total_marks"]
+        total_possible = subject_avg["max_marks"]
+        percentage = subject_avg["percentage"]
+        grade = subject_avg["grade"]
+        supplementary_in = ", ".join(subject_avg["supplementary_in"]) if subject_avg["supplementary_in"] else ""
+
+        if percentage >= 60:
+            division = "First"
+        elif percentage >= 50:
+            division = "Second"
+        elif percentage >= 40:
+            division = "Third"
+        else:
+            division = "Fail"
+
+        # STEP 4: Save final calculated fields
+        report_card.attendance = self.get_attendance_string(report_card)
+        report_card.total_marks = total_obtained
+        report_card.max_marks = total_possible
+        report_card.percentage = percentage
+        report_card.grade = grade
+        report_card.division = division
+        report_card.supplementary_in = supplementary_in
+        report_card.promoted_to_class = self.get_promoted_class(report_card)
+        
+        report_card.save()
+
+        return Response(self.build_report_card_response(report_card), status=status.HTTP_201_CREATED)
+    
+    def build_report_card_response(self, report_card):
+        student = report_card.student_level.student
+        user = student.user
+        
+        self.sync_subject_scores(report_card)
+        subjects = self.get_subject_score(report_card)
+
+        subject_avg = calculate_subject_summary(subjects)
+
+        total_obtained = subject_avg["total_marks"]
+        total_possible = subject_avg["max_marks"]
+        percentage = subject_avg["percentage"]
+        grade = subject_avg["grade"]
+        supplementary_in = subject_avg["supplementary_in"]
+
+        if percentage >= 60:
+            division = "First"
+        elif percentage >= 50:
+            division = "Second"
+        elif percentage >= 40:
+            division = "Third"
+        else:
+            division = "Fail"
+
+
+        documents_list = []
+
+        for doc_link in report_card.documents.select_related("documents").all():
+            doc = doc_link.documents
+            if doc and doc.document_types.exists():
+                try:
+                    # Force identities into list if stored as a string
+                    identities = doc.identities
+                    if isinstance(identities, str):
+                        identities = json.loads(identities)
+
+                    if not isinstance(identities, list):
+                        identities = [identities]
+
+                    for doc_type in doc.document_types.all():
+                        documents_list.append({doc_type.name: identities[0] if identities else None})
+
+                except Exception as e:
+                    # fallback when json.loads fails
+                    print("Error parsing identities:", e)
+                    continue
+
+                    
+        non_scholastic = {}
+        for ns_grade in report_card.non_scholastic_grades.select_related("non_scholastic_subject", "term"):
+            subject = ns_grade.non_scholastic_subject.subject_name
+            term = f"Term {ns_grade.term.term_number}"
+            if subject not in non_scholastic:
+                non_scholastic[subject] = {}
+            non_scholastic[subject][term] = ns_grade.grade
+
+        personal_social = [
+            {
+                "quality": psq.personal_quality.quality_name,
+                "term": f"Term {psq.term.term_number}",
+                "grade": psq.grade
+            }
+            for psq in report_card.personal_qualities.select_related("personal_quality", "term")
+        ]
+
+        full_name = " ".join(filter(None, [user.first_name, user.middle_name, user.last_name]))
+
+        return {
+            "id": report_card.id,
+            "student": student.id,
+            "student_name": full_name,
+            "father_name": student.father_name,
+            "mother_name": student.mother_name,
+            "date_of_birth": student.date_of_birth,
+            "contact_number": student.contact_number,
+            "scholar_number": student.scholar_number,
+            "standard": report_card.student_level.level.level_name,
+            "academic_year": report_card.student_level.year.year_name,
+            "total_marks": total_obtained,
+            "max_marks": total_possible,
+            "percentage": percentage,
+            "grade": grade,
+            "division": division,
+            "rank": report_card.rank,
+            "attendance": self.get_attendance_string(report_card),
+            "teacher_remark": report_card.teacher_remark,
+            "supplementary_in": supplementary_in,
+            "promoted_to_class": (report_card.promoted_to_class.level.level_name 
+                if report_card.promoted_to_class and report_card.promoted_to_class.level 
+                else None),
+            "school_reopen_date": report_card.school_reopen_date,
+            "documents": documents_list,
+            "subjects": self.get_subject_score(report_card),
+            "subject_avg": subject_avg["subject_avg"],
+            "non_scholastic": self.get_non_scholastic_data(report_card),
+            "personal_social": personal_social,
+
+        } 
+
+    def retrieve(self, request, *args, **kwargs):
+        report_card = self.get_object()
+        data = self.build_report_card_response(report_card)
+        return Response(data)
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        return Response([self.build_report_card_response(rc) for rc in queryset])
+
+    def update(self, request, *args, **kwargs):
+        roles = self.get_user_roles()
+        if 'director' not in roles:
+            if 'teacher' in roles:
+                teacher = getattr(request.user, 'teacher', None)
+                instance = self.get_object()
+                if not teacher or instance.student_level.level not in teacher.year_levels.all():
+                    return Response({"error": "Permission denied."}, status=403)
+            else:
+                return Response({"error": "Permission denied."}, status=403)
+            
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+        data = request.data
+
+        instance.total_marks = data.get("total_marks", instance.total_marks)
+        instance.max_marks = data.get("max_marks", instance.max_marks)
+        instance.percentage = data.get("percentage", instance.percentage)
+        instance.grade = data.get("grade", instance.grade)
+        instance.division = data.get("division", instance.division)
+        instance.rank = data.get("rank", instance.rank)
+        instance.attendance = data.get("attendance", instance.attendance)
+        instance.teacher_remark = data.get("teacher_remark", instance.teacher_remark)
+        instance.supplementary_in = data.get("supplementary_in", instance.supplementary_in)
+        instance.school_reopen_date = data.get("school_reopen_date", instance.school_reopen_date)
+
+        promoted_id = data.get("promoted_to_class")
+        if promoted_id:
+            instance.promoted_to_class_id = promoted_id
+
+        instance.save()
+
+        subjects_data = data.get("subjects", [])
+        if subjects_data:
+            instance.subject_scores.all().delete()
+            for sub in subjects_data:
+                subject_name = sub.get("subject")
+                exam_type = sub.get("exam_type")
+                marks = sub.get("marks")
+                try:
+                    subject_obj = Subject.objects.get(subject_name=subject_name)
+                    exam_type_obj = ExamType.objects.get(name=exam_type)
+                    student_mark = StudentMarks.objects.create(
+                        student=instance.student,
+                        subject=subject_obj,
+                        exam_type=exam_type_obj,
+                        marks_obtained=marks,
+                        term=Term.objects.filter(year=instance.academic_year.year).first()
+                    )
+                    SubjectScore.objects.create(report_card=instance, marks_obtained=student_mark)
+                except Exception as e:
+                    print("Subject Update Error:", e)
+
+
+        documents_data = data.get("documents", {})
+        if documents_data:
+            # Clear existing linked documents
+            instance.documents.all().delete()
+
+            #  Fetch all documents related to the same student
+            student_docs = Document.objects.filter(student=instance.student_level.student)
+
+            #  Link all of them to the report card
+            for doc in student_docs:
+                ReportCardDocument.objects.create(
+                    report_card=instance,
+                    documents=doc
+                )
+
+
+        non_scholastic_data = data.get("non_scholastic", {})
+        if non_scholastic_data:
+            instance.non_scholastic_grades.all().delete()
+            for subject_name, terms in non_scholastic_data.items():
+                subject_obj = Subject.objects.get(subject_name=subject_name)
+                for term_name, grade in terms.items():
+                    term_obj = Term.objects.get(term_number=term_name)
+                    NonScholasticGradeTermWise.objects.create(
+                        report_card=instance,
+                        non_scholastic_subject=subject_obj,
+                        term=term_obj,
+                        grade=grade
+                    )
+
+        personal_data = data.get("personal_social", [])
+        if personal_data:
+            instance.personal_qualities.all().delete()
+            for item in personal_data:
+                quality = item.get("quality")
+                term = item.get("term")
+                grade = item.get("grade")
+                try:
+                    quality_obj = PersonalSocialQuality.objects.get(quality_name=quality)
+                    term_obj = Term.objects.get(term_number=term)
+                    PersonalSocialQualityTermWise.objects.create(
+                        report_card=instance,
+                        personal_quality=quality_obj,
+                        term=term_obj,
+                        grade=grade
+                    )
+                except Exception as e:
+                    print("PSQ Update Error:", e)
+
+        return self.retrieve(request, *args, **kwargs)
+
+
     
