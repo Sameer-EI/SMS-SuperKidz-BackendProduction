@@ -5,10 +5,11 @@ from . views import *
 
 router = DefaultRouter()
 router.register(r'teacher', TeacherView)
-router.register(r'teacheryearlevel', TeacherYearLevelView)
-
-
+router.register(r'teacheryearlevel', TeacherYearLevelView, basename='teacheryearlevel')
 
 urlpatterns = [
-    path('', include(router.urls)),   
+    path('', include(router.urls)),
+    path('all-teachers/', AllTeachersWithYearLevelsAPIView.as_view()),
+    path('teacher-attendance/', TeacherAttendanceAPIView.as_view(), name='teacher-attendance'),
+    # path('teacheryearlevel/', TeacherYearLevelView.as_view())
 ]

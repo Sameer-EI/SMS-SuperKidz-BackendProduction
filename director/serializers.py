@@ -42,11 +42,8 @@ class ClassRoomTypeSerializer(serializers.ModelSerializer):
         model = ClassRoomType
         fields = "__all__"
         
-        
-class ClassPeriodSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ClassPeriod
-        fields = "__all__"        
+ 
+    
 
 
 class BankingDetailsSerializer(serializers.ModelSerializer):
@@ -621,6 +618,56 @@ class AdmissionSerializer(serializers.ModelSerializer):
 # As of 05May25 at 01:00 PM
 
 
+# class ClassPeriodSerializer(serializers.ModelSerializer):
+#     # Extra fields for the custom POST action
+#     year_level_name = serializers.CharField(write_only=True, required=False)
+#     class_period_names = serializers.ListField(
+#         child=serializers.CharField(), write_only=True, required=False
+#     )
+
+#     class Meta:
+#         model = ClassPeriod
+#         fields = [
+#             'id', 'subject', 'teacher', 'term',
+#             'start_time', 'end_time', 'classroom', 'name',
+#             'year_level', 'year_level_name', 'class_period_names'
+#         ]
+
+#     def to_representation(self, instance):
+#         representation = super().to_representation(instance)
+#         representation['start_time'] = instance.start_time.start_period_time.strftime('%I:%M %p')
+#         representation['end_time'] = instance.end_time.end_period_time.strftime('%I:%M %p')
+#         return representation
+
+#     def create(self, validated_data):
+#         # Handle assignment logic only if year_level_name and class_period_names are present
+#         year_level_name = validated_data.pop('year_level_name', None)
+#         class_period_names = validated_data.pop('class_period_names', None)
+
+#         if year_level_name and class_period_names:
+#             try:
+#                 year_level = YearLevel.objects.get(level_name=year_level_name)
+#             except YearLevel.DoesNotExist:
+#                 raise serializers.ValidationError("Invalid YearLevel name.")
+
+#             class_periods = ClassPeriod.objects.filter(name__in=class_period_names)
+#             if class_periods.count() != len(class_period_names):
+#                 raise serializers.ValidationError("Some ClassPeriod names are invalid.")
+
+#             student_ids = StudentYearLevel.objects.filter(level=year_level).values_list("student_id", flat=True)
+#             students = Student.objects.filter(id__in=student_ids)
+
+#             for student in students:
+#                 student.classes.add(*class_periods)
+
+#             return {
+#                 "students_updated": students.count(),
+#                 "class_periods_assigned": [cp.name for cp in class_periods]
+#             }
+
+#         # If not an assignment request, create a regular ClassPeriod (fallback)
+#         return super().create(validated_data)
+
 class ClassPeriodSerializer(serializers.ModelSerializer):
     # Extra fields for the custom POST action
     year_level_name = serializers.CharField(write_only=True, required=False)
@@ -633,7 +680,7 @@ class ClassPeriodSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'subject', 'teacher', 'term',
             'start_time', 'end_time', 'classroom', 'name',
-            'year_level_name', 'class_period_names'  
+            'year_level', 'year_level_name', 'class_period_names'
         ]
 
     def to_representation(self, instance):
@@ -641,6 +688,28 @@ class ClassPeriodSerializer(serializers.ModelSerializer):
         representation['start_time'] = instance.start_time.start_period_time.strftime('%I:%M %p')
         representation['end_time'] = instance.end_time.end_period_time.strftime('%I:%M %p')
         return representation
+
+    def validate(self, attrs):
+        teacher = attrs.get('teacher')
+        start_time = attrs.get('start_time')
+        end_time = attrs.get('end_time')
+
+        if teacher and start_time and end_time:
+            overlapping = ClassPeriod.objects.filter(
+                teacher=teacher,
+                start_time__lt=end_time,
+                end_time__gt=start_time,
+            )
+
+            if self.instance:
+                overlapping = overlapping.exclude(id=self.instance.id)
+
+            if overlapping.exists():
+                raise serializers.ValidationError(
+                    {"non_field_errors": ["This teacher is already assigned to another class during this time."]}
+                )
+
+        return attrs
 
     def create(self, validated_data):
         # Handle assignment logic only if year_level_name and class_period_names are present

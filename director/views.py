@@ -181,7 +181,56 @@ def assigned_periods(request):
         "total_periods": class_periods.count(),
         "assigned_periods": assigned_periods
     })
+# from django.db.models import Q
+# from rest_framework.decorators import api_view
+# from rest_framework.response import Response
+# from rest_framework import status
 
+# @api_view(['GET'])
+# def assigned_periods(request):
+#     year_level_id = request.query_params.get("year_level_id")
+
+#     if not year_level_id:
+#         return Response({"error": "year_level_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+#     try:
+#         year_level = YearLevel.objects.get(id=year_level_id)
+#     except YearLevel.DoesNotExist:
+#         return Response({"error": "YearLevel not found"}, status=status.HTTP_404_NOT_FOUND)
+
+#     class_periods = ClassPeriod.objects.filter(year_level=year_level)
+#     assigned_periods = []
+
+#     for period in class_periods:
+#         # Check if the teacher is already assigned to another class at the same time
+#         teacher_conflicts = ClassPeriod.objects.filter(
+#             Q(teacher=period.teacher) &
+#             Q(start_time=period.start_time) &
+#             Q(end_time=period.end_time) &
+#             ~Q(year_level=year_level)  # Exclude current class
+#         )
+
+#         if teacher_conflicts.exists():
+#             conflict = teacher_conflicts.first()
+#             return Response({
+#                 "error": f"Teacher {period.teacher} is already teaching {conflict.subject} in {conflict.year_level.level_name} at this time."
+#             }, status=status.HTTP_400_BAD_REQUEST)
+
+#         assigned_periods.append({
+#             "subject": str(period.subject),
+#             "teacher": str(period.teacher),
+#             "start_time": period.start_time.start_period_time.strftime('%I:%M %p'),
+#             "end_time": period.end_time.end_period_time.strftime('%I:%M %p'),
+#             "classroom": str(period.classroom),
+#             "term": period.term,
+#             "name": period.name
+#         })
+
+#     return Response({
+#         "class": year_level.level_name,
+#         "total_periods": class_periods.count(),
+#         "assigned_periods": assigned_periods
+#     })
 #   ---------------------------------------------  Director Dashboard view   ----------------------------------------------------------
 
 
@@ -350,6 +399,58 @@ def guardian_dashboard(request, id=None):
         "children": children_data
     })
 #  ----------------------------------------------------------------- Student Dashboard View --------------------------------------------------
+# @api_view(["GET"])
+# def student_dashboard(request, id=None):
+#     if not id:
+#         return Response({"error": "Student ID is required"}, status=400)
+
+#     try:
+#         student = Student.objects.get(user__id=id)
+#     except Student.DoesNotExist:
+#         return Response({"error": "Student not found"}, status=404)
+
+#     # Get optional year_level_id from query params
+#     year_level_id = request.query_params.get("year_level_id")
+
+#     # Filter year level info
+#     year_level_info = None
+#     if year_level_id:
+#         year_level_info = StudentYearLevel.objects.filter(student=student, level_id=year_level_id).last()
+#     else:
+#         year_level_info = StudentYearLevel.objects.filter(student=student).last()
+
+#     # Guardian details
+#     guardian_links = StudentGuardian.objects.filter(student=student)
+#     guardians_data = []
+
+#     for link in guardian_links:
+#         guardian = link.guardian
+#         guardians_data.append({
+#             "guardian_name": f"{guardian.user.first_name} {guardian.user.last_name}"
+#         })
+
+#     # Child info output
+#     children_data = []
+
+#     if year_level_info:
+#         children_data.append({
+#             "student_name": f"{student.user.first_name} {student.user.last_name}",
+#             "class": f"{year_level_info.level.level_name} ({year_level_info.year.year_name})",
+#             "year_level_id": year_level_info.level.id
+#         })
+#     else:
+#         children_data.append({
+#             "student_name": f"{student.user.first_name} {student.user.last_name}",
+#             "class": "Not Assigned",
+#             "year_level_id": None
+#         })
+
+#     return Response({
+#         "guardian": guardians_data,
+#         "total_children": 1,
+#         "children": children_data
+#     })
+
 @api_view(["GET"])
 def student_dashboard(request, id=None):
     if not id:
@@ -385,12 +486,14 @@ def student_dashboard(request, id=None):
 
     if year_level_info:
         children_data.append({
+            "student_id": student.id,  # Added student ID here
             "student_name": f"{student.user.first_name} {student.user.last_name}",
             "class": f"{year_level_info.level.level_name} ({year_level_info.year.year_name})",
             "year_level_id": year_level_info.level.id
         })
     else:
         children_data.append({
+            "student_id": student.id,  # Added student ID here
             "student_name": f"{student.user.first_name} {student.user.last_name}",
             "class": "Not Assigned",
             "year_level_id": None
@@ -401,7 +504,6 @@ def student_dashboard(request, id=None):
         "total_children": 1,
         "children": children_data
     })
-
 # --------------------------------------------------------- office Staff Dashboard View  ----------------------------------------------------------
 
 
@@ -1479,10 +1581,14 @@ class OfficeStaffView(viewsets.ModelViewSet):
         # Public access to list and retrieve
         if self.action in ['list', 'retrieve']:
             return [AllowAny()]
-        return [IsAuthenticated()]
+        return [
+            # IsAuthenticated()
+                ]
 
     # ******************JWT***************
-    @action(detail=False, methods=['get', 'put', 'patch'], url_path='OfficeStaff_my_profile', permission_classes=[IsAuthenticated])
+    @action(detail=False, methods=['get', 'put', 'patch'], url_path='OfficeStaff_my_profile', 
+            # permission_classes=[IsAuthenticated]
+            )
     def OfficeStaff_my_profile(self, request):
         user = request.user
 
@@ -1676,8 +1782,6 @@ class ClassPeriodView(viewsets.ModelViewSet):
             }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)    
 
-     
-    
 # As of 04June2025 at 12:15 AM
 # Re-implementation of Fee module based on the provided fee card
 from django.db.models import Q

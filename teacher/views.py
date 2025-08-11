@@ -14,6 +14,10 @@ from rest_framework.decorators import action
 from director.models import *
 from django.db.models import Prefetch
 from rest_framework.permissions import AllowAny, IsAuthenticated,BasePermission
+from rest_framework.permissions import IsAuthenticated
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from permission import RoleBasedPermission
+
 
 
 class IsDirector(BasePermission):
@@ -218,7 +222,240 @@ class TeacherView(viewsets.ModelViewSet):
     
     
     # **********************TeacherYearLevelView************************
+# class TeacherYearLevelView(viewsets.ModelViewSet):
+#     authentication_classes = [JWTAuthentication]
+#     permission_classes = [RoleBasedPermission]
+
+#     queryset = TeacherYearLevel.objects.all()
+#     serializer_class = TeacherYearLevelSerializer
+
 class TeacherYearLevelView(viewsets.ModelViewSet):
-    queryset = TeacherYearLevel.objects.all()
+    # authentication_classes = [JWTAuthentication]
+    # permission_classes = [RoleBasedPermission]
     serializer_class = TeacherYearLevelSerializer
+    queryset = TeacherYearLevel.objects.none()  # default for router compatibility
+
+    def get_queryset(self):
+        user = self.request.user
+        role_names = [role.name.lower() for role in user.role.all()]
+
+        if 'director' in role_names or 'office staff' in role_names:
+            return TeacherYearLevel.objects.all()
+
+        elif 'teacher' in role_names:
+            try:
+                # Get the Teacher instance from User (without related_name)
+                teacher = Teacher.objects.get(user=user)
+                return TeacherYearLevel.objects.filter(teacher=teacher)
+            except Teacher.DoesNotExist:
+                return TeacherYearLevel.objects.none()
+
+        return TeacherYearLevel.objects.none()
+
+
+from datetime import datetime
+from django.utils import timezone
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+
+class AllTeachersWithYearLevelsAPIView(APIView):
+    def get(self, request):
+        teachers = Teacher.objects.select_related('user').all()
+
+        # Date filter
+        date_value = request.GET.get('date_value')
+        if date_value:
+            try:
+                target_date = datetime.strptime(date_value, "%Y-%m-%d").date()
+            except ValueError:
+                return Response({"error": "Invalid date format. Use YYYY-MM-DD."},
+                                status=status.HTTP_400_BAD_REQUEST)
+        else:
+            target_date = timezone.now().date()
+
+        filter_status = request.GET.get('status', 'all').lower()
+
+        result = []
+        present_teachers = []
+
+        # Step 1: Gather teacher data
+        for teacher in teachers:
+            year_levels = TeacherYearLevel.objects.filter(
+                teacher=teacher
+            ).select_related('year_level')
+
+            year_level_data = [
+                {
+                    'id': yl.year_level.id,
+                    'level_name': yl.year_level.level_name,
+                    'level_order': yl.year_level.level_order
+                } for yl in year_levels
+            ]
+
+            attendance = TeacherAttendance.objects.filter(
+                teacher=teacher, date=target_date
+            ).first()
+            attendance_status = attendance.status if attendance else "not marked"
+
+            if filter_status == 'present' and attendance_status != 'present':
+                continue
+            elif filter_status == 'absent' and attendance_status != 'absent':
+                continue
+            elif filter_status not in ['present', 'absent', 'all', '']:
+                return Response({"error": "Invalid status filter"}, status=400)
+
+            periods = ClassPeriod.objects.filter(
+                teacher=teacher
+            ).select_related('year_level', 'classroom', 'start_time', 'end_time', 'subject')
+
+            period_data = [
+                {
+                    "id": period.id,
+                    "subject": period.subject.subject_name,
+                    "start_time": period.start_time.name if period.start_time else None,
+                    "end_time": period.end_time.name if period.end_time else None,
+                    "start_time_id": period.start_time.id if period.start_time else None,
+                    "end_time_id": period.end_time.id if period.end_time else None,
+                    "year_level": {
+                        "id": period.year_level.id,
+                        "level_name": period.year_level.level_name
+                    },
+                    "classroom": {
+                        "id": period.classroom.id,
+                        "room_name": period.classroom.room_name
+                    }
+                } for period in periods
+            ]
+
+            if attendance_status == "present":
+                present_teachers.append({
+                    "id": teacher.id,
+                    "year_levels": [yl.year_level.id for yl in year_levels],
+                    "periods": [(p.start_time.id if p.start_time else None,
+                                 p.end_time.id if p.end_time else None) for p in periods],
+                    "name": f"{teacher.user.first_name} {teacher.user.last_name}"
+                })
+
+            result.append({
+                'id': teacher.id,
+                'first_name': teacher.user.first_name,
+                'last_name': teacher.user.last_name,
+                'email': teacher.user.email,
+                'phone_no': teacher.phone_no,
+                'year_levels': year_level_data,
+                'attendance': {
+                    'date': str(target_date),
+                    'status': attendance_status
+                },
+                # 'assigned_periods': period_data
+            })
+
+        # Step 2: Match absent teacher periods
+        absent_matches = []
+        seen_matches = set()
+
+        for teacher in teachers:
+            attendance = TeacherAttendance.objects.filter(
+                teacher=teacher, date=target_date
+            ).first()
+            attendance_status = attendance.status if attendance else "not marked"
+
+            if attendance_status == "absent":
+                periods = ClassPeriod.objects.filter(
+                    teacher=teacher
+                ).select_related('year_level', 'classroom', 'start_time', 'end_time', 'subject')
+
+                for period in periods:
+                    period_key = (period.start_time.id if period.start_time else None,
+                                  period.end_time.id if period.end_time else None)
+                    year_level_id = period.year_level.id
+
+                    match_found = False
+
+                    # Step 2.1: Try same year level teachers first
+                    for present_teacher in present_teachers:
+                        if (year_level_id in present_teacher["year_levels"] and
+                            period_key not in present_teacher["periods"]):
+                            match_key = (teacher.id, present_teacher["id"], *period_key)
+                            if match_key not in seen_matches:
+                                seen_matches.add(match_key)
+                                absent_matches.append({
+                                    "absent_teacher": f"{teacher.user.first_name} {teacher.user.last_name}",
+                                    "absent_subject": period.subject.subject_name,
+                                    "matched_present_teacher": present_teacher["name"],
+                                    "period_time": f"{period.start_time.name if period.start_time else None} - {period.end_time.name if period.end_time else None}",
+                                    # "priority": "same year level",
+                                    "year_level": {
+                                        "id": period.year_level.id,
+                                        "level_name": period.year_level.level_name
+                                    }
+                                })
+                                match_found = True
+                                break
+
+                    # Step 2.2: If no match in same year level, try other teachers
+                    if not match_found:
+                        for present_teacher in present_teachers:
+                            if (year_level_id not in present_teacher["year_levels"] and
+                                period_key not in present_teacher["periods"]):
+                                match_key = (teacher.id, present_teacher["id"], *period_key)
+                                if match_key not in seen_matches:
+                                    seen_matches.add(match_key)
+                                    absent_matches.append({
+                                        "absent_teacher": f"{teacher.user.first_name} {teacher.user.last_name}",
+                                        "absent_subject": period.subject.subject_name,
+                                        "matched_present_teacher": present_teacher["name"],
+                                        "period_time": f"{period.start_time.name if period.start_time else None} - {period.end_time.name if period.end_time else None}",
+                                        # "priority": "other year level",
+                                        "year_level": {
+                                            "id": period.year_level.id,
+                                            "level_name": period.year_level.level_name
+                                        }
+                                    })
+                                    break
+
+        return Response({
+            "teachers": result,
+            "absent_period_matches": absent_matches
+        }, status=status.HTTP_200_OK)
+
+
+
+
+
+from datetime import date
+
+from .models import TeacherAttendance
+from teacher.models import Teacher
+
+class TeacherAttendanceAPIView(APIView):
+
+    def post(self, request):
+        teacher_id = request.data.get('teacher_id')
+        status_input = request.data.get('status')  # 'present' or 'absent'
+        attendance_date = request.data.get('date', str(date.today()))  # optional
+
+        if not teacher_id or not status_input:
+            return Response({'error': 'teacher_id and status are required'}, status=400)
+
+        try:
+            teacher = Teacher.objects.get(id=teacher_id)
+        except Teacher.DoesNotExist:
+            return Response({'error': 'Teacher not found'}, status=404)
+
+        # Check if already marked
+        obj, created = TeacherAttendance.objects.update_or_create(
+            teacher=teacher,
+            date=attendance_date,
+            defaults={'status': status_input}
+        )
+
+        return Response({
+            'message': 'Attendance marked successfully',
+            'teacher_id': teacher_id,
+            'status': status_input,
+            'date': attendance_date
+        }, status=200)
+
     

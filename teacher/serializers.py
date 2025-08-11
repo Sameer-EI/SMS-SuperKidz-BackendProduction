@@ -4,7 +4,9 @@ from authentication . models import User
 from director . models import Role
 from django.db import IntegrityError
 from django.core.exceptions import MultipleObjectsReturned
-from director.models import YearLevel
+from director.models import YearLevel 
+from director.serializers import ClassPeriodSerializer
+
 
 
 
@@ -115,8 +117,31 @@ class TeacherSerializer(serializers.ModelSerializer):
 
 
 # ******************TeacherYearLevelSerializer***********************************
-class TeacherYearLevelSerializer(serializers.ModelSerializer):
-    class Meta:
-        model =TeacherYearLevel
-        fields ="__all__"
+# class TeacherYearLevelSerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model =TeacherYearLevel
+#         fields ="__all__"
         
+
+from rest_framework import serializers
+from .models import TeacherYearLevel
+
+class TeacherYearLevelSerializer(serializers.ModelSerializer):
+    teacher_name = serializers.SerializerMethodField()
+    year_level_name = serializers.CharField(source='year_level.level_name', read_only=True)
+
+    class Meta:
+        model = TeacherYearLevel
+        fields = "__all__"
+        # Or explicitly:
+        # fields = ["id", "teacher", "year_level", "teacher_name", "year_level_name"]
+
+    def get_teacher_name(self, obj):
+        """
+        Return the teacher's full name from the related User model.
+        """
+        if obj.teacher and obj.teacher.user:
+            return obj.teacher.user.get_full_name() or f"{obj.teacher.user.first_name} {obj.teacher.user.last_name}".strip()
+        return ""
+
+
