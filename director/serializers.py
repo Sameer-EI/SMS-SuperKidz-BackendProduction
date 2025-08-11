@@ -964,9 +964,9 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
         if discount:
             for fee in year_level_fees:
                 fee_type = fee.fee_type.name.lower()
-                if "admission" in fee_type:
+                if "admission fee" in fee_type:
                     total_discount += discount.admission_fee_discount or Decimal("0.00")
-                if "tuition" in fee_type:
+                if "tuition fee" in fee_type:
                     total_discount += discount.tuition_fee_discount or Decimal("0.00")
 
         # Subtract discount from total but never negative
