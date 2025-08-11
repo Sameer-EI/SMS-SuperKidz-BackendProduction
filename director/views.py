@@ -3,6 +3,8 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.db.models import Count
 from collections import OrderedDict
+
+from director.permission import IsDirector
 from .serializers import *
 from rest_framework import filters
 from .models import *
@@ -11,6 +13,7 @@ from rest_framework .views import APIView       # As of 07May25 at 12:30 PM
 from rest_framework.filters import SearchFilter
 from django.db.models import Sum
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 
 from django.db.models.functions import Coalesce
 from django.db.models import Sum, DecimalField
@@ -1457,8 +1460,15 @@ class FeeTypeView(viewsets.ModelViewSet):
 class YearLevelFeeView(viewsets.ModelViewSet):
     serializer_class = YearLevelFeeSerializer
 
-    def get_queryset(self):           # just commneted as of 27june25 at 02:47 PM
-        return YearLevelFee.objects.select_related('year_level', 'fee_type')
+    def get_queryset(self):
+        qs = YearLevelFee.objects.select_related('year_level', 'fee_type')
+        fee_id = self.request.query_params.get('id')
+        if fee_id:
+            qs = qs.filter(id=fee_id)
+        return qs
+
+    # def get_queryset(self):           # just commneted as of 27june25 at 02:47 PM
+    #     return YearLevelFee.objects.select_related('year_level', 'fee_type')
     
     # def get_queryset(self):         # GET /api/year-level-fee/?id=3
     #     queryset = YearLevelFee.objects.select_related('year_level', 'fee_type')
@@ -1484,8 +1494,14 @@ class YearLevelFeeView(viewsets.ModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
         return Response(grouped_fees[0] if grouped_fees else {})
-    
-    
+
+
+#discount for students-----------
+class FeeDiscountView(viewsets.ModelViewSet):
+    queryset = FeeDiscount.objects.all()
+    serializer_class = FeeDiscountSerializer
+    permission_classes = [IsAuthenticated,IsDirector]
+
 # Fee Record View
 # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/
 class FeeRecordView(viewsets.ModelViewSet):
@@ -1945,3 +1961,4 @@ class FeeRecordView(viewsets.ModelViewSet):
             })
 
         return Response(result, status=status.HTTP_200_OK)
+    

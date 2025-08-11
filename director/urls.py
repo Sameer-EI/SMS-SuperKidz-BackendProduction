@@ -29,7 +29,7 @@ router.register(r'subject',subjectView),
 router.register(r'fee-types', FeeTypeView) # whole code commented as of 06June25 at 12:30 PM
 router.register(r'year-level-fee', YearLevelFeeView, basename='year-level-fee')
 router.register(r'fee-record', FeeRecordView, basename='fee-record') #
-# router.register(r'submit_fee',FeeSubmitView, basename='submit_fee')
+router.register(r'fee-discounts',FeeDiscountView, basename='fee-discounts')
 
 
 urlpatterns = [
