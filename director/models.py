@@ -349,6 +349,21 @@ class YearLevelFee(models.Model):
         verbose_name_plural = "Year Level Fees"
         db_table = "YearLevelFee"
 
+
+#discounts to students
+class FeeDiscount(models.Model):
+    student = models.OneToOneField("student.Student", on_delete=models.CASCADE,related_name="discount_info")
+    admission_fee_discount = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
+    tuition_fee_discount = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
+    discount_reason = models.CharField(max_length=255, blank=True, null=True)
+    is_allowed = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Discount for {self.student} - Admission fee: {self.admission_fee_discount}, Tuition fee: {self.tuition_fee_discount}"
+ 
+
 class FeeRecord(models.Model):
     student = models.ForeignKey("student.Student", on_delete=models.CASCADE)
     MONTH_CHOICES = [
@@ -362,6 +377,7 @@ class FeeRecord(models.Model):
     total_amount = models.DecimalField(max_digits=8, decimal_places=2)
     paid_amount = models.DecimalField(max_digits=8, decimal_places=2)
     due_amount = models.DecimalField(max_digits=8, decimal_places=2)
+    discounted_amount = models.ForeignKey(FeeDiscount, on_delete=models.SET_NULL, null=True, blank=True)
     payment_date = models.DateField(auto_now_add=True)
     payment_mode = models.CharField(max_length=20, choices=[('Cash', 'Cash'), ('Online', 'Online'), ('Cheque', 'Cheque')])
     is_cheque_cleared = models.BooleanField(default=False)  # Added as of 11June25 at 12:39 PM

@@ -20,6 +20,7 @@ admin.site.register(
         BankingDetail,
         FeeType,
         YearLevelFee,
+        FeeDiscount,
         FeeRecord,
         File,
         Document,

@@ -31,3 +31,4 @@ class RoleBasedPermission(BasePermission):
 
         # Deny everything else by default
         return False
+
