@@ -777,7 +777,35 @@ class FeeRecordSerializer(serializers.ModelSerializer):
             "id": obj.student.id,
             "name": f"{obj.student.user.first_name} {obj.student.user.last_name}"
         }
+    
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        user = self.context['request'].user
 
+        # Check role
+        if not user.role.filter(name="Director").exists():
+            data.pop('discounted_amount', None)  # hide it from non-directors
+
+        return data
+    
+    def get_discounted_amount(self, obj):
+        total_discount = 0
+
+        try:
+            discount = FeeDiscount.objects.get(student=obj.student, is_allowed=True)
+        except FeeDiscount.DoesNotExist:
+            return "0.00"
+        print("Discount:", discount)
+
+        for fee in obj.year_level_fees.all():
+            fee_type = fee.fee_type.name.lower()
+            if "admission fee" in fee_type and discount.admission_fee_discount:
+                total_discount += float(discount.admission_fee_discount)
+            if "tuition fee" in fee_type and discount.tuition_fee_discount:
+                total_discount += float(discount.tuition_fee_discount)
+
+        return f"{total_discount:.2f}"
+    
     def get_year_level_fees_grouped(self, obj):
         grouped = defaultdict(list)
         for fee in obj.year_level_fees.all():
@@ -813,8 +841,27 @@ class FeeRecordSerializer(serializers.ModelSerializer):
         for fee in year_level_fees:
             total += fee.amount
 
-        # caluculate total amount based on year level fee
+        # Get applicable discount (only allowed ones)
+        try:
+            discount = FeeDiscount.objects.get(student=student, is_allowed=True)
+        except FeeDiscount.DoesNotExist:
+            discount = None
+
+        total_discount = 0
+        if discount:
+            for fee in year_level_fees:
+                fee_type = fee.fee_type.name.lower()
+                if "admission" in fee_type:
+                    total_discount += discount.admission_fee_discount or 0
+                if "tuition" in fee_type:
+                    total_discount += discount.tuition_fee_discount or 0
+
+        # Subtract discount from total but never negative
+        total = max(total - total_discount, 0)
         data['total_amount'] = total
+
+        # # caluculate total amount based on year level fee
+        # data['total_amount'] = total
 
         # calculate late fee, if submitted after 15th
         today = date.today()
@@ -904,6 +951,25 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
 
         # Calculate total fees
         total = sum(fee.amount for fee in year_level_fees)
+
+        # Get applicable discount (only allowed ones)
+        try:
+            discount = FeeDiscount.objects.get(student=student, is_allowed=True)
+        except FeeDiscount.DoesNotExist:
+            discount = None
+
+        total_discount = Decimal("0.00")
+        if discount:
+            for fee in year_level_fees:
+                fee_type = fee.fee_type.name.lower()
+                if "admission" in fee_type:
+                    total_discount += discount.admission_fee_discount or Decimal("0.00")
+                if "tuition" in fee_type:
+                    total_discount += discount.tuition_fee_discount or Decimal("0.00")
+
+        # Subtract discount from total but never negative
+        total = max(total - total_discount, Decimal("0.00"))
+
 
         # Calculate late fee based on current or past month logic (same as cash serializer)
         month_map = {
