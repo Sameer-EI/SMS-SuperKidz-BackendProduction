@@ -133,15 +133,25 @@ class TeacherYearLevelSerializer(serializers.ModelSerializer):
     class Meta:
         model = TeacherYearLevel
         fields = "__all__"
-        # Or explicitly:
-        # fields = ["id", "teacher", "year_level", "teacher_name", "year_level_name"]
-
+       
     def get_teacher_name(self, obj):
-        """
-        Return the teacher's full name from the related User model.
-        """
         if obj.teacher and obj.teacher.user:
             return obj.teacher.user.get_full_name() or f"{obj.teacher.user.first_name} {obj.teacher.user.last_name}".strip()
         return ""
+
+    def validate(self, data):
+        year_level = data.get('year_level')
+        instance = self.instance  # None if create, else update instance
+
+        qs = TeacherYearLevel.objects.filter(year_level=year_level)
+        if instance:
+            qs = qs.exclude(pk=instance.pk)
+
+        if qs.exists():
+            raise serializers.ValidationError({
+                'year_level': f"'{year_level}' is already assigned to another teacher."
+            })
+        return data
+
 
 

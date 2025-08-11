@@ -220,37 +220,20 @@ class TeacherView(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK)
     
     
-    
-    # **********************TeacherYearLevelView************************
-# class TeacherYearLevelView(viewsets.ModelViewSet):
-#     authentication_classes = [JWTAuthentication]
-#     permission_classes = [RoleBasedPermission]
-
-#     queryset = TeacherYearLevel.objects.all()
-#     serializer_class = TeacherYearLevelSerializer
+  
+from rest_framework import viewsets
+from .models import TeacherYearLevel
+from .serializers import TeacherYearLevelSerializer
+from permission import RoleBasedPermission
 
 class TeacherYearLevelView(viewsets.ModelViewSet):
-    # authentication_classes = [JWTAuthentication]
-    # permission_classes = [RoleBasedPermission]
     serializer_class = TeacherYearLevelSerializer
-    queryset = TeacherYearLevel.objects.none()  # default for router compatibility
+    queryset = TeacherYearLevel.objects.all()
+    permission_classes = [RoleBasedPermission]
 
     def get_queryset(self):
-        user = self.request.user
-        role_names = [role.name.lower() for role in user.role.all()]
-
-        if 'director' in role_names or 'office staff' in role_names:
-            return TeacherYearLevel.objects.all()
-
-        elif 'teacher' in role_names:
-            try:
-                # Get the Teacher instance from User (without related_name)
-                teacher = Teacher.objects.get(user=user)
-                return TeacherYearLevel.objects.filter(teacher=teacher)
-            except Teacher.DoesNotExist:
-                return TeacherYearLevel.objects.none()
-
-        return TeacherYearLevel.objects.none()
+        # Permission class ke filter_queryset() ka use karo
+        return self.permission_classes[0]().filter_queryset(self.request, super().get_queryset(), self)
 
 
 from datetime import datetime
