@@ -42,11 +42,8 @@ class ClassRoomTypeSerializer(serializers.ModelSerializer):
         model = ClassRoomType
         fields = "__all__"
         
-        
-class ClassPeriodSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ClassPeriod
-        fields = "__all__"        
+ 
+    
 
 
 class BankingDetailsSerializer(serializers.ModelSerializer):
@@ -621,6 +618,56 @@ class AdmissionSerializer(serializers.ModelSerializer):
 # As of 05May25 at 01:00 PM
 
 
+# class ClassPeriodSerializer(serializers.ModelSerializer):
+#     # Extra fields for the custom POST action
+#     year_level_name = serializers.CharField(write_only=True, required=False)
+#     class_period_names = serializers.ListField(
+#         child=serializers.CharField(), write_only=True, required=False
+#     )
+
+#     class Meta:
+#         model = ClassPeriod
+#         fields = [
+#             'id', 'subject', 'teacher', 'term',
+#             'start_time', 'end_time', 'classroom', 'name',
+#             'year_level', 'year_level_name', 'class_period_names'
+#         ]
+
+#     def to_representation(self, instance):
+#         representation = super().to_representation(instance)
+#         representation['start_time'] = instance.start_time.start_period_time.strftime('%I:%M %p')
+#         representation['end_time'] = instance.end_time.end_period_time.strftime('%I:%M %p')
+#         return representation
+
+#     def create(self, validated_data):
+#         # Handle assignment logic only if year_level_name and class_period_names are present
+#         year_level_name = validated_data.pop('year_level_name', None)
+#         class_period_names = validated_data.pop('class_period_names', None)
+
+#         if year_level_name and class_period_names:
+#             try:
+#                 year_level = YearLevel.objects.get(level_name=year_level_name)
+#             except YearLevel.DoesNotExist:
+#                 raise serializers.ValidationError("Invalid YearLevel name.")
+
+#             class_periods = ClassPeriod.objects.filter(name__in=class_period_names)
+#             if class_periods.count() != len(class_period_names):
+#                 raise serializers.ValidationError("Some ClassPeriod names are invalid.")
+
+#             student_ids = StudentYearLevel.objects.filter(level=year_level).values_list("student_id", flat=True)
+#             students = Student.objects.filter(id__in=student_ids)
+
+#             for student in students:
+#                 student.classes.add(*class_periods)
+
+#             return {
+#                 "students_updated": students.count(),
+#                 "class_periods_assigned": [cp.name for cp in class_periods]
+#             }
+
+#         # If not an assignment request, create a regular ClassPeriod (fallback)
+#         return super().create(validated_data)
+
 class ClassPeriodSerializer(serializers.ModelSerializer):
     # Extra fields for the custom POST action
     year_level_name = serializers.CharField(write_only=True, required=False)
@@ -633,7 +680,7 @@ class ClassPeriodSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'subject', 'teacher', 'term',
             'start_time', 'end_time', 'classroom', 'name',
-            'year_level_name', 'class_period_names'  
+            'year_level', 'year_level_name', 'class_period_names'
         ]
 
     def to_representation(self, instance):
@@ -641,6 +688,28 @@ class ClassPeriodSerializer(serializers.ModelSerializer):
         representation['start_time'] = instance.start_time.start_period_time.strftime('%I:%M %p')
         representation['end_time'] = instance.end_time.end_period_time.strftime('%I:%M %p')
         return representation
+
+    def validate(self, attrs):
+        teacher = attrs.get('teacher')
+        start_time = attrs.get('start_time')
+        end_time = attrs.get('end_time')
+
+        if teacher and start_time and end_time:
+            overlapping = ClassPeriod.objects.filter(
+                teacher=teacher,
+                start_time__lt=end_time,
+                end_time__gt=start_time,
+            )
+
+            if self.instance:
+                overlapping = overlapping.exclude(id=self.instance.id)
+
+            if overlapping.exists():
+                raise serializers.ValidationError(
+                    {"non_field_errors": ["This teacher is already assigned to another class during this time."]}
+                )
+
+        return attrs
 
     def create(self, validated_data):
         # Handle assignment logic only if year_level_name and class_period_names are present
@@ -1160,73 +1229,166 @@ class FileSerializer(serializers.ModelSerializer):
 
 
 
+# class DocumentSerializer(serializers.ModelSerializer):
+#     files = FileSerializer(many=True, read_only=True)
+
+#     uploaded_files = serializers.ListField(
+#         child=serializers.FileField(),
+#         write_only=True,
+#         required=True,
+#         allow_empty=False
+#     )
+
+#     # Accepts list of IDs at POST/PUT time
+#     document_types = serializers.PrimaryKeyRelatedField(
+#         queryset=DocumentType.objects.all(),
+#         many=True,
+#         required=True,
+#         allow_empty=False
+#     )
+
+#     identities = serializers.ListField(
+#         child=serializers.CharField(),
+#         write_only=True
+#     )
+
+#     identities_read = serializers.SerializerMethodField(read_only=True)
+
+#     class Meta:
+#         model = Document
+#         fields = [
+#             'id', 'document_types', 'identities', 'identities_read', 'files', 'uploaded_files',
+#             'student', 'teacher', 'guardian', 'office_staff', 'uploaded_at'
+#         ]
+
+#     def get_identities_read(self, obj):
+#         import json
+#         try:
+#             return json.loads(obj.identities) if obj.identities else []
+#         except:
+#             return []
+
+#     def to_representation(self, instance):
+#         """Customize the output to show document type names instead of just IDs."""
+#         representation = super().to_representation(instance)
+#         document_types = instance.document_types.all()
+#         representation['document_types'] = [
+#             {"id": dt.id, "name": dt.name} for dt in document_types
+#         ]
+#         return representation
+
+#     def create(self, validated_data):
+#         import json
+
+#         uploaded_files = validated_data.pop('uploaded_files')
+#         document_types = validated_data.pop('document_types')
+#         identities_list = validated_data.pop('identities')
+
+#         if len(document_types) != len(identities_list):
+#             raise serializers.ValidationError("Number of document_types and identities must match.")
+
+#         document = Document.objects.create(**validated_data)
+#         document.document_types.set(document_types)
+#         document.identities = json.dumps(identities_list)
+#         document.save()
+
+#         for uploaded_file in uploaded_files:
+#             File.objects.create(file=uploaded_file, document=document)
+
+#         return document
+
+
+
+# from rest_framework import serializers
+# from .models import Document, DocumentType
+
+# class DocumentSerializer(serializers.ModelSerializer):
+#     # Make document_types write-only to prevent it from being included in validated_data
+#     document_types = serializers.PrimaryKeyRelatedField(
+#         many=True,
+#         queryset=DocumentType.objects.all(),
+#         write_only=True
+#     )
+    
+#     # Add read-only field for the response
+#     document_types_read = serializers.PrimaryKeyRelatedField(
+#         many=True,
+#         source='document_types',
+#         read_only=True
+#     )
+    
+#     class Meta:
+#         model = Document
+#         fields = '__all__'
+#         extra_kwargs = {
+#             'student': {'required': False, 'allow_null': True},
+#             'teacher': {'required': False, 'allow_null': True},
+#             'guardian': {'required': False, 'allow_null': True},
+#             'office_staff': {'required': False, 'allow_null': True},
+#         }
+
+#     def create(self, validated_data):
+#         # Remove document_types from validated_data before creation
+#         document_types = validated_data.pop('document_types', [])
+        
+#         # Create the document instance
+#         instance = super().create(validated_data)
+        
+#         # Set the many-to-many relationship after creation
+#         if document_types:
+#             instance.document_types.set(document_types)
+        
+#         return instance
+
+#     def update(self, instance, validated_data):
+#         # Handle document_types separately for updates too
+#         document_types = validated_data.pop('document_types', None)
+        
+#         instance = super().update(instance, validated_data)
+        
+#         if document_types is not None:
+#             instance.document_types.set(document_types)
+        
+#         return instance
+
+from rest_framework import serializers
+from .models import Document, DocumentType
+
+
 class DocumentSerializer(serializers.ModelSerializer):
-    files = FileSerializer(many=True, read_only=True)
-
-    uploaded_files = serializers.ListField(
-        child=serializers.FileField(),
-        write_only=True,
-        required=True,
-        allow_empty=False
-    )
-
-    # Accepts list of IDs at POST/PUT time
     document_types = serializers.PrimaryKeyRelatedField(
-        queryset=DocumentType.objects.all(),
         many=True,
-        required=True,
-        allow_empty=False
-    )
-
-    identities = serializers.ListField(
-        child=serializers.CharField(),
+        queryset=DocumentType.objects.all(),
         write_only=True
     )
-
-    identities_read = serializers.SerializerMethodField(read_only=True)
-
+    
+    document_types_read = serializers.PrimaryKeyRelatedField(
+        many=True,
+        source='document_types',
+        read_only=True
+    )
+    
+    files = FileSerializer(many=True, read_only=True)
+    
     class Meta:
         model = Document
-        fields = [
-            'id', 'document_types', 'identities', 'identities_read', 'files', 'uploaded_files',
-            'student', 'teacher', 'guardian', 'office_staff', 'uploaded_at'
-        ]
-
-    def get_identities_read(self, obj):
-        import json
-        try:
-            return json.loads(obj.identities) if obj.identities else []
-        except:
-            return []
-
-    def to_representation(self, instance):
-        """Customize the output to show document type names instead of just IDs."""
-        representation = super().to_representation(instance)
-        document_types = instance.document_types.all()
-        representation['document_types'] = [
-            {"id": dt.id, "name": dt.name} for dt in document_types
-        ]
-        return representation
+        fields = '__all__'
+        extra_kwargs = {
+            'student': {'required': False, 'allow_null': True},
+            'teacher': {'required': False, 'allow_null': True},
+            'guardian': {'required': False, 'allow_null': True},
+            'office_staff': {'required': False, 'allow_null': True},
+        }
 
     def create(self, validated_data):
-        import json
-
-        uploaded_files = validated_data.pop('uploaded_files')
-        document_types = validated_data.pop('document_types')
-        identities_list = validated_data.pop('identities')
-
-        if len(document_types) != len(identities_list):
-            raise serializers.ValidationError("Number of document_types and identities must match.")
-
-        document = Document.objects.create(**validated_data)
-        document.document_types.set(document_types)
-        document.identities = json.dumps(identities_list)
-        document.save()
-
-        for uploaded_file in uploaded_files:
-            File.objects.create(file=uploaded_file, document=document)
-
-        return document
+        document_types = validated_data.pop('document_types', [])
+        instance = super().create(validated_data)
+        
+        if document_types:
+            instance.document_types.set(document_types)
+        
+        # Handle file creation separately in the view
+        return instance
 
 
 

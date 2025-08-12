@@ -34,13 +34,13 @@ from datetime import datetime
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import viewsets, status
-import json  # 🔸 This goes at the top of the file
+import json  #  This goes at the top of the file
 from django.db.models import Q
 from collections import OrderedDict, defaultdict
 from datetime import datetime, timedelta
 from django.utils.timezone import now
 from django.db.models.functions import Cast
-
+from teacher.models import Teacher, TeacherYearLevel
 
 
 from django.db.models import OuterRef, Subquery, Sum, Value, FloatField
@@ -68,8 +68,177 @@ def generate_receipt_number():
             code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
             if not FeeRecord.objects.filter(receipt_number=code).exists():
                 return code
+# ---------------------------------------------------------------------------------------------------------------------------------------------         
+
+                                                    #    Document fetch dashboard
+
+@api_view(["GET"])
+def document_fetch_dashboard(request):
+    user_type = request.query_params.get('user_type')        # student, teacher, etc.
+    uploaded = request.query_params.get('uploaded')          # true / false
+    class_id = request.query_params.get('class')             # e.g., 1, 2 (level_id)
+
+    data = []
+
+    def format_entry(instance, type_label, has_doc, class_label):
+        return {
+            "user_type": type_label,
+            "name": f"{instance.user.first_name} {instance.user.last_name}",
+            "has_uploaded_document": has_doc,
+            "class": class_label
+        }
+
+    def get_class(instance, label):
+        if label == "student":
+            return StudentYearLevel.objects.filter(student=instance).select_related("level").first()
+        elif label == "teacher":
+            return TeacherYearLevel.objects.filter(teacher=instance).select_related("year_level").first()
+        elif label == "guardian":
+            student_guardian = StudentGuardian.objects.filter(guardian=instance).select_related("student").first()
+            if student_guardian:
+                student = student_guardian.student
+                return StudentYearLevel.objects.filter(student=student).select_related("level").first()
+            return None
+        elif label == "office_staff":
+            return None
+        else:
+            return None
+
+    def process_queryset(queryset, label, doc_field):
+        for instance in queryset:
+            has_doc = Document.objects.filter(**{doc_field: instance}).exists()
+
+            # Uploaded filter
+            if uploaded == "true" and not has_doc:
+                continue
+            if uploaded == "false" and has_doc:
+                continue
+
+            class_obj = get_class(instance, label)
+            if class_obj:
+                level_id = class_obj.level.id if label in ["student", "guardian"] else class_obj.year_level.id
+                level_name = class_obj.level.level_name if label in ["student", "guardian"] else class_obj.year_level.level_name
+            else:
+                level_id = None
+                level_name = "N/A" if label == "office_staff" else "Unknown"
+
+            # Class ID filter
+            if class_id and str(level_id) != class_id:
+                continue
+
+            data.append(format_entry(instance, label, has_doc, level_name))
+
+    # Main filtering logic
+    if user_type == "student" or user_type is None:
+        process_queryset(Student.objects.all(), "student", "student")
+
+    if user_type == "teacher" or user_type is None:
+        process_queryset(Teacher.objects.all(), "teacher", "teacher")
+
+    if user_type == "guardian" or user_type is None:
+        process_queryset(Guardian.objects.all(), "guardian", "guardian")
+
+    if user_type == "office_staff" or user_type is None:
+        process_queryset(OfficeStaff.objects.all(), "office_staff", "office_staff")
+
+    if user_type not in ["student", "teacher", "guardian", "office_staff", None]:
+        return Response({"error": "Invalid user_type"}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(data)
 
 
+
+
+# user_type=student|teacher|guardian|office_staff
+
+# uploaded=true|false
+
+# class=Nursery|KG|Class 1|
+
+
+
+
+
+#  ____________________________________________________________ class period view  ____________________________________________________________
+
+@api_view(['GET'])
+def assigned_periods(request):
+    year_level_id = request.query_params.get("year_level_id")
+
+    if not year_level_id:
+        return Response({"error": "year_level_id query parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        year_level = YearLevel.objects.get(id=year_level_id)
+    except YearLevel.DoesNotExist:
+        return Response({"error": "YearLevel not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    class_periods = ClassPeriod.objects.filter(year_level=year_level)
+
+    assigned_periods = []
+    for period in class_periods:
+        assigned_periods.append({
+            "subject": str(period.subject),
+            "teacher": str(period.teacher),
+            "start_time": period.start_time.start_period_time.strftime('%I:%M %p'),
+            "end_time": period.end_time.end_period_time.strftime('%I:%M %p'),
+        })
+
+    return Response({
+        "class": year_level.level_name,
+        "total_periods": class_periods.count(),
+        "assigned_periods": assigned_periods
+    })
+# from django.db.models import Q
+# from rest_framework.decorators import api_view
+# from rest_framework.response import Response
+# from rest_framework import status
+
+# @api_view(['GET'])
+# def assigned_periods(request):
+#     year_level_id = request.query_params.get("year_level_id")
+
+#     if not year_level_id:
+#         return Response({"error": "year_level_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+#     try:
+#         year_level = YearLevel.objects.get(id=year_level_id)
+#     except YearLevel.DoesNotExist:
+#         return Response({"error": "YearLevel not found"}, status=status.HTTP_404_NOT_FOUND)
+
+#     class_periods = ClassPeriod.objects.filter(year_level=year_level)
+#     assigned_periods = []
+
+#     for period in class_periods:
+#         # Check if the teacher is already assigned to another class at the same time
+#         teacher_conflicts = ClassPeriod.objects.filter(
+#             Q(teacher=period.teacher) &
+#             Q(start_time=period.start_time) &
+#             Q(end_time=period.end_time) &
+#             ~Q(year_level=year_level)  # Exclude current class
+#         )
+
+#         if teacher_conflicts.exists():
+#             conflict = teacher_conflicts.first()
+#             return Response({
+#                 "error": f"Teacher {period.teacher} is already teaching {conflict.subject} in {conflict.year_level.level_name} at this time."
+#             }, status=status.HTTP_400_BAD_REQUEST)
+
+#         assigned_periods.append({
+#             "subject": str(period.subject),
+#             "teacher": str(period.teacher),
+#             "start_time": period.start_time.start_period_time.strftime('%I:%M %p'),
+#             "end_time": period.end_time.end_period_time.strftime('%I:%M %p'),
+#             "classroom": str(period.classroom),
+#             "term": period.term,
+#             "name": period.name
+#         })
+
+#     return Response({
+#         "class": year_level.level_name,
+#         "total_periods": class_periods.count(),
+#         "assigned_periods": assigned_periods
+#     })
 #   ---------------------------------------------  Director Dashboard view   ----------------------------------------------------------
 
 
@@ -165,56 +334,48 @@ def Director_Dashboard_Summary(request):
 # ---------------------------------------------------------   Teacher Dashboard View  ----------------------------------------------------------
  
 
+
 @api_view(["GET"])
 def teacher_dashboard(request, id):
     try:
-        user = User.objects.get(id=id)
-        teacher = user.teacher
-    except User.DoesNotExist:
-        return Response({"error": "User not found"}, status=404)
+        teacher = Teacher.objects.get(user_id=id)
+        teacher_name = f"{teacher.user.first_name} {teacher.user.last_name}"
+
+       
+        assigned_levels = TeacherYearLevel.objects.filter(teacher=teacher).select_related("year_level")
+
+        class_summary = []
+
+        for assigned in assigned_levels:
+            level = assigned.year_level
+            level_name = level.level_name
+
+            total_students = StudentYearLevel.objects.filter(level=level).count()
+
+            class_period = ClassPeriod.objects.filter(
+                teacher=teacher,
+                classroom__isnull=False
+            ).select_related("classroom").first()
+
+            room_name = class_period.classroom.room_name if class_period and class_period.classroom else None
+
+            class_summary.append({
+                "level_name": level_name,
+                "total_students": total_students,
+                "room_name": room_name
+            })
+
+        return Response({
+            "teacher_name": teacher_name,
+            "total_assigned_classes": len(class_summary),
+            "class_summary": class_summary
+        })
+
     except Teacher.DoesNotExist:
-        return Response({"error": "This user is not a teacher"}, status=400)
-
-    periods = ClassPeriod.objects.filter(teacher=teacher)
-    class_data = []
-    seen = set()
-
-    for period in periods:
-        students = Student.objects.filter(classes=period).distinct()
-
-        # ✅ FIXED: Use correct reverse relation from YearLevel
-        year_levels = YearLevel.objects.filter(
-            studentyearlevel__student__in=students
-        ).distinct()
-
-        for level in year_levels:
-            key = (level.id, period.id)
-            if key not in seen:
-                seen.add(key)
-
-                student_count = Student.objects.filter(
-                    student_year_levels__level=level,
-                    classes=period
-                ).distinct().count()
-
-                class_data.append({
-                    "level_name": level.level_name,
-                    "student_count": student_count,
-                    "class_period": period.name,
-                    "subject": period.subject.subject_name,
-                    "classroom": period.classroom.room_name,
-                })
-
-    return Response({
-        "teacher": f"{teacher.user.first_name} {teacher.user.last_name}",
-        "total_classes": periods.count(),
-        "class_details": class_data
-    })
+        return Response({"error": "Teacher not found"}, status=404)
 
 
-#   -------------------------------------------  Guardian Dashboard  ----------------------------------------------------------
-
-
+# --------------------------------------------------------- Guardian Dashboard View  ----------------------------------------------------------
 @api_view(["GET"])
 def guardian_dashboard(request, id=None):
     if not id:
@@ -245,6 +406,58 @@ def guardian_dashboard(request, id=None):
         "total_children": student_links.count(),
         "children": children_data
     })
+#  ----------------------------------------------------------------- Student Dashboard View --------------------------------------------------
+# @api_view(["GET"])
+# def student_dashboard(request, id=None):
+#     if not id:
+#         return Response({"error": "Student ID is required"}, status=400)
+
+#     try:
+#         student = Student.objects.get(user__id=id)
+#     except Student.DoesNotExist:
+#         return Response({"error": "Student not found"}, status=404)
+
+#     # Get optional year_level_id from query params
+#     year_level_id = request.query_params.get("year_level_id")
+
+#     # Filter year level info
+#     year_level_info = None
+#     if year_level_id:
+#         year_level_info = StudentYearLevel.objects.filter(student=student, level_id=year_level_id).last()
+#     else:
+#         year_level_info = StudentYearLevel.objects.filter(student=student).last()
+
+#     # Guardian details
+#     guardian_links = StudentGuardian.objects.filter(student=student)
+#     guardians_data = []
+
+#     for link in guardian_links:
+#         guardian = link.guardian
+#         guardians_data.append({
+#             "guardian_name": f"{guardian.user.first_name} {guardian.user.last_name}"
+#         })
+
+#     # Child info output
+#     children_data = []
+
+#     if year_level_info:
+#         children_data.append({
+#             "student_name": f"{student.user.first_name} {student.user.last_name}",
+#             "class": f"{year_level_info.level.level_name} ({year_level_info.year.year_name})",
+#             "year_level_id": year_level_info.level.id
+#         })
+#     else:
+#         children_data.append({
+#             "student_name": f"{student.user.first_name} {student.user.last_name}",
+#             "class": "Not Assigned",
+#             "year_level_id": None
+#         })
+
+#     return Response({
+#         "guardian": guardians_data,
+#         "total_children": 1,
+#         "children": children_data
+#     })
 
 @api_view(["GET"])
 def student_dashboard(request, id=None):
@@ -256,8 +469,17 @@ def student_dashboard(request, id=None):
     except Student.DoesNotExist:
         return Response({"error": "Student not found"}, status=404)
 
-    year_level_info = StudentYearLevel.objects.filter(student=student).last()
+    # Get optional year_level_id from query params
+    year_level_id = request.query_params.get("year_level_id")
 
+    # Filter year level info
+    year_level_info = None
+    if year_level_id:
+        year_level_info = StudentYearLevel.objects.filter(student=student, level_id=year_level_id).last()
+    else:
+        year_level_info = StudentYearLevel.objects.filter(student=student).last()
+
+    # Guardian details
     guardian_links = StudentGuardian.objects.filter(student=student)
     guardians_data = []
 
@@ -267,16 +489,29 @@ def student_dashboard(request, id=None):
             "guardian_name": f"{guardian.user.first_name} {guardian.user.last_name}"
         })
 
-    return Response({
-        "guardian": guardians_data, 
-        "total_children": 1,
-        "children": [{
-            "student_name": f"{student.user.first_name} {student.user.last_name}",
-            "class": f"{year_level_info.level.level_name} ({year_level_info.year.year_name})"
-            if year_level_info else "Not Assigned"
-        }]
-    })
+    # Child info output
+    children_data = []
 
+    if year_level_info:
+        children_data.append({
+            "student_id": student.id,  # Added student ID here
+            "student_name": f"{student.user.first_name} {student.user.last_name}",
+            "class": f"{year_level_info.level.level_name} ({year_level_info.year.year_name})",
+            "year_level_id": year_level_info.level.id
+        })
+    else:
+        children_data.append({
+            "student_id": student.id,  # Added student ID here
+            "student_name": f"{student.user.first_name} {student.user.last_name}",
+            "class": "Not Assigned",
+            "year_level_id": None
+        })
+
+    return Response({
+        "guardian": guardians_data,
+        "total_children": 1,
+        "children": children_data
+    })
 # --------------------------------------------------------- office Staff Dashboard View  ----------------------------------------------------------
 
 
@@ -1354,9 +1589,11 @@ class OfficeStaffView(viewsets.ModelViewSet):
         # Public access to list and retrieve
         if self.action in ['list', 'retrieve', 'update', 'partial_update']:
             return [AllowAny()]
-        return [IsAuthenticated()]
+        return [
+            # IsAuthenticated()
+                ]
 
-    # ******************JWT***************
+
     @action(detail=False, methods=['get','put', 'patch'], url_path='OfficeStaff_my_profile', permission_classes=[IsAuthenticated])
     def OfficeStaff_my_profile(self, request):
         user = request.user
@@ -1387,48 +1624,151 @@ class FileView(viewsets.ModelViewSet):
 
 
 
+# from rest_framework import viewsets, status
+# from rest_framework.response import Response
+# from django.db import transaction
+# from .models import Document, File
+# from .serializers import DocumentSerializer
+
+# class DocumentView(viewsets.ModelViewSet):
+#     queryset = Document.objects.prefetch_related('files', 'document_types')
+#     serializer_class = DocumentSerializer
+
+#     @transaction.atomic
+#     def create(self, request, *args, **kwargs):
+#         # Validate files
+#         files = request.FILES.getlist('files')
+#         if not files:
+#             return Response({"error": "Files required"}, status=status.HTTP_400_BAD_REQUEST)
+
+#         # Get and validate document types
+#         doc_types = request.data.getlist('document_types', []) or [request.data.get('document_types')]
+#         doc_types = [dt for dt in doc_types if dt and str(dt).isdigit()]  # Filter valid numeric types
+#         if not doc_types:
+#             return Response({"error": "Valid document types required"}, status=status.HTTP_400_BAD_REQUEST)
+
+#         # Prepare data with null handling for empty strings
+#         data = {
+#             'document_types': doc_types,
+#             'identities': request.data.get('identities'),
+#             **{f: int(request.data[f]) if request.data.get(f) and str(request.data[f]).isdigit() else None 
+#                for f in ['student', 'teacher', 'guardian', 'office_staff']}
+#         }
+
+#         # Find existing document
+#         existing = self._find_existing_document(data)
+        
+#         # Create or update document
+#         if existing:
+#             serializer = self.get_serializer(existing, data=data, partial=True)
+#             existing.files.all().delete()
+#             action = 'replaced'
+#         else:
+#             serializer = self.get_serializer(data=data)
+#             action = 'created'
+
+#         serializer.is_valid(raise_exception=True)
+#         doc = serializer.save()
+
+#         # Save all uploaded files
+#         for file in files:
+#             File.objects.create(document=doc, file=file)
+
+#         return Response({
+#             'status': action,
+#             'document': self.get_serializer(doc, context={'request': request}).data
+#         }, status=status.HTTP_201_CREATED)
+
+#     def _find_existing_document(self, data):
+#         """Helper method to find existing document matching criteria"""
+#         filter_params = {
+#             'identities': data.get('identities'),
+#             **{f: data.get(f) for f in ['student', 'teacher', 'guardian', 'office_staff'] 
+#                if data.get(f) is not None}
+#         }
+        
+#         for doc in Document.objects.filter(**filter_params).prefetch_related('document_types'):
+#             if set(doc.document_types.values_list('id', flat=True)) == set(map(int, data['document_types'])):
+#                 return doc
+#         return None
+
+
+
+from django.db import transaction
 
 
 class DocumentView(viewsets.ModelViewSet):
-    queryset = Document.objects.all()
+    queryset = Document.objects.prefetch_related('files', 'document_types')
     serializer_class = DocumentSerializer
-    parser_classes = (MultiPartParser, FormParser)
 
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
-        files = request.FILES.getlist('uploaded_files')
-        document_types = request.data.getlist('document_types')
-        identities = request.data.getlist('identities')
-
+        # Validate files
+        files = request.FILES.getlist('files')
         if not files:
-            return Response({"error": "No files uploaded"}, status=status.HTTP_400_BAD_REQUEST)
-        if not document_types:
-            return Response({"error": "At least one document type must be selected."}, status=status.HTTP_400_BAD_REQUEST)
-        if not identities:
-            return Response({"error": "Identities are required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Files required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        if len(document_types) != len(identities):
-            return Response({"error": "Identities count must match document types count."}, status=status.HTTP_400_BAD_REQUEST)
+        # Get and validate document types
+        doc_types = request.data.getlist('document_types', []) or [request.data.get('document_types')]
+        doc_types = [dt for dt in doc_types if dt and str(dt).isdigit()]
+        if not doc_types:
+            return Response({"error": "Valid document types required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        data = request.data.copy()
-        data.setlist('uploaded_files', files)
-        data.setlist('document_types', document_types)
-        data.setlist('identities', identities)
+        # Handle identities - accept both single value and array
+        identities = request.data.getlist('identities', []) or [request.data.get('identities')]
+        identities = [i for i in identities if i]  # Remove empty values
+        identities_str = ", ".join(identities) if identities else None
 
-        serializer = self.get_serializer(data=data)
+        # Prepare data with null handling
+        data = {
+            'document_types': doc_types,
+            'identities': identities_str,  # Store all identities as comma-separated string
+            **{f: int(request.data[f]) if request.data.get(f) and str(request.data[f]).isdigit() else None 
+               for f in ['student', 'teacher', 'guardian', 'office_staff']}
+        }
+
+        # Find existing document
+        existing = self._find_existing_document(data)
+        
+        # Create or update document
+        if existing:
+            serializer = self.get_serializer(existing, data=data, partial=True)
+            existing.files.all().delete()
+            action = 'replaced'
+        else:
+            serializer = self.get_serializer(data=data)
+            action = 'created'
+
         serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        doc = serializer.save()
+
+        # Save all uploaded files
+        for file in files:
+            File.objects.create(document=doc, file=file)
+
+        return Response({
+            'status': action,
+            'document': self.get_serializer(doc, context={'request': request}).data
+        }, status=status.HTTP_201_CREATED)
+
+    def _find_existing_document(self, data):
+        """Helper method to find existing document matching criteria"""
+        filter_params = {
+            **{f: data.get(f) for f in ['student', 'teacher', 'guardian', 'office_staff'] 
+               if data.get(f) is not None}
+        }
+        
+        # If identities exist in data, include them in filter
+        if data.get('identities'):
+            filter_params['identities'] = data['identities']
+        
+        for doc in Document.objects.filter(**filter_params).prefetch_related('document_types'):
+            if set(doc.document_types.values_list('id', flat=True)) == set(map(int, data['document_types'])):
+                return doc
+        return None
 
 
 
-
-
-
-    
-
-    
-    
-    
 # **************Assignment ClassPeriod for Student behalf of YearLevel(standard)****************   
     
 # As of 05May25 at 01:00 PM
@@ -1448,8 +1788,6 @@ class ClassPeriodView(viewsets.ModelViewSet):
             }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)    
 
-     
-    
 # As of 04June2025 at 12:15 AM
 # Re-implementation of Fee module based on the provided fee card
 from django.db.models import Q
