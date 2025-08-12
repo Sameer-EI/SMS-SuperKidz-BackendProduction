@@ -803,7 +803,7 @@ class YearLevelFeeSerializer(serializers.ModelSerializer):
 
 
 class FeeDiscountSerializer(serializers.ModelSerializer):
-    student_id = serializers.SerializerMethodField()
+    student_id = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all(),source='student')
     student_name = serializers.SerializerMethodField()
     class Meta:
         model = FeeDiscount
