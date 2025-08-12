@@ -3,7 +3,7 @@ import string
 import uuid
 from django.db import models
 # from authentication.models import User
-# from student.models import Student, Guardian,StudentYearLevel
+from student.models import Student, Guardian,StudentYearLevel
 from .utils import Document_folder 
 from teacher.models import Teacher 
 from django.utils.timezone import now
@@ -350,6 +350,21 @@ class YearLevelFee(models.Model):
         verbose_name_plural = "Year Level Fees"
         db_table = "YearLevelFee"
 
+
+#discounts to students
+class FeeDiscount(models.Model):
+    student = models.OneToOneField("student.Student", on_delete=models.CASCADE,related_name="discount_info")
+    admission_fee_discount = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
+    tuition_fee_discount = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
+    discount_reason = models.CharField(max_length=255, blank=True, null=True)
+    is_allowed = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Discount for {self.student} - Admission fee: {self.admission_fee_discount}, Tuition fee: {self.tuition_fee_discount}"
+ 
+
 class FeeRecord(models.Model):
     student = models.ForeignKey("student.Student", on_delete=models.CASCADE)
     MONTH_CHOICES = [
@@ -363,6 +378,7 @@ class FeeRecord(models.Model):
     total_amount = models.DecimalField(max_digits=8, decimal_places=2)
     paid_amount = models.DecimalField(max_digits=8, decimal_places=2)
     due_amount = models.DecimalField(max_digits=8, decimal_places=2)
+    discounted_amount = models.ForeignKey(FeeDiscount, on_delete=models.SET_NULL, null=True, blank=True)
     payment_date = models.DateField(auto_now_add=True)
     payment_mode = models.CharField(max_length=20, choices=[('Cash', 'Cash'), ('Online', 'Online'), ('Cheque', 'Cheque')])
     is_cheque_cleared = models.BooleanField(default=False)  # Added as of 11June25 at 12:39 PM
@@ -403,8 +419,8 @@ class FeeRecord(models.Model):
 
 class OfficeStaff(models.Model):
     user = models.OneToOneField("authentication.User", on_delete=models.SET_NULL, null=True)
-    phone_no = models.CharField(max_length=20)
-    gender = models.CharField(max_length=20)
+    phone_no = models.CharField(max_length=20,null=True, blank=True)
+    gender = models.CharField(max_length=20,null=True, blank=True)
     department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True)
     date_joined = models.DateField(auto_now_add=True)
     student = models.ManyToManyField("student.Student", blank=True, related_name="managed_by_staff")
@@ -463,3 +479,97 @@ class File(models.Model):
 
     class Meta:
         db_table = "File"
+
+
+
+
+
+
+# -----------------------------------exam---(remove it before pushing)------------------------------------
+
+class ExamType(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+
+    def __str__(self):
+        return self.name
+
+class StudentMarks(models.Model):
+    exam_type = models.ForeignKey(ExamType,on_delete=models.CASCADE)#FA1
+    subject = models.ForeignKey(Subject,on_delete=models.CASCADE)
+    term = models.ForeignKey(Term,on_delete=models.CASCADE)#school year
+    student = models.ForeignKey(StudentYearLevel,on_delete=models.CASCADE)#student aor class name
+    teacher = models.ForeignKey(Teacher,on_delete=models.CASCADE)#teacher name
+    marks_obtained = models.DecimalField(max_digits=5, decimal_places=2)
+    
+    class Meta:
+        unique_together = ['student', 'exam_type', 'term','subject']
+
+    def __str__(self):
+        return f"{self.student} - {self.exam_type.name} - {self.marks_obtained}"
+
+
+"""------------------------------------------RESULT----------(code to push)--------------------------------"""
+class ReportCard(models.Model):
+    # student = models.ForeignKey(Student, on_delete=models.CASCADE)#student
+    # standard = models.ForeignKey(StudentYearLevel,on_delete=models.CASCADE,related_name="reportcards_as_standard")#as class is a reserved keyword i used 'standard' instead of 'class'
+    # academic_year = models.ForeignKey(StudentYearLevel, on_delete=models.CASCADE,related_name="reportcards_as_acadmic_year")
+    
+    student_level = models.ForeignKey(StudentYearLevel, on_delete=models.CASCADE, null=True, blank=True)
+    total_marks = models.IntegerField()    #fetch from sa1+sa2 of all subj
+    max_marks = models.IntegerField()      #subj->len*100
+    percentage = models.FloatField()
+    grade = models.CharField(max_length=50)
+    division = models.CharField(max_length=50)
+    rank = models.IntegerField(null=True, blank=True)  
+    attendance = models.CharField(max_length=10, null=True, blank=True)
+    teacher_remark = models.TextField()
+    promoted_to_class = models.ForeignKey(StudentYearLevel, on_delete=models.CASCADE, null=True, blank=True, related_name="reportcards_as_promotion")
+    supplementary_in = models.CharField(max_length=100, null=True, blank=True)
+    school_reopen_date = models.DateField()
+
+    # class Meta:
+    #     unique_together = ('student_level','promoted_to_class')
+
+    def __str__(self):
+        student = self.student_level.student.user
+        return f"{student.first_name} {student.last_name} - {self.student_level.year.year_name} - {self.student_level.level.level_name}"
+    
+
+class SubjectScore(models.Model):
+    report_card = models.ForeignKey(ReportCard, on_delete=models.CASCADE, related_name='subject_scores')
+    marks_obtained = models.ForeignKey(StudentMarks, on_delete=models.CASCADE, null=True, blank=True, related_name='subject_scores')
+    def __str__(self):
+        return f"{self.marks_obtained} -{self.marks_obtained.subject.subject_name}- {self.report_card.student_level.year.year_name} - {self.report_card.student_level.level.level_name}"
+    
+class ReportCardDocument(models.Model):
+    report_card = models.ForeignKey(ReportCard, on_delete=models.CASCADE, related_name='documents')
+    documents = models.ForeignKey(Document, on_delete=models.CASCADE,null=True, blank=True, related_name='report_card_documents')
+
+class NonScholasticGradeTermWise(models.Model):
+    non_scholastic_subject = models.ForeignKey(Subject, on_delete=models.CASCADE,null=True, blank=True ,related_name='term_grades')
+    report_card = models.ForeignKey(ReportCard, on_delete=models.CASCADE, null=True, blank=True,related_name='non_scholastic_grades')
+    term = models.ForeignKey("Term", on_delete=models.CASCADE)
+    grade = models.CharField(max_length=5)
+    class Meta:
+        unique_together = ('report_card','non_scholastic_subject','term','grade')
+    def __str__(self):
+        return f"{self.non_scholastic_subject.subject_name} - {self.term.term_number} - {self.report_card.student_level.student.user.first_name}"
+
+
+class PersonalSocialQuality(models.Model):
+    quality_name = models.CharField(max_length=100)
+    def __str__(self):
+        return self.quality_name
+
+
+class PersonalSocialQualityTermWise(models.Model):
+    personal_quality = models.ForeignKey(PersonalSocialQuality, on_delete=models.CASCADE, related_name='term_grades')
+    report_card = models.ForeignKey(ReportCard, on_delete=models.CASCADE,null=True, blank=True, related_name='personal_qualities')
+    term = models.ForeignKey("Term", on_delete=models.CASCADE)
+    grade = models.CharField(max_length=5)
+
+    class Meta:
+        unique_together = ('report_card', 'personal_quality', 'term', 'grade')
+    
+    def __str__(self):
+        return f"{self.personal_quality.quality_name} - {self.term.term_number} - {self.report_card.student_level.student.user.first_name}-{self.report_card.student_level.year.year_name} - {self.report_card.student_level.level.level_name}"

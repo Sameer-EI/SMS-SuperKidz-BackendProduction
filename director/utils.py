@@ -120,3 +120,107 @@ def Document_folder(instance, filename):
 
     return os.path.join(base_path, folder_path, filename)
 
+
+#------------------------------------------REPORTCARD Util----------------------------------------------------
+from collections import defaultdict
+from .models import *
+
+def calculate_subject_summary(subjects_data):
+    required_exams = {"sa1", "sa2"}
+    subject_marks = defaultdict(dict)  # subject -> {exam_type: mark}
+
+    # Collect marks
+    for exam in subjects_data:
+        exam_type = exam.get("exam_type", "").lower()
+        if exam_type not in required_exams:
+            continue
+
+        for subject, mark in exam.get("subjects", {}).items():
+            try:
+                subject_marks[subject][exam_type] = float(mark)
+            except (TypeError, ValueError):
+                continue
+
+    # Validate missing exam types per subject
+    missing_data = {
+        subject: list(required_exams - marks.keys())
+        for subject, marks in subject_marks.items()
+        if required_exams - marks.keys()
+    }
+
+    if missing_data:
+        return {
+            "subject_avg": {
+                "error": "Some subjects are missing marks for required exams.",
+                "missing_exam_data": {
+                    subject: [x.upper() for x in exams]
+                    for subject, exams in missing_data.items()
+                }
+            },
+            "total_marks": 0,
+            "max_marks": 0,
+            "percentage": 0,
+            "grade": "F",
+            "supplementary_in": []
+        }
+
+    if not subject_marks:
+        return {
+            "subject_avg": {
+                "error": "SA1&SA2 Missing"
+            },
+            "total_marks": 0,
+            "max_marks": 0,
+            "percentage": 0,
+            "grade": "F",
+            "supplementary_in": []
+        }
+
+    # Calculate per-subject percent
+    subject_avg = {}
+    supplementary_in = []
+    
+    for subject, exams in subject_marks.items():
+        sa1 = exams.get("sa1", 0)
+        sa2 = exams.get("sa2", 0)
+        obtained = sa1 + sa2
+
+        # Scale: max combined SA1+SA2 is 200 → scale to 100
+        percent = round((obtained / 200) * 100, 2)
+        subject_avg[subject] = round(obtained / 2, 2)  # still averaging for display
+
+        if percent < 40:
+            supplementary_in.append(subject)
+
+    # Final totals
+    total_obtained = sum(subject_avg.values())
+    subject_count = len(subject_avg)
+    total_possible = subject_count * 100
+    percentage = round((total_obtained / total_possible) * 100, 2) if total_possible else 0
+
+    # Grade logic
+    if percentage >= 90:
+        grade = "A++"
+    elif percentage >= 80:
+        grade = "A+"
+    elif percentage >= 70:
+        grade = "A"
+    elif percentage >= 60:
+        grade = "B"
+    elif percentage >= 50:
+        grade = "C"
+    elif percentage >= 40:
+        grade = "D"
+    else:
+        grade = "F"
+
+    return {
+        "subject_avg": subject_avg,
+        "total_marks": total_obtained,
+        "max_marks": total_possible,
+        "percentage": percentage,
+        "grade": grade,
+        "supplementary_in": supplementary_in
+    }
+
+

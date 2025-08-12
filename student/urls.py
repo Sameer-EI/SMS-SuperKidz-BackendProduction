@@ -9,7 +9,7 @@ router.register(r'students', StudentView)
 router.register(r'guardian', GuardianProfileView)
 
 router.register(r'studentyearlevels', StudentYearLevelView,basename='studentyearlevelss')   # As of 29May25 at 02:30 PM
-
+router.register(r'studentguardian', StudentGuardianView, basename='student-guardian')  # Added as of 18jul25 at 03:10 PM
 
 
 urlpatterns = [

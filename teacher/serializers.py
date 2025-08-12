@@ -27,7 +27,7 @@ class TeacherSerializer(serializers.ModelSerializer):
     phone_no = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True)
     gender = serializers.CharField(max_length=50, required=False, allow_blank=True, allow_null=True)
     adhaar_no = serializers.IntegerField(required=False, allow_null=True)
-    pan_no = serializers.IntegerField(required=False, allow_null=True)
+    pan_no = serializers.CharField(max_length=50, required=False, allow_blank=True, allow_null=True)
     qualification = serializers.CharField(max_length=250, required=False, allow_blank=True, allow_null=True)
 
     class Meta:

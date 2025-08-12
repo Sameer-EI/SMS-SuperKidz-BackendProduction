@@ -30,6 +30,13 @@ router.register(r'fee-types', FeeTypeView) # whole code commented as of 06June25
 router.register(r'year-level-fee', YearLevelFeeView, basename='year-level-fee')
 router.register(r'fee-record', FeeRecordView, basename='fee-record') #
 
+router.register(r'fee-discounts',FeeDiscountView, basename='fee-discounts')
+
+router.register(r'personal-social-grades', PersonalSocialGradeViewSet, basename='personal-social-grades')
+router.register(r'non-scholastic-grades', NonScholasticGradeViewSet, basename='non-scholastic')
+router.register(r'report-cards', ReportCardViewSet, basename='report-cards')
+
+
 
 urlpatterns = [
     path("year-levels/", YearLevelView),
@@ -59,6 +66,7 @@ urlpatterns = [
     path('student-category-dashboard/', student_category, name='student-category'),
     path('income-distribution-dashboard/', guardian_income_distribution, name='guardian-income-distribution'), 
     path("fee-dashboard/", fee_dashboard, name="fee-dashboard-summary"),    # complete dashboard
+    
 ]
 
 
