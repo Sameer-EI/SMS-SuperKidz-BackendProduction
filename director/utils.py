@@ -121,6 +121,54 @@ def Document_folder(instance, filename):
     return os.path.join(base_path, folder_path, filename)
 
 
+# ---------------------- Exam Paper
+
+def ExamPaper_folder(instance, filename):
+    try:
+        paper = instance  
+        teacher = paper.teacher.user
+        teacher_name = f"{teacher.first_name}_{teacher.last_name}"
+    except Exception as e:
+        print("Error accessing teacher:", e)
+        teacher_name = "unknown_teacher"
+
+    try:
+        # class_name = paper.exam.year_level.level_name
+        class_name = paper.year_level.level_name
+
+    except Exception as e:
+        print("Error accessing class name:", e)
+        class_name = "unknown_class"
+
+    try:
+        subject_name = paper.subject.subject_name
+        school_year = paper.term.year.year_name
+        exam_type = paper.exam_type.name
+
+        new_filename = f"{subject_name}-{school_year}-{exam_type}{os.path.splitext(filename)[1]}"
+    except Exception as e:
+        print("Error building file name:", e)
+        new_filename = filename
+
+    folder_path = os.path.join("ExamPaper_folder", teacher_name, class_name)
+    full_path = os.path.join(folder_path, new_filename)
+
+    print("file path:", full_path)  
+    return full_path
+
+# ------------------ File Download's
+from django.http import FileResponse
+from rest_framework.response import Response
+
+def get_file_response(file_field, file_label="file"):
+    if file_field and hasattr(file_field, "path") and os.path.exists(file_field.path):
+        response = FileResponse(open(file_field.path, 'rb'))
+        response["Content-Disposition"] = f'attachment; filename="{os.path.basename(file_field.name)}"'
+        return response
+    return Response({"error": f"{file_label} not found."}, status=404)
+
+
+
 #------------------------------------------REPORTCARD Util----------------------------------------------------
 from collections import defaultdict
 from .models import *

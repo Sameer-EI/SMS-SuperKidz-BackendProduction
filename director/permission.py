@@ -1,6 +1,74 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 from rest_framework.response import Response
 
+
+class RoleBasedExamPermission(BasePermission):
+    def has_permission(self, request, view):
+        user = request.user
+        if not user.is_authenticated:
+            return False
+
+        role_names = [role.name.lower() for role in user.role.all()]
+        action = view.action
+        api_section = getattr(view, 'api_section', None)
+
+        access_rules = {
+            'exam_type': {
+                'director': 'full',
+                'teacher': 'view',
+                'student': 'none',
+                'office staff': 'full',
+                'others': 'none'
+            },
+            'exam_paper': {
+                'director': 'full',
+                'teacher': 'full',
+                'student': 'none',
+                'office staff': 'view',
+                'others': 'none'
+            },
+            'exam_schedule': {
+                'director': 'full',
+                'teacher': 'full',
+                'student': 'view_own',
+                'guardian': 'view',
+                'office staff': 'partial',
+                'others': 'none'
+            },
+
+            'student_marks': {
+                'director': 'full',
+                'teacher': 'view_own_create',
+                'student': 'none',
+                'office staff': 'view_own_create',
+                'others': 'none'
+            }
+        }
+
+        if not api_section:
+            return False
+
+        for role in role_names:
+            role = role.lower()
+            access_level = access_rules.get(api_section, {}).get(role, 'none')
+
+            if access_level == 'none':
+                continue
+            elif access_level == 'view' and request.method in SAFE_METHODS:
+                return True
+            elif access_level == 'partial' and request.method in ['GET', 'POST', 'PUT']:
+                return True
+            elif access_level == 'view_own' and request.method == 'GET':
+                return True
+            elif access_level == 'view_own_create' and request.method in ['GET', 'POST', 'PUT']:
+                return True
+            elif access_level == 'full':
+                return True
+
+        return False
+
+
+
 class RoleBasedPermission(BasePermission):
     """
     For report card and related views, allow access based on user roles.
@@ -32,3 +100,10 @@ class RoleBasedPermission(BasePermission):
         # Deny everything else by default
         return False
 
+
+class IsDirector(BasePermission):
+    """
+    Allows access only to users with the 'Director' role.
+    """
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and request.user.role.filter(name="Director").exists()

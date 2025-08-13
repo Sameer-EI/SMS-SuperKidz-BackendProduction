@@ -4,7 +4,7 @@ import uuid
 from django.db import models
 # from authentication.models import User
 from student.models import Student, Guardian,StudentYearLevel
-from .utils import Document_folder 
+from .utils import * 
 from teacher.models import Teacher 
 from django.utils.timezone import now
 from student.models import Student, Guardian, StudentYearLevel
@@ -480,18 +480,47 @@ class File(models.Model):
     class Meta:
         db_table = "File"
 
+# -----------------------Exam module
 
-
-
-
-
-# -----------------------------------exam---(remove it before pushing)------------------------------------
 
 class ExamType(models.Model):
-    name = models.CharField(max_length=100, unique=True)
+    name = models.CharField(max_length=100, unique=True)#
 
     def __str__(self):
         return self.name
+
+
+class ExamPaper(models.Model):
+    exam_type = models.ForeignKey(ExamType,on_delete=models.CASCADE)#
+    term = models.ForeignKey(Term, on_delete=models.CASCADE)
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE)#
+    year_level = models.ForeignKey(YearLevel,on_delete=models.CASCADE)
+    total_marks = models.DecimalField(max_digits=5, decimal_places=2)#
+    paper_code = models.CharField(max_length=7,unique=True)#
+    teacher = models.ForeignKey(Teacher, on_delete=models.SET_NULL, null=True)#
+    uploaded_file = models.FileField(upload_to=ExamPaper_folder, blank=True, null=True)#
+
+    class Meta:
+        unique_together = ['exam_type', 'subject', 'year_level']
+    
+
+    def __str__(self):
+        return f"{self.year_level} - {self.subject.subject_name} ({self.total_marks})"
+
+
+class ExamSchedule(models.Model):
+    class_name = models.ForeignKey(YearLevel,on_delete=models.CASCADE)
+    term = models.ForeignKey(Term, on_delete=models.CASCADE)
+    exam_type = models.ForeignKey(ExamType,on_delete=models.CASCADE)
+    subject = models.ForeignKey(Subject,on_delete=models.CASCADE)
+    exam_date = models.DateField()
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+
+    
+    def __str__(self):
+        return f"{self.exam_date}"
+
 
 class StudentMarks(models.Model):
     exam_type = models.ForeignKey(ExamType,on_delete=models.CASCADE)#FA1
@@ -506,6 +535,9 @@ class StudentMarks(models.Model):
 
     def __str__(self):
         return f"{self.student} - {self.exam_type.name} - {self.marks_obtained}"
+
+
+
 
 
 """------------------------------------------RESULT----------(code to push)--------------------------------"""
