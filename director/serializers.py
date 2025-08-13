@@ -791,16 +791,20 @@ class FeeDiscountSerializer(serializers.ModelSerializer):
         admission_discount = Decimal(attrs.get("admission_fee_discount") or 0)
         tuition_discount = Decimal(attrs.get("tuition_fee_discount") or 0)
 
+        errors = {}
+
         if admission_discount > admission_fee_amount:
-            raise serializers.ValidationError({
-                "admission_fee_discount": f"Cannot exceed actual admission fee ({admission_fee_amount})."
-            })
+            errors["admission_fee_discount"] = (
+                f"Cannot exceed actual admission fee ({admission_fee_amount})."
+            )
 
         if tuition_discount > tuition_fee_amount:
-            raise serializers.ValidationError({
-                "tuition_fee_discount": f"Cannot exceed actual tuition fee ({tuition_fee_amount})."
-            })
+            errors["tuition_fee_discount"] = (
+                f"Cannot exceed actual tuition fee ({tuition_fee_amount})."
+            )
 
+        if errors:
+            raise serializers.ValidationError(errors)
         return attrs
 
 
