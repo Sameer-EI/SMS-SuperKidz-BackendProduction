@@ -368,7 +368,7 @@ class AdmissionSerializer(serializers.ModelSerializer):
             'year_level', 'school_year',
             'admission_date', 'previous_school_name', 'previous_standard_studied',
             'tc_letter', 'emergency_contact_no', 'entire_road_distance_from_home_to_school',
-            'obtain_marks', 'total_marks', 'previous_percentage','enrollment_no'
+            'obtain_marks', 'total_marks', 'previous_percentage','enrollment_no','is_rte', 'rte_number'
         ]
         read_only_fields = [
             'admission_date',
@@ -406,6 +406,8 @@ class AdmissionSerializer(serializers.ModelSerializer):
             return None
 
     def create(self, validated_data):
+        is_rte = validated_data.pop('is_rte', False)
+        rte_number = validated_data.pop('rte_number', None)
         student_data = validated_data.pop('student')
         guardian_data = validated_data.pop('guardian')
         address_data = validated_data.pop('address_input', None)
@@ -493,6 +495,9 @@ class AdmissionSerializer(serializers.ModelSerializer):
             total_marks=validated_data.get('total_marks'),
             previous_percentage=validated_data.get('previous_percentage'),
             enrollment_no=validated_data.get('enrollment_no'),
+            is_rte=is_rte,
+            rte_number=rte_number
+
         )
 
         if guardian_type:
@@ -509,6 +514,8 @@ class AdmissionSerializer(serializers.ModelSerializer):
 
 
     def update(self, instance, validated_data):
+        instance.is_rte = validated_data.get('is_rte', instance.is_rte)
+        instance.rte_number = validated_data.get('rte_number', instance.rte_number)
         student_data = validated_data.pop('student', None)
         guardian_data = validated_data.pop('guardian', None)
         address_data = validated_data.pop('address_input', None)
