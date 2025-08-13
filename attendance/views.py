@@ -11,6 +11,7 @@ from rest_framework.viewsets import ViewSet
 from teacher.models import TeacherYearLevel
 from student.models import Guardian,StudentGuardian, StudentYearLevel, Student
 from django.shortcuts import get_object_or_404
+import holidays
 
 
 
@@ -459,7 +460,7 @@ class BulkHolidayAttendanceViewSet(ViewSet):
         if start_date > end_date:
             return Response({"error": "Start date must be before end date."}, status=400)
 
-        # Save Holiday record
+
         Holiday.objects.create(
             title=title,
             start_date=start_date,
@@ -489,6 +490,129 @@ class BulkHolidayAttendanceViewSet(ViewSet):
             "message": f"{count} holiday attendance records created from {start_date} to {end_date}."
         }, status=201)
         
-        
-        
 
+
+class FetchIndianHolidaysView(APIView):
+
+    def get(self, request, *args, **kwargs):
+        year = request.query_params.get('year')
+
+        if not year or not str(year).isdigit():
+            return Response({'error': 'Please provide a valid year (e.g., ?year=2025)'}, status=400)
+
+        year = int(year)
+        holidays_qs = SchoolHoliday.objects.filter(date__year=year).order_by('date')
+        serializer = SchoolHolidaySerializer(holidays_qs, many=True)
+
+        return Response({
+            "year": year,
+            "total": holidays_qs.count(),
+            "holidays": serializer.data
+        }, status=200)
+
+    def post(self, request, *args, **kwargs):
+        year = request.data.get('year')
+
+        if not year or not str(year).isdigit():
+            return Response(
+                {'error': 'Please provide a valid year (e.g., { "year": 2025 })'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        year = int(year)
+        india_holidays = holidays.India(years=year)
+        created, skipped = 0, 0
+
+        for date, name in india_holidays.items():
+            if not SchoolHoliday.objects.filter(date=date).exists():
+                SchoolHoliday.objects.create(
+                    title=name,
+                    date=date,
+                    description=name
+                )
+                created += 1
+            else:
+                skipped += 1
+
+        return Response({
+            "message": f"{created} holidays added, {skipped} already existed.",
+            "year": year
+        }, status=status.HTTP_201_CREATED)
+        
+class SchoolEventViewSet(ModelViewSet):
+    queryset = SchoolEvent.objects.all().order_by('start_date')
+    serializer_class = SchoolEventSerializer
+    
+class MonthlyCalendarView(APIView):
+    def get(self, request, *args, **kwargs):
+        month = request.query_params.get('month')
+        year = request.query_params.get('year')
+
+        if not month or not year or not month.isdigit() or not year.isdigit():
+            return Response(
+                {"error": "Please provide valid month and year. Example: ?month=10&year=2025"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        month = int(month)
+        year = int(year)
+
+        # Filter holidays
+        holidays = SchoolHoliday.objects.filter(date__month=month, date__year=year).order_by('date')
+        holiday_data = SchoolHolidaySerializer(holidays, many=True).data
+
+        # Filter events (range overlap within that month)
+        events = SchoolEvent.objects.filter(
+            start_date__year=year,
+            start_date__month=month
+        ).order_by('start_date')
+        event_data = SchoolEventSerializer(events, many=True).data
+
+        return Response({
+            "year": year,
+            "month": month,
+            "holidays": holiday_data,
+            "events": event_data
+        }, status=status.HTTP_200_OK)
+        
+##-------------------------Whatsapp Message---------------------------
+from twilio.rest import Client
+
+class SendWhatsAppView(APIView):
+    def post(self, request):
+        account_sid = 'AC75f0880296f2c1377b2ca30442bbd3e1'
+        auth_token = '01dfff8731923c8e91e47b469f533fd5'
+        twilio_whatsapp_number = 'whatsapp:+14155238886'
+
+        client = Client(account_sid, auth_token)
+
+        verified_numbers = [
+            '+918102637122',
+            #'+918109145639'
+            #'+919111499689'
+        ]
+
+        message_text = " This message is sent from Mecaps SMS Dev Team."
+
+        sent_messages = []
+
+        for number in verified_numbers:
+            try:
+                message = client.messages.create(
+                    from_=twilio_whatsapp_number,
+                    body=message_text,
+                    to=f'whatsapp:{number}'
+                )
+                sent_messages.append({
+                    "to": number,
+                    "sid": message.sid,
+                    "status": "sent"
+                })
+            except Exception as e:
+                sent_messages.append({
+                    "to": number,
+                    "error": str(e),
+                    "status": "failed"
+                })
+
+        return Response({"results": sent_messages}, status=status.HTTP_200_OK)
