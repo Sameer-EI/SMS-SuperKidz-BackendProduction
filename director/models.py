@@ -260,6 +260,8 @@ class Admission(models.Model):
     # year_level = models.ForeignKey('YearLevel', on_delete=models.DO_NOTHING)
 
     school_year = models.ForeignKey(SchoolYear, on_delete=models.DO_NOTHING)
+    is_rte = models.BooleanField(default=False)
+    rte_number = models.CharField(max_length=50, blank=True, null=True)
     emergency_contact_no = models.CharField(max_length=100)
     entire_road_distance_from_home_to_school = models.CharField(max_length=100)
     obtain_marks = models.FloatField()
