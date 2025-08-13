@@ -27,6 +27,18 @@ class HolidaySerializer(serializers.ModelSerializer):
     class Meta:
         model = Holiday
         fields = '__all__'
+        
+        
+class SchoolHolidaySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SchoolHoliday
+        fields = ['id', 'title', 'date', 'description']
+        
+class SchoolEventSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SchoolEvent
+        fields = ['id', 'title', 'start_date', 'end_date', 'description']
+
     
     
 
