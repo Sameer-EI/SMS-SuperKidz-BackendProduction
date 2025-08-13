@@ -1487,6 +1487,45 @@ class YearLevelFeeView(viewsets.ModelViewSet):
         return Response(grouped_fees[0] if grouped_fees else {})
     
     
+
+from twilio.rest import Client
+
+def send_whatsapp_message(message_text):
+    account_sid = 'AC75f0880296f2c1377b2ca30442bbd3e1'
+    auth_token = '01dfff8731923c8e91e47b469f533fd5'
+    twilio_whatsapp_number = 'whatsapp:+14155238886'
+    
+    phone_numbers = [
+        '+918109145639',
+        '+918847418400',
+        '+918102637122'
+    ]
+
+    client = Client(account_sid, auth_token)
+
+    sent_messages = []
+    print('\n\n\n',sent_messages)
+    for number in phone_numbers:
+        try:
+            message = client.messages.create(
+                from_=twilio_whatsapp_number,
+                body=message_text,
+                to=f'whatsapp:{number}'
+            )
+            sent_messages.append({
+                "to": number,
+                "sid": message.sid,
+                "status": "sent"
+            })
+        except Exception as e:
+            sent_messages.append({
+                "to": number,
+                "error": str(e),
+                "status": "failed"
+            })
+
+    return sent_messages
+
 # Fee Record View
 # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/
 class FeeRecordView(viewsets.ModelViewSet):
@@ -1530,39 +1569,6 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         return queryset.distinct()
 
-    # API to submit fee more than a single month
-    # https://187gwsw1-7000.inc1.devtunnels.ms/d/fee-record/submit_single_multi_month_fees/
-    # @action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
-    # def submit_single_multi_month_fees(self, request):
-    #     student_id = request.data.get('student_id')
-    #     months = request.data.get('months', [])
-    #     year_level_fees = request.data.get('year_level_fees', [])
-    #     paid_amount = request.data.get('paid_amount')
-    #     payment_mode = request.data.get('payment_mode')
-    #     remarks = request.data.get('remarks')
-    #     received_by = request.data.get('received_by')
-
-    #     if not months or not isinstance(months, list):
-    #         return Response({"error": "Months must be a non-empty list."}, status=status.HTTP_400_BAD_REQUEST)
-
-    #     responses = []
-    #     for month in months:
-    #         serializer = self.get_serializer(data={
-    #             "student_id": student_id,
-    #             "month": month,
-    #             "year_level_fees": year_level_fees,
-    #             "paid_amount": paid_amount,
-    #             "payment_mode": payment_mode,
-    #             "remarks": f"{remarks or ''} ({month})",
-    #             "received_by": received_by
-    #         })
-    #         if serializer.is_valid():
-    #             serializer.save()
-    #             responses.append(serializer.data)
-    #         else:
-    #             responses.append({"month": month, "errors": serializer.errors})
-
-    #     return Response(responses, status=status.HTTP_200_OK)
     
     @action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
     def submit_single_multi_month_fees(self, request):
@@ -1626,6 +1632,17 @@ class FeeRecordView(viewsets.ModelViewSet):
             "remarks": remarks,
             "received_by": received_by
         }
+        message_text = (
+            f"Dear {first_record.student.user.get_full_name()},\n"
+            f"Your fee for {', '.join(months)} month has been successfully recorded.\n"
+            f"Receipt No: {receipt_number}\n"
+            f"Total Amount: ₹{total_amount:.2f}\n"
+            f"Paid Amount: ₹{paid_amount:.2f}\n"
+            f"Due Amount: ₹{total_due:.2f}\n"
+            f"Payment Mode: {payment_mode}\n"
+            f"Thank you!"
+        )
+        send_whatsapp_message(message_text)
 
         return Response(combined_response, status=status.HTTP_200_OK)
     
@@ -1717,7 +1734,8 @@ class FeeRecordView(viewsets.ModelViewSet):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     
-    
+
+
     
     # corrected amount issue as of 19June25 at 02:50 PM
     # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/student-fee-summary/?year_level=5
