@@ -32,6 +32,12 @@ router.register(r'fee-record', FeeRecordView, basename='fee-record') #
 
 router.register(r'fee-discounts',FeeDiscountView, basename='fee-discounts')
 
+router.register(r'Exam-Type',ExamTypeView)
+router.register(r'Exam-Paper',ExamPaperView)
+router.register(r'Exam-Schedule',ExamScheduleView)
+router.register(r'Student-Marks',StudentMarksView,basename='student-marks')
+
+
 router.register(r'personal-social-grades', PersonalSocialGradeViewSet, basename='personal-social-grades')
 router.register(r'non-scholastic-grades', NonScholasticGradeViewSet, basename='non-scholastic')
 router.register(r'report-cards', ReportCardViewSet, basename='report-cards')
