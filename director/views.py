@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from django.db.models import Count
 from collections import OrderedDict
 from attendance.models import StudentAttendance
-from director.permission import RoleBasedPermission
+from director.permission import *
 from director.utils import calculate_subject_summary
 
 
@@ -1482,9 +1482,9 @@ class PeriodView(viewsets.ModelViewSet):
     serializer_class = PeriodSerializer
     
     
-class ClassPeriodView(viewsets.ModelViewSet):
-    queryset = ClassPeriod.objects.all()
-    serializer_class = ClassPeriodSerializer    
+# class ClassPeriodView(viewsets.ModelViewSet):
+#     queryset = ClassPeriod.objects.all()
+#     serializer_class = ClassPeriodSerializer    
 
 
 class DirectorView(viewsets.ModelViewSet):
@@ -2304,6 +2304,910 @@ class FeeRecordView(viewsets.ModelViewSet):
             })
 
         return Response(result, status=status.HTTP_200_OK)
+
+
+
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated],url_path="student_unpaid_fees")
+    def student_unpaid_fees(self, request):
+        user = request.user
+        roles = [role.name.lower() for role in user.role.all()]
+        student_id = request.query_params.get("student_id")
+
+        if "director" in roles or "office staff" in roles:
+            if student_id:
+                queryset = FeeRecord.objects.filter(payment_status="Unpaid", student_id=student_id)
+            else:
+                queryset = FeeRecord.objects.filter(payment_status="Unpaid")
+
+
+        elif "teacher" in roles:
+            teacher_instance = get_object_or_404(Teacher, user=user)
+
+            assigned_class_ids = TeacherYearLevel.objects.filter(
+                teacher=teacher_instance
+            ).values_list("year_level_id", flat=True)
+
+            if student_id:
+                try:
+                    student_yl = StudentYearLevel.objects.select_related("student", "level").get(id=student_id)
+                except StudentYearLevel.DoesNotExist:
+                    return Response({"detail": "Student not found."}, status=404)
+
+                if student_yl.level.id not in assigned_class_ids:
+                    return Response({"detail": "You are not allowed to view this student's data."}, status=403)
+
+                queryset = FeeRecord.objects.filter(
+                    payment_status="Unpaid",
+                    student=student_yl.student
+                )
+
+            else:
+                student_ids = StudentYearLevel.objects.filter(
+                    level_id__in=assigned_class_ids
+                ).values_list("student_id", flat=True)
+
+                queryset = FeeRecord.objects.filter(
+                    payment_status="Unpaid",
+                    student_id__in=student_ids
+                )
+
+
+        elif "student" in roles:
+            if "student_id" in request.query_params:
+                return Response({"detail": "You are not allowed to provide student_id."}, status=400)
+
+            student = get_object_or_404(Student, user=user)
+            queryset = FeeRecord.objects.filter(
+                payment_status="Unpaid",
+                student=student
+            )
+
+
+        elif "guardian" in roles:
+            if "student_id" in request.query_params:
+                return Response({"detail": "You are not allowed to provide student_id."}, status=400)
+            guardian = get_object_or_404(Guardian, user=user)
+            student_ids = StudentGuardian.objects.filter(guardian=guardian).values_list("student_id", flat=True)
+            queryset = FeeRecord.objects.filter(
+                payment_status="Unpaid", student_id__in=student_ids
+            )
+
+        else:
+            return Response({"detail": "Permission denied."}, status=403)
+
+        serializer = FeeRecordSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+
+
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="overall_unpaid_fees")
+    def overall_unpaid_fees(self, request):
+        user = request.user
+        roles = [role.name.lower() for role in user.role.all()]
+
+        if not any(role in roles for role in ["director", "teacher", "office staff"]):
+            return Response({"detail": "You do not have permission to access this data."}, status=status.HTTP_403_FORBIDDEN)
+
+        class_id = request.query_params.get("class_id", "").strip()
+        month = request.query_params.get("month", "").strip()
+
+        unpaid_fee_records = []
+
+        student_levels = StudentYearLevel.objects.all().select_related("student", "level")
+
+        if "teacher" in roles:
+            try:
+                teacher = Teacher.objects.get(user=user)
+                teacher_classes = TeacherYearLevel.objects.filter(teacher=teacher).values_list("year_level_id", flat=True)
+            except Teacher.DoesNotExist:
+                return Response({"detail": "Teacher not found."}, status=status.HTTP_404_NOT_FOUND)
+            except TeacherYearLevel.DoesNotExist:
+                return Response({"detail": "Assigned class for teacher not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            student_levels = student_levels.filter(level_id__in=teacher_classes)
+
+        if class_id:
+            student_levels = student_levels.filter(level_id=class_id)
+
+        for student_level in student_levels:
+            student = student_level.student
+
+            fee_records = FeeRecord.objects.filter(
+                student=student,
+                payment_status="unpaid"
+            ).prefetch_related(
+                "year_level_fees__year_level",
+                "year_level_fees__fee_type"
+            )
+
+            if month:
+                fee_records = fee_records.filter(month__iexact=month)
+
+            for record in fee_records:
+                grouped_fees = {}
+                for ylf in record.year_level_fees.all():
+                    level_name = ylf.year_level.level_name
+                    if level_name not in grouped_fees:
+                        grouped_fees[level_name] = []
+                    grouped_fees[level_name].append({
+                        "id": ylf.id,
+                        "fee_type": ylf.fee_type.name,
+                        "amount": str(ylf.amount)
+                    })
+
+                grouped_fees_list = [
+                    {"year_level": level, "fees": fees}
+                    for level, fees in grouped_fees.items()
+                ]
+
+                unpaid_fee_records.append({
+                    "id": record.id,
+                    "student": {
+                        "id": student.id,
+                        "name": str(student)
+                    },
+                    "month": record.month,
+                    "year_level_fees_grouped": grouped_fees_list,
+                    "total_amount": str(record.total_amount),
+                    "paid_amount": str(record.paid_amount),
+                    "due_amount": str(record.due_amount),
+                    "payment_date": record.payment_date,
+                    "payment_mode": record.payment_mode,
+                    "is_cheque_cleared": record.is_cheque_cleared,
+                    "receipt_number": record.receipt_number,
+                    "late_fee": str(record.late_fee),
+                    "payment_status": record.payment_status,
+                    "remarks": record.remarks,
+                    "received_by": record.received_by,
+                })
+
+        return Response(unpaid_fee_records, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], url_path="highest_dues_students")
+    def highest_dues_students(self, request):
+        user = request.user
+        roles = [role.name.lower() for role in user.role.all()]
+
+        if not any(role in roles for role in ["director", "teacher", "office staff"]):
+            return Response({"detail": "You do not have permission to access this data."})
+
+        class_id = request.query_params.get("class_id")
+        month = request.query_params.get("month")
+        min_due = request.query_params.get("min_due_amount")
+        max_due = request.query_params.get("max_due_amount")
+        # top = request.query_params.get("top")
+
+        queryset = FeeRecord.objects.filter(payment_status="unpaid")
+        print("queryset : ",queryset)
+        class_id = request.query_params.get("class_id")
+        if class_id:
+            class_id = class_id.strip()  
+            student_ids = StudentYearLevel.objects.filter(level_id=class_id).values_list("student_id", flat=True)
+            print("student_ids:", list(student_ids))  
+            queryset = queryset.filter(student_id__in=student_ids)
+        if month:
+            queryset = queryset.filter(month=month)
+
+        if min_due:
+            try:
+                queryset = queryset.filter(due_amount__gte=float(min_due))
+            except ValueError:
+                return Response({"detail": "min_due_amount must be a number."})
+
+        if max_due:
+            try:
+                queryset = queryset.filter(due_amount__gte=float(max_due))
+            except ValueError:
+                return Response({"detail": "max_due_amount must be a number."})
+
+        queryset = queryset.order_by("due_amount")
+
+        # if top:
+        #     try:
+        #         top = int(top)
+        #         queryset = queryset[:top]
+        #     except ValueError:
+        #         return Response({"detail": "top must be an integer."})
+
+        # data = []
+        # for record in queryset:
+        #     for ylf in record.year_level_fees.all():
+        #         data.append({
+        #             "student_id": record.student.id,
+        #             "student_name": str(record.student),
+        #             "class_name": ylf.year_level.level_name,  
+        #             "month": record.month,
+        #             "due_amount": str(record.due_amount),
+        #             "total_amount": str(record.total_amount),
+        #             "paid_amount": str(record.paid_amount),
+        #         })
+        # return Response(data, status=status.HTTP_200_OK)
+
+        data = []
+        for record in queryset:
+            grouped_fees = {}
+            for ylf in record.year_level_fees.all():
+                level_name = ylf.year_level.level_name
+                if level_name not in grouped_fees:
+                    grouped_fees[level_name] = []
+                grouped_fees[level_name].append({
+                    "id": ylf.id,
+                    "fee_type": ylf.fee_type.name,
+                    "amount": str(ylf.amount)
+                })
+
+            grouped_fees_list = [
+                {"year_level": level, "fees": fees}
+                for level, fees in grouped_fees.items()
+            ]
+
+            data.append({
+                "id": record.id,
+                "student": {
+                    "id": record.student.id,
+                    "name": str(record.student)
+                },
+                "month": record.month,
+                "year_level_fees_grouped": grouped_fees_list,
+                "total_amount": str(record.total_amount),
+                "paid_amount": str(record.paid_amount),
+                "due_amount": str(record.due_amount),
+                "payment_date": record.payment_date,
+                "payment_mode": record.payment_mode,
+                "is_cheque_cleared": record.is_cheque_cleared,
+                "receipt_number": record.receipt_number,
+                "late_fee": str(record.late_fee),
+                "payment_status": record.payment_status,
+                "remarks": record.remarks,
+                "received_by": record.received_by,
+            })
+        return Response(data)
+
+#--------------------- Exam Module 
+
+from django.apps import apps
+from .utils import * 
+
+class DownloadFileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        model_name = request.query_params.get("model")
+        object_id = request.query_params.get("id")
+        file_field_name = request.query_params.get("field", "uploaded_file")
+        print(user,model_name,object_id,file_field_name)
+        if not model_name or not object_id:
+            return Response({"error": "model and id are required."}, status=400)
+
+        try:
+            model = apps.get_model(app_label="director", model_name=model_name)
+        except LookupError:
+            return Response({"error": f"Model '{model_name}' not found."}, status=404)
+
+        instance = get_object_or_404(model, pk=object_id)
+
+        user_roles = [role.name.lower() for role in user.role.all()]
+
+        is_director = "director" in user_roles
+        is_office = "office_staff" in user_roles
+        is_teacher = "teacher" in user_roles
+        is_student = "student" in user_roles
+        is_guardian = "guardian" in user_roles
+
+        student_related_id = getattr(instance, "student_id", None) or getattr(instance, "student", None)
+
+        if is_student:
+            if not StudentYearLevel.objects.filter(user=user, id=student_related_id).exists():
+                return Response({"error": "Access denied: not your file."}, status=403)
+
+        elif is_guardian:
+            if not StudentGuardian.objects.filter(guardian=user, student_id=student_related_id).exists():
+                return Response({"error": "Access denied: not your ward's file."}, status=403)
+
+        elif is_teacher:
+            assigned_classes = TeacherYearLevel.objects.filter(teacher=user).values_list("year_level_id", flat=True)
+            student_obj = StudentYearLevel.objects.filter(id=student_related_id).first()
+            if not student_obj or student_obj.year_level_id not in assigned_classes:
+                return Response({"error": "Access denied: not your class student."}, status=403)
+
+        elif not (is_director or is_office):
+            return Response({"error": "Access denied: unauthorized role."}, status=403)
+
+        file_field = getattr(instance, file_field_name, None)
+        if not file_field:
+            return Response({"error": f"Field '{file_field_name}' not found on model '{model_name}'."}, status=404)
+
+        if not file_field.name:
+            return Response({"error": f"{model_name} file not found."}, status=404)
+
+        file_path = file_field.path
+        print("File name:", file_field.name)
+        print("File path:", file_field.path)
+        print("File exists:", os.path.exists(file_field.path))
+
+
+        if not os.path.exists(file_path):
+            return Response({"error": f"{model_name} file not found."}, status=404)
+        
+
+        return get_file_response(file_field, file_label=f"{model_name} file")
+
+
+
+class ExamTypeView(viewsets.ModelViewSet):
+    queryset = ExamType.objects.all()
+    serializer_class = ExamTypeSerializer
+    permission_classes = [IsAuthenticated, RoleBasedExamPermission]
+    api_section = 'exam_type'
+
+    @action(detail=False, methods=["get"], url_path="get_examtype")
+    def get_examtypes(self, request):
+        exam_types = self.get_queryset()
+        serializer = self.get_serializer(exam_types, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["post"], url_path="create_examtype")
+    def create_examtype(self, request):
+        name = request.data.get("name")
+        if not name:
+            return Response({"error": "Name is required."}, status=400)
+
+        exam_type, created = ExamType.objects.get_or_create(name=name)
+        serializer = self.get_serializer(exam_type)
+        message = "Exam type created successfully." if created else "Exam type already exists."
+        return Response({"message": message, "data": serializer.data}, status=201 if created else 200)
+
+    @action(detail=False, methods=["put"], url_path="update_examtype")
+    def update_examtype(self, request):
+        try:
+            exam_type = ExamType.objects.get(id=request.data.get("id"))
+        except ExamType.DoesNotExist:
+            return Response({"error": "ExamType not found"}, status=404)
+
+        serializer = self.get_serializer(exam_type, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({"message": "Exam type updated successfully", "data": serializer.data})
+        return Response(serializer.errors, status=400)
+
+    @action(detail=False, methods=["delete"], url_path="delete_examtype")
+    def delete_examtype(self, request):
+        try:
+            exam_type = ExamType.objects.get(id=request.data.get("id"))
+            exam_type.delete()
+            return Response({"message": "ExamType deleted successfully."})
+        except ExamType.DoesNotExist:
+            return Response({"error": "ExamType not found"}, status=404)
+
+
+
+class ExamPaperView(viewsets.ModelViewSet):
+    queryset = ExamPaper.objects.all()
+    serializer_class = ExamPaperSerializer
+    permission_classes = [IsAuthenticated, RoleBasedExamPermission]
+    api_section = 'exam_paper'
+
+    @action(detail=False, methods=["get"], url_path="get_exampaper")
+    def get_exampapers(self, request):
+        user = request.user
+        role_names = [role.name.lower() for role in user.role.all()]
+
+        if "director" in role_names:
+            queryset = ExamPaper.objects.select_related('exam_type', 'term', 'subject', 'year_level', 'teacher')
+        
+        elif "teacher" in role_names:
+            teacher = Teacher.objects.filter(user=user).first()
+            queryset = ExamPaper.objects.filter(teacher=teacher).select_related('exam_type', 'term', 'subject', 'year_level', 'teacher')
+        
+        else:
+            return Response({"error": "You do not have permission to view exam papers."}, status=403)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+
+    @action(detail=False, methods=["post"], url_path="create_exampaper")
+    def create_paper(self, request):
+        user = request.user
+        role_names = [role.name.lower() for role in user.role.all()]
+
+        if "director" in role_names:
+            pass  
+        
+        elif "teacher" in role_names:
+            teacher = Teacher.objects.filter(user=user).first()
+            if not teacher:
+                return Response({"error": "Teacher not found."}, status=400)
+
+            assigned_class_ids = TeacherYearLevel.objects.filter(
+                teacher=teacher
+            ).values_list('year_level_id', flat=True)
+
+            class_name = request.data.get("year_level")  
+
+            if class_name is None:
+                return Response({"error": "year_level is required."}, status=400)
+
+            try:
+                class_name = int(class_name)
+            except ValueError:
+                return Response({"error": "Invalid year_level value."}, status=400)
+
+            if class_name not in assigned_class_ids:
+                return Response({"error": "You can only create papers for your assigned classes."}, status=403)
+        
+        else:
+            return Response({"error": "You do not have permission to create exam papers."}, status=403)
+
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "message": "Exam paper created successfully",
+                "data": serializer.data
+            }, status=status.HTTP_201_CREATED)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=["put"], url_path="update_exampaper")
+    def update_paper(self, request):
+        paper_code = request.data.get("paper_code")
+        if not paper_code:
+            return Response({"error": "paper_code is required for update."}, status=400)
+
+        try:
+            paper = ExamPaper.objects.get(paper_code=paper_code)
+        except ExamPaper.DoesNotExist:
+            return Response({"error": "ExamPaper not found"}, status=404)
+
+        serializer = self.get_serializer(paper, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "message": "Exam paper updated successfully", 
+                "data": serializer.data
+            })
+        return Response(serializer.errors, status=400)
+
+    @action(detail=False, methods=["delete"], url_path="delete_exampaper")
+    def delete_paper(self, request):
+        paper_ids = request.data.get("paper_ids")
+        if not paper_ids:
+            return Response({"error": "paper_ids list is required."}, status=400)
+
+        deleted = 0
+        for pid in paper_ids:
+            try:
+                paper = ExamPaper.objects.get(id=pid)
+                paper.delete()
+            except ExamPaper.DoesNotExist:
+                continue
+
+        return Response({"message": "Successfully deleted paper(s)."})
+
+from teacher.models import *
+class ExamScheduleView(viewsets.ModelViewSet):
+    queryset = ExamSchedule.objects.all()
+    serializer_class = ExamScheduleSerializer
+    permission_classes = [IsAuthenticated, RoleBasedExamPermission]
+    api_section = 'exam_schedule'
+
+
+    @staticmethod
+    def format_exam_schedule(queryset):
+        grouped_data = {}
+        group_id_counter = 1
+
+        for obj in queryset:
+            key = f"{obj.class_name.id}_{obj.term.year.id}_{obj.exam_type.id}"
+
+            if key not in grouped_data:
+                grouped_data[key] = {
+                    "id": group_id_counter,
+                    "class": obj.class_name.level_name,
+                    "school_year": obj.term.year.year_name,
+                    "exam_type": obj.exam_type.name,
+                    "papers": []
+                }
+                group_id_counter += 1
+
+            grouped_data[key]["papers"].append({
+                "subject_name": obj.subject.subject_name.lower(),
+                "exam_date": obj.exam_date,
+                "start_time": obj.start_time,
+                "end_time": obj.end_time,
+                "day": obj.exam_date.strftime('%A')
+            })
+
+        return list(grouped_data.values())
+    
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="get_timetable")
+    def get_timetable(self, request):
+        user = request.user
+        role_names = [role.name.lower() for role in user.role.all()]
+
+        if "director" in role_names:
+            queryset = ExamSchedule.objects.select_related("class_name", "term__year", "exam_type", "subject").all()
+
+        elif "teacher" in role_names or "office staff" in role_names:
+            teacher = Teacher.objects.filter(user=user).first()
+            if not teacher:
+                return Response({"error": "Teacher not found"}, status=400)
+            assigned_class_ids = TeacherYearLevel.objects.filter(teacher=teacher).values_list('year_level_id', flat=True)
+            queryset = ExamSchedule.objects.select_related("class_name", "term__year", "exam_type", "subject").filter(class_name_id__in=assigned_class_ids)
+
+        elif "student" in role_names:
+            student = Student.objects.filter(user=user).first()
+            student_class = StudentYearLevel.objects.filter(student=student).last()
+            if not student_class:
+                return Response({"error": "Student class not found"}, status=400)
+            queryset = ExamSchedule.objects.select_related("class_name", "term__year", "exam_type", "subject").filter(class_name=student_class.level)
+
+        else:
+            return Response({"error": "Access Denied"}, status=403)
+
+        if not queryset.exists():
+            return Response([])
+
+        return Response(self.format_exam_schedule(queryset))
+
+
+
+
+    
+    @action(detail=False, methods=["post"], permission_classes=[IsAuthenticated], url_path="create_timetable")
+    def create_timetable(self, request):
+        user = request.user
+        role_names = [role.name.lower() for role in user.role.all()]
+
+        if any(role in role_names for role in ["director", "teacher", "office staff"]):
+            serializer = ExamScheduleSerializer(data=request.data)
+            if serializer.is_valid():
+                schedules = serializer.save()
+                return Response({"message": f"exam schedule created successfully."}, status=201)
+            return Response(serializer.errors, status=400)
+
+        return Response({"error": "You do not have permission to create timetable."}, status=403)
+
+
+
+    @action(detail=False, methods=["put"], permission_classes=[IsAuthenticated], url_path="update_timetable")
+    def update_timetable(self, request):
+        user = request.user
+        role_names = [role.name.lower() for role in user.role.all()]
+
+        if not any(role in role_names for role in ["director", "teacher"]):
+            return Response({"error": "Permission denied"})
+
+        class_id = request.data.get("class_name")
+        year_id = request.data.get("school_year")
+        exam_type_id = request.data.get("exam_type")
+        print(class_id,year_id,exam_type_id)
+        
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            result = serializer.update(None, serializer.validated_data)  
+            return Response({
+                "message": "Exam timetable updated successfully.",
+                "data": result
+            }, status=200)
+
+        return Response(serializer.errors, status=400)
+
+
+
+class StudentMarksView(viewsets.ModelViewSet):
+    queryset = StudentMarks.objects.all()
+    serializer_class = StudentMarksSerializer
+    permission_classes = [IsAuthenticated,RoleBasedExamPermission] 
+    api_section = "student_marks"  
+
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="get_marks")
+    def get_marks(self, request):
+        user = request.user
+        role_names = [role.name.lower() for role in user.role.all()]
+
+        if "director" in role_names:
+            marks_qs = StudentMarks.objects.select_related(
+                "student__student__user",
+                "subject",
+                "teacher__user",
+                "exam_type",
+                "term__year",
+                "student__level"
+            )
+        elif "teacher" in role_names:
+            try:
+                teacher = Teacher.objects.get(user=user)
+            except Teacher.DoesNotExist:
+                return Response({"error": "Teacher not found."})
+
+            assigned_class_ids = TeacherYearLevel.objects.filter(
+                teacher=teacher
+            ).values_list("year_level_id", flat=True)
+
+            student_ids = StudentYearLevel.objects.filter(
+                level_id__in=assigned_class_ids
+            ).values_list("id", flat=True)
+
+            marks_qs = StudentMarks.objects.select_related(
+                "student__student__user",
+                "subject",
+                "teacher__user",
+                "exam_type",
+                "term__year",
+                "student__level"
+            ).filter(
+                student_id__in=student_ids,
+                teacher=teacher
+            )
+        else:
+            return Response({"error": "You do not have permission to view marks."})
+
+        # ----------- Filter
+        school_year_filter = request.query_params.get("school_year")
+        year_level_filter = request.query_params.get("year_level")
+        exam_type_filter = request.query_params.get("exam_type")
+
+        if school_year_filter:
+            marks_qs = marks_qs.filter(term__year__year_name=school_year_filter)
+        if year_level_filter:
+            marks_qs = marks_qs.filter(student__level__level_name=year_level_filter)
+        if exam_type_filter:
+            marks_qs = marks_qs.filter(exam_type__name=exam_type_filter)
+
+        if not marks_qs.exists():
+            return Response({"message": "No data found."})
+
+        grouped_data = {}
+        for mark in marks_qs:
+            teacher_name = mark.teacher.user.get_full_name().lower()
+            subject_name = mark.subject.subject_name.lower()
+            exam_type = mark.exam_type.name
+            school_year = mark.term.year.year_name
+            year_level = mark.student.level.level_name
+            key = (teacher_name, subject_name, exam_type, school_year, year_level)
+
+            grouped_data.setdefault(key, []).append({
+                "name": mark.student.student.user.get_full_name().lower(),
+                "marks": mark.marks_obtained
+            })
+
+        final_response = {}
+        for (teacher_name, subject_name, exam_type, school_year, year_level), student_marks in grouped_data.items():
+            group_key = (school_year, exam_type, year_level)
+            final_response.setdefault(group_key, []).append({
+                "teacher_name": teacher_name,
+                "subject": subject_name,
+                "student_marks": student_marks
+            })
+
+        formatted_output = {}
+        for (school_year, exam_type, year_level), data in final_response.items():
+            marks_filtered = marks_qs.filter(
+                term__year__year_name=school_year,
+                exam_type__name=exam_type,
+                student__level__level_name=year_level
+            )
+            first_mark = marks_filtered.first()
+            report_id = first_mark.id if first_mark else None
+            report_key = f"id : {report_id}" if report_id else f"{school_year}_{exam_type}_{year_level}".replace(" ", "_").lower()
+
+            formatted_output[report_key] = {
+                "school_year": school_year,
+                "exam_type": exam_type,
+                "year_level": year_level,
+                "data": data
+            }
+
+        return Response(formatted_output)
+
+
+
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated], url_path='create_marks')
+    def create_marks(self, request):
+        user = request.user
+        role_names = [role.name.lower() for role in user.role.all()]
+
+        is_director = "director" in role_names
+        is_teacher = "teacher" in role_names
+
+        if not (is_director or is_teacher):
+            return Response({"error": "You do not have permission to perform this action."})
+
+        if is_teacher:
+            try:
+                teacher = Teacher.objects.get(user=user)
+            except Teacher.DoesNotExist:
+                return Response({"error": "Teacher not found."})
+            assigned_class_ids = TeacherYearLevel.objects.filter(
+                teacher=teacher
+            ).values_list("year_level_id", flat=True)
+        else:
+            teacher = None
+            assigned_class_ids = []
+
+        data = request.data
+        school_year_id = data.get("school_year_id")
+        exam_type_id = data.get("exam_type_id")
+        year_level_id = data.get("year_level_id")
+
+        # print("school_year_id:", school_year_id)
+        # print("exam_type_id:", exam_type_id)
+        # print("year_level_id:", year_level_id)
+
+        if not school_year_id or not exam_type_id or not year_level_id:
+            return Response({
+                "error": "Missing required fields: school_year_id, exam_type_id, or year_level_id"
+            }, status=400)
+
+        try:
+            school_year_obj = SchoolYear.objects.get(id=school_year_id)
+            exam_type_obj = ExamType.objects.get(id=exam_type_id)
+            year_level_obj = YearLevel.objects.get(id=year_level_id)
+        except SchoolYear.DoesNotExist:
+            return Response({"error": "Invalid school_year"})
+        except ExamType.DoesNotExist:
+            return Response({"error": "Invalid exam_type"})
+        except YearLevel.DoesNotExist:
+            return Response({"error": "Invalid year_level"})
+
+        term_obj = Term.objects.filter(year=school_year_obj).first()
+        if not term_obj:
+            return Response({"error": "No term found for given school_year"})
+
+        any_error = False
+        errors = []     
+        success = []   
+        for group in data.get("data", []):
+            teacher_id = group.get("teacher_id")
+            subject_id = group.get("subject_id")
+
+            try:
+                teacher_obj = Teacher.objects.get(id=teacher_id)
+                subject_obj = Subject.objects.get(id=subject_id)
+            except (Teacher.DoesNotExist, Subject.DoesNotExist):
+                any_error = True
+                errors.append(f"Invalid teacher ({teacher_id}) or subject ({subject_id})")
+                continue
+
+            if is_teacher:
+                if teacher.id != teacher_obj.id:
+                    errors.append(f"Teacher mismatch: you are not allowed to submit for teacher ID {teacher_obj.id}")
+                    any_error = True
+                    continue
+                if year_level_obj.id not in assigned_class_ids:
+                    errors.append(f"Teacher not assigned to year_level ID {year_level_obj.id}")
+                    any_error = True
+                    continue
+
+            for student_data in group.get("student_marks", []):
+                student_id = student_data.get("student_id")
+                marks = student_data.get("marks")
+
+                try:
+                    student_yl = StudentYearLevel.objects.get(id=student_id, level=year_level_obj)
+                except StudentYearLevel.DoesNotExist:
+                    errors.append(f"Student ID {student_id} not found in year_level {year_level_id}")
+                    any_error = True
+                    continue
+
+                try:
+                    obj, created = StudentMarks.objects.get_or_create(
+                        student=student_yl,
+                        exam_type=exam_type_obj,
+                        term=term_obj,
+                        subject=subject_obj,
+                        teacher=teacher_obj,
+                        defaults={"marks_obtained": marks}
+                        
+                    )
+                    # print("Created:", created)
+                    # print("Student:", student_id, "Subject:", subject_obj.subject_name, "Exists:", not created)
+
+                    if created:
+                        success.append(student_id)
+                    else:
+                        errors.append(f"Marks already exist for student {student_id} in subject {subject_obj.subject_name}")
+                        any_error = True
+                except Exception as e:
+                    errors.append(f"Unexpected error for student {student_id}: {str(e)}")
+                    any_error = True
+
+        # print("Full request data:", data)
+        # print("Errors encountered:", errors)
+
+        if any_error:
+            return Response({
+                "message": "Some marks could not be inserted. Either already exist or invalid data.",
+                "errors": errors
+            }, status=400)
+
+        return Response({
+            "message": "Marks inserted successfully.",
+            "inserted_student_ids": success
+        }, status=201)
+
+
+
+
+    @action(detail=False, methods=['put'], permission_classes=[IsAuthenticated], url_path='update_marks')
+    def update_marks(self, request):
+        user = request.user
+        role_names = [role.name.lower() for role in user.role.all()]
+
+        is_director = "director" in role_names
+        is_teacher = "teacher" in role_names
+
+        if not (is_director or is_teacher):
+            return Response({"error": "You do not have permission to perform this action."}, status=403)
+
+        data = request.data.get("data", [])
+        school_year_id = request.data.get("school_year_id")
+        exam_type_id = request.data.get("exam_type_id")
+        year_level_id = request.data.get("year_level_id")
+
+        errors = []
+        updated_ids = []
+
+        try:
+            school_year = SchoolYear.objects.get(id=school_year_id)
+            exam_type = ExamType.objects.get(id=exam_type_id)
+            term = Term.objects.filter(year=school_year).first()
+
+            if not term:
+                return Response({"error": f"No term found for school year {school_year_id}"})
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=400)
+
+        for item in data:
+            subject_id = item.get("subject_id")
+            try:
+                subject = Subject.objects.get(id=subject_id)
+            except Subject.DoesNotExist:
+                errors.append(f"Subject not found with id {subject_id}")
+                continue
+
+            for student_data in item.get("student_marks", []):
+                student_id = student_data.get("student_id")
+                marks = student_data.get("marks")
+
+                try:
+                    student = StudentYearLevel.objects.get(student__id=student_id, level_id=year_level_id)
+
+                    student_mark = StudentMarks.objects.filter(
+                        student=student,
+                        subject=subject,
+                        exam_type=exam_type,
+                        term=term
+                    ).first()
+
+                    if not student_mark:
+                        errors.append(f"Marks not found for student {student_id}, subject {subject_id}")
+                        continue
+
+                    student_mark.marks_obtained = marks
+                    student_mark.save()
+                    updated_ids.append(student_id)
+
+                except StudentYearLevel.DoesNotExist:
+                    errors.append(f"StudentYearLevel not found for student {student_id}")
+                except Exception as e:
+                    errors.append(f"Error updating student {student_id}: {str(e)}")
+
+        if errors:
+            return Response({
+                "message": "Some marks could not be updated.",
+                "errors": errors
+            }, status=400)
+
+        return Response({
+            "message": "Marks updated successfully.",
+            "updated": updated_ids
+        },status=200)
+
 
 """-------------------------------------------RESULT---------------------------------------------------"""
 from rest_framework.exceptions import PermissionDenied
