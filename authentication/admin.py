@@ -6,7 +6,6 @@ admin.site.register(User)
 admin.site.register(UserStatusLog)
 
 
-
 @admin.register(ErrorLog)
 class ErrorLogAdmin(admin.ModelAdmin):
     list_display = ['endpoint', 'method', 'error_type', 'status_code', 'timestamp']
