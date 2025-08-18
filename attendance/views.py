@@ -12,7 +12,7 @@ from teacher.models import TeacherYearLevel
 from student.models import Guardian,StudentGuardian, StudentYearLevel, Student
 from django.shortcuts import get_object_or_404
 import holidays
-
+from director.views import send_whatsapp_message
 
 
 class MultipleAttendanceViewSet1(ModelViewSet):
@@ -106,6 +106,8 @@ class MultipleAttendanceViewSet1(ModelViewSet):
 
         # Create attendance records
         created_records = []
+        absent_leave_students = []  # store absent or leave students for notification
+
         for status_code in allowed_statuses:
             for sid in data.get(status_code, []):
                 student = Student.objects.get(id=sid)
@@ -117,6 +119,22 @@ class MultipleAttendanceViewSet1(ModelViewSet):
                     year_level_id=year_level_id
                 )
                 created_records.append(attendance)
+
+                # Collect absent or leave for notification
+                if status_code in ["A", "L"]:
+                    absent_leave_students.append(student)
+
+        # === Send Notification for Absent / Leave Students ===
+        for student in absent_leave_students:
+            student_name = f"{student.user.first_name} {student.user.last_name}"
+            msg = (
+                f"Dear Parent,\n\n"
+                f"{student_name} was marked as Absent "
+                f"on {marked_at.strftime('%d-%m-%Y')}.\n"
+                f"Kindly ensure regular attendance.\n\n"
+                f"Regards,\nSchool Management"
+            )
+            send_whatsapp_message(msg)
 
         serializer = self.get_serializer(created_records, many=True)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -437,17 +455,17 @@ class TeacherYearLevelList(APIView):
             for l in levels
         ]
         return Response(data)
-
-    
 class BulkHolidayAttendanceViewSet(ViewSet):
     def list(self, request):
         holidays = Holiday.objects.all().order_by('-start_date')
         serializer = HolidaySerializer(holidays, many=True)
         return Response(serializer.data)
+
     def create(self, request):
         start_date_str = request.data.get('start_date')
         end_date_str = request.data.get('end_date')
         title = request.data.get('title', 'Unnamed Holiday')
+
         if not start_date_str or not end_date_str:
             return Response({"error": "Start and end date are required."}, status=400)
 
@@ -460,17 +478,18 @@ class BulkHolidayAttendanceViewSet(ViewSet):
         if start_date > end_date:
             return Response({"error": "Start date must be before end date."}, status=400)
 
-
+        # Create Holiday
         Holiday.objects.create(
             title=title,
             start_date=start_date,
             end_date=end_date
         )
 
+        # Mark Holiday Attendance for all Students
         students = Student.objects.all()
         dates = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
-
         count = 0
+
         for student in students:
             try:
                 syl = StudentYearLevel.objects.get(student=student)
@@ -486,10 +505,22 @@ class BulkHolidayAttendanceViewSet(ViewSet):
             except StudentYearLevel.DoesNotExist:
                 continue
 
+        # Get all user phone numbers (students, teachers, staff, guardians)
+        phone_numbers = list(
+            User.objects.filter(is_active=True)
+            .exclude(phone_number__isnull=True)
+            .exclude(phone_number__exact="")
+            .values_list('phone_number', flat=True)
+        )
+
+        # Send WhatsApp Notification to all users
+        message_text = f"📢 Notice: {title} holiday has been declared from {start_date} to {end_date}."
+        if phone_numbers:
+            send_whatsapp_message(message_text, phone_numbers)
+
         return Response({
-            "message": f"{count} holiday attendance records created from {start_date} to {end_date}."
+            "message": f"{count} holiday attendance records created. Notifications sent to {len(phone_numbers)} users."
         }, status=201)
-        
 
 
 class FetchIndianHolidaysView(APIView):
@@ -542,6 +573,31 @@ class FetchIndianHolidaysView(APIView):
 class SchoolEventViewSet(ModelViewSet):
     queryset = SchoolEvent.objects.all().order_by('start_date')
     serializer_class = SchoolEventSerializer
+
+    def perform_create(self, serializer):
+        # Save the new event
+        event = serializer.save()
+
+        # Get all active users with phone numbers
+        phone_numbers = list(
+            User.objects.filter(is_active=True)
+            .exclude(phone_number__isnull=True)
+            .exclude(phone_number__exact="")
+            .values_list('phone_number', flat=True)
+        )
+
+        # Prepare message
+        message_text = (
+            f"📅 New School Event: {event.title}\n"
+            f"🗓 From {event.start_date} to {event.end_date}\n"
+            f"📍 Location: {event.location if hasattr(event, 'location') else 'School Campus'}\n"
+            f"Details: {event.description if hasattr(event, 'description') else 'No additional details'}"
+        )
+
+        # Send WhatsApp to all users
+        if phone_numbers:
+            send_whatsapp_message(message_text, phone_numbers)
+
     
 class MonthlyCalendarView(APIView):
     def get(self, request, *args, **kwargs):
