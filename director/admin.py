@@ -29,6 +29,6 @@ admin.site.register(
         City,
         State,
         Country,
-        Address
+        Address,
     ]
 )

@@ -74,15 +74,32 @@ def LoginView(request):
         serializer = LoginSerializers(data=request.data, context={'request': request})
 
         if serializer.is_valid():
-
+            # Check if user exists and is inactive
+            try:
+                user = User.objects.all_including_inactive().get(email=email)
+                if not user.is_active:
+                    return Response(
+                        {"Message": "Your account is inactive"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            except User.DoesNotExist:
+                return Response(
+                    {"Message": "User no longer exists"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # authenticating only the active users
             user = authenticate(email=email, password=password)
-
             if user is None:
                 return Response(
                     {"Message": "Invalid Credentials"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-
+            
+            #******** This wont work cuz authenticate treat the user.is_active =False as None *********
+            # if not user.is_active:
+            #     return Response({"Message": "Your account is inactive"}, status=status.HTTP_400_BAD_REQUEST)
+                
             refresh = RefreshToken.for_user(user)
             access = str(refresh.access_token)
             refresh_token = str(refresh)
@@ -144,6 +161,8 @@ def LoginView(request):
                   role_key="staff_id"
                 except OfficeStaff.DoesNotExist:
                     pass
+            # elif role_name=='Deactivated User':
+            #     return Response({"message": "Your account has been deactivated"})
 
 
             response_data = {
