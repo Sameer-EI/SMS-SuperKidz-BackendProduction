@@ -3,6 +3,12 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.db.models import Count
 from collections import OrderedDict
+from attendance.models import StudentAttendance
+from director.permission import *
+from director.utils import calculate_subject_summary
+
+
+from director.permission import IsDirector
 from .serializers import *
 from rest_framework import filters
 from .models import *
@@ -11,7 +17,9 @@ from rest_framework .views import APIView       # As of 07May25 at 12:30 PM
 from rest_framework.filters import SearchFilter
 from django.db.models import Sum
 from rest_framework.decorators import action
+from django.utils.dateparse import parse_date
 
+from rest_framework.exceptions import PermissionDenied
 from django.db.models.functions import Coalesce
 from django.db.models import Sum, DecimalField
 # views.py
@@ -26,13 +34,13 @@ from datetime import datetime
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import viewsets, status
-import json  # 🔸 This goes at the top of the file
+import json  #  This goes at the top of the file
 from django.db.models import Q
 from collections import OrderedDict, defaultdict
 from datetime import datetime, timedelta
 from django.utils.timezone import now
 from django.db.models.functions import Cast
-
+from teacher.models import Teacher, TeacherYearLevel
 
 
 from django.db.models import OuterRef, Subquery, Sum, Value, FloatField
@@ -60,8 +68,177 @@ def generate_receipt_number():
             code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
             if not FeeRecord.objects.filter(receipt_number=code).exists():
                 return code
+# ---------------------------------------------------------------------------------------------------------------------------------------------         
+
+                                                    #    Document fetch dashboard
+
+@api_view(["GET"])
+def document_fetch_dashboard(request):
+    user_type = request.query_params.get('user_type')        # student, teacher, etc.
+    uploaded = request.query_params.get('uploaded')          # true / false
+    class_id = request.query_params.get('class')             # e.g., 1, 2 (level_id)
+
+    data = []
+
+    def format_entry(instance, type_label, has_doc, class_label):
+        return {
+            "user_type": type_label,
+            "name": f"{instance.user.first_name} {instance.user.last_name}",
+            "has_uploaded_document": has_doc,
+            "class": class_label
+        }
+
+    def get_class(instance, label):
+        if label == "student":
+            return StudentYearLevel.objects.filter(student=instance).select_related("level").first()
+        elif label == "teacher":
+            return TeacherYearLevel.objects.filter(teacher=instance).select_related("year_level").first()
+        elif label == "guardian":
+            student_guardian = StudentGuardian.objects.filter(guardian=instance).select_related("student").first()
+            if student_guardian:
+                student = student_guardian.student
+                return StudentYearLevel.objects.filter(student=student).select_related("level").first()
+            return None
+        elif label == "office_staff":
+            return None
+        else:
+            return None
+
+    def process_queryset(queryset, label, doc_field):
+        for instance in queryset:
+            has_doc = Document.objects.filter(**{doc_field: instance}).exists()
+
+            # Uploaded filter
+            if uploaded == "true" and not has_doc:
+                continue
+            if uploaded == "false" and has_doc:
+                continue
+
+            class_obj = get_class(instance, label)
+            if class_obj:
+                level_id = class_obj.level.id if label in ["student", "guardian"] else class_obj.year_level.id
+                level_name = class_obj.level.level_name if label in ["student", "guardian"] else class_obj.year_level.level_name
+            else:
+                level_id = None
+                level_name = "N/A" if label == "office_staff" else "Unknown"
+
+            # Class ID filter
+            if class_id and str(level_id) != class_id:
+                continue
+
+            data.append(format_entry(instance, label, has_doc, level_name))
+
+    # Main filtering logic
+    if user_type == "student" or user_type is None:
+        process_queryset(Student.objects.all(), "student", "student")
+
+    if user_type == "teacher" or user_type is None:
+        process_queryset(Teacher.objects.all(), "teacher", "teacher")
+
+    if user_type == "guardian" or user_type is None:
+        process_queryset(Guardian.objects.all(), "guardian", "guardian")
+
+    if user_type == "office_staff" or user_type is None:
+        process_queryset(OfficeStaff.objects.all(), "office_staff", "office_staff")
+
+    if user_type not in ["student", "teacher", "guardian", "office_staff", None]:
+        return Response({"error": "Invalid user_type"}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(data)
 
 
+
+
+# user_type=student|teacher|guardian|office_staff
+
+# uploaded=true|false
+
+# class=Nursery|KG|Class 1|
+
+
+
+
+
+#  ____________________________________________________________ class period view  ____________________________________________________________
+
+@api_view(['GET'])
+def assigned_periods(request):
+    year_level_id = request.query_params.get("year_level_id")
+
+    if not year_level_id:
+        return Response({"error": "year_level_id query parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        year_level = YearLevel.objects.get(id=year_level_id)
+    except YearLevel.DoesNotExist:
+        return Response({"error": "YearLevel not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    class_periods = ClassPeriod.objects.filter(year_level=year_level)
+
+    assigned_periods = []
+    for period in class_periods:
+        assigned_periods.append({
+            "subject": str(period.subject),
+            "teacher": str(period.teacher),
+            "start_time": period.start_time.start_period_time.strftime('%I:%M %p'),
+            "end_time": period.end_time.end_period_time.strftime('%I:%M %p'),
+        })
+
+    return Response({
+        "class": year_level.level_name,
+        "total_periods": class_periods.count(),
+        "assigned_periods": assigned_periods
+    })
+# from django.db.models import Q
+# from rest_framework.decorators import api_view
+# from rest_framework.response import Response
+# from rest_framework import status
+
+# @api_view(['GET'])
+# def assigned_periods(request):
+#     year_level_id = request.query_params.get("year_level_id")
+
+#     if not year_level_id:
+#         return Response({"error": "year_level_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+#     try:
+#         year_level = YearLevel.objects.get(id=year_level_id)
+#     except YearLevel.DoesNotExist:
+#         return Response({"error": "YearLevel not found"}, status=status.HTTP_404_NOT_FOUND)
+
+#     class_periods = ClassPeriod.objects.filter(year_level=year_level)
+#     assigned_periods = []
+
+#     for period in class_periods:
+#         # Check if the teacher is already assigned to another class at the same time
+#         teacher_conflicts = ClassPeriod.objects.filter(
+#             Q(teacher=period.teacher) &
+#             Q(start_time=period.start_time) &
+#             Q(end_time=period.end_time) &
+#             ~Q(year_level=year_level)  # Exclude current class
+#         )
+
+#         if teacher_conflicts.exists():
+#             conflict = teacher_conflicts.first()
+#             return Response({
+#                 "error": f"Teacher {period.teacher} is already teaching {conflict.subject} in {conflict.year_level.level_name} at this time."
+#             }, status=status.HTTP_400_BAD_REQUEST)
+
+#         assigned_periods.append({
+#             "subject": str(period.subject),
+#             "teacher": str(period.teacher),
+#             "start_time": period.start_time.start_period_time.strftime('%I:%M %p'),
+#             "end_time": period.end_time.end_period_time.strftime('%I:%M %p'),
+#             "classroom": str(period.classroom),
+#             "term": period.term,
+#             "name": period.name
+#         })
+
+#     return Response({
+#         "class": year_level.level_name,
+#         "total_periods": class_periods.count(),
+#         "assigned_periods": assigned_periods
+#     })
 #   ---------------------------------------------  Director Dashboard view   ----------------------------------------------------------
 
 
@@ -157,56 +334,48 @@ def Director_Dashboard_Summary(request):
 # ---------------------------------------------------------   Teacher Dashboard View  ----------------------------------------------------------
  
 
+
 @api_view(["GET"])
 def teacher_dashboard(request, id):
     try:
-        user = User.objects.get(id=id)
-        teacher = user.teacher
-    except User.DoesNotExist:
-        return Response({"error": "User not found"}, status=404)
+        teacher = Teacher.objects.get(user_id=id)
+        teacher_name = f"{teacher.user.first_name} {teacher.user.last_name}"
+
+       
+        assigned_levels = TeacherYearLevel.objects.filter(teacher=teacher).select_related("year_level")
+
+        class_summary = []
+
+        for assigned in assigned_levels:
+            level = assigned.year_level
+            level_name = level.level_name
+
+            total_students = StudentYearLevel.objects.filter(level=level).count()
+
+            class_period = ClassPeriod.objects.filter(
+                teacher=teacher,
+                classroom__isnull=False
+            ).select_related("classroom").first()
+
+            room_name = class_period.classroom.room_name if class_period and class_period.classroom else None
+
+            class_summary.append({
+                "level_name": level_name,
+                "total_students": total_students,
+                "room_name": room_name
+            })
+
+        return Response({
+            "teacher_name": teacher_name,
+            "total_assigned_classes": len(class_summary),
+            "class_summary": class_summary
+        })
+
     except Teacher.DoesNotExist:
-        return Response({"error": "This user is not a teacher"}, status=400)
-
-    periods = ClassPeriod.objects.filter(teacher=teacher)
-    class_data = []
-    seen = set()
-
-    for period in periods:
-        students = Student.objects.filter(classes=period).distinct()
-
-        # ✅ FIXED: Use correct reverse relation from YearLevel
-        year_levels = YearLevel.objects.filter(
-            studentyearlevel__student__in=students
-        ).distinct()
-
-        for level in year_levels:
-            key = (level.id, period.id)
-            if key not in seen:
-                seen.add(key)
-
-                student_count = Student.objects.filter(
-                    student_year_levels__level=level,
-                    classes=period
-                ).distinct().count()
-
-                class_data.append({
-                    "level_name": level.level_name,
-                    "student_count": student_count,
-                    "class_period": period.name,
-                    "subject": period.subject.subject_name,
-                    "classroom": period.classroom.room_name,
-                })
-
-    return Response({
-        "teacher": f"{teacher.user.first_name} {teacher.user.last_name}",
-        "total_classes": periods.count(),
-        "class_details": class_data
-    })
+        return Response({"error": "Teacher not found"}, status=404)
 
 
-#   -------------------------------------------  Guardian Dashboard  ----------------------------------------------------------
-
-
+# --------------------------------------------------------- Guardian Dashboard View  ----------------------------------------------------------
 @api_view(["GET"])
 def guardian_dashboard(request, id=None):
     if not id:
@@ -237,6 +406,58 @@ def guardian_dashboard(request, id=None):
         "total_children": student_links.count(),
         "children": children_data
     })
+#  ----------------------------------------------------------------- Student Dashboard View --------------------------------------------------
+# @api_view(["GET"])
+# def student_dashboard(request, id=None):
+#     if not id:
+#         return Response({"error": "Student ID is required"}, status=400)
+
+#     try:
+#         student = Student.objects.get(user__id=id)
+#     except Student.DoesNotExist:
+#         return Response({"error": "Student not found"}, status=404)
+
+#     # Get optional year_level_id from query params
+#     year_level_id = request.query_params.get("year_level_id")
+
+#     # Filter year level info
+#     year_level_info = None
+#     if year_level_id:
+#         year_level_info = StudentYearLevel.objects.filter(student=student, level_id=year_level_id).last()
+#     else:
+#         year_level_info = StudentYearLevel.objects.filter(student=student).last()
+
+#     # Guardian details
+#     guardian_links = StudentGuardian.objects.filter(student=student)
+#     guardians_data = []
+
+#     for link in guardian_links:
+#         guardian = link.guardian
+#         guardians_data.append({
+#             "guardian_name": f"{guardian.user.first_name} {guardian.user.last_name}"
+#         })
+
+#     # Child info output
+#     children_data = []
+
+#     if year_level_info:
+#         children_data.append({
+#             "student_name": f"{student.user.first_name} {student.user.last_name}",
+#             "class": f"{year_level_info.level.level_name} ({year_level_info.year.year_name})",
+#             "year_level_id": year_level_info.level.id
+#         })
+#     else:
+#         children_data.append({
+#             "student_name": f"{student.user.first_name} {student.user.last_name}",
+#             "class": "Not Assigned",
+#             "year_level_id": None
+#         })
+
+#     return Response({
+#         "guardian": guardians_data,
+#         "total_children": 1,
+#         "children": children_data
+#     })
 
 
 @api_view(["GET"])
@@ -249,8 +470,17 @@ def student_dashboard(request, id=None):
     except Student.DoesNotExist:
         return Response({"error": "Student not found"}, status=404)
 
-    year_level_info = StudentYearLevel.objects.filter(student=student).last()
+    # Get optional year_level_id from query params
+    year_level_id = request.query_params.get("year_level_id")
 
+    # Filter year level info
+    year_level_info = None
+    if year_level_id:
+        year_level_info = StudentYearLevel.objects.filter(student=student, level_id=year_level_id).last()
+    else:
+        year_level_info = StudentYearLevel.objects.filter(student=student).last()
+
+    # Guardian details
     guardian_links = StudentGuardian.objects.filter(student=student)
     guardians_data = []
 
@@ -260,16 +490,29 @@ def student_dashboard(request, id=None):
             "guardian_name": f"{guardian.user.first_name} {guardian.user.last_name}"
         })
 
-    return Response({
-        "guardian": guardians_data, 
-        "total_children": 1,
-        "children": [{
-            "student_name": f"{student.user.first_name} {student.user.last_name}",
-            "class": f"{year_level_info.level.level_name} ({year_level_info.year.year_name})"
-            if year_level_info else "Not Assigned"
-        }]
-    })
+    # Child info output
+    children_data = []
 
+    if year_level_info:
+        children_data.append({
+            "student_id": student.id,  # Added student ID here
+            "student_name": f"{student.user.first_name} {student.user.last_name}",
+            "class": f"{year_level_info.level.level_name} ({year_level_info.year.year_name})",
+            "year_level_id": year_level_info.level.id
+        })
+    else:
+        children_data.append({
+            "student_id": student.id,  # Added student ID here
+            "student_name": f"{student.user.first_name} {student.user.last_name}",
+            "class": "Not Assigned",
+            "year_level_id": None
+        })
+
+    return Response({
+        "guardian": guardians_data,
+        "total_children": 1,
+        "children": children_data
+    })
 # --------------------------------------------------------- office Staff Dashboard View  ----------------------------------------------------------
 
 
@@ -1240,9 +1483,9 @@ class PeriodView(viewsets.ModelViewSet):
     serializer_class = PeriodSerializer
     
     
-class ClassPeriodView(viewsets.ModelViewSet):
-    queryset = ClassPeriod.objects.all()
-    serializer_class = ClassPeriodSerializer    
+# class ClassPeriodView(viewsets.ModelViewSet):
+#     queryset = ClassPeriod.objects.all()
+#     serializer_class = ClassPeriodSerializer    
 
 
 class DirectorView(viewsets.ModelViewSet):
@@ -1331,9 +1574,32 @@ class TermView(viewsets.ModelViewSet):
     serializer_class = TermSerializer
 
 
+from django_filters.rest_framework import DjangoFilterBackend  
+from .filters import AdmissionFilter
 class AdmissionView(viewsets.ModelViewSet):
     queryset = Admission.objects.all()
     serializer_class = AdmissionSerializer
+
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = AdmissionFilter
+
+    search_fields = [
+        "student__user__first_name",
+        "student__user__last_name",
+        "student__user__email",
+        "guardian__user__first_name",
+        "guardian__user__last_name",
+        "tc_letter",
+        "enrollment_no",
+        "previous_school_name",
+    ]
+
+    ordering_fields = [
+        "admission_date",
+        "year_level__level_name",
+        "student__user__first_name",
+        "previous_percentage",
+    ]
     # parser_classes=[MultiPartParser,FormParser]
     
     # ***************OfficeStaffView**************
@@ -1347,9 +1613,11 @@ class OfficeStaffView(viewsets.ModelViewSet):
         # Public access to list and retrieve
         if self.action in ['list', 'retrieve', 'update', 'partial_update']:
             return [AllowAny()]
-        return [IsAuthenticated()]
+        return [
+            # IsAuthenticated()
+                ]
 
-    # ******************JWT***************
+
     @action(detail=False, methods=['get','put', 'patch'], url_path='OfficeStaff_my_profile', permission_classes=[IsAuthenticated])
     def OfficeStaff_my_profile(self, request):
         user = request.user
@@ -1380,48 +1648,151 @@ class FileView(viewsets.ModelViewSet):
 
 
 
+# from rest_framework import viewsets, status
+# from rest_framework.response import Response
+# from django.db import transaction
+# from .models import Document, File
+# from .serializers import DocumentSerializer
+
+# class DocumentView(viewsets.ModelViewSet):
+#     queryset = Document.objects.prefetch_related('files', 'document_types')
+#     serializer_class = DocumentSerializer
+
+#     @transaction.atomic
+#     def create(self, request, *args, **kwargs):
+#         # Validate files
+#         files = request.FILES.getlist('files')
+#         if not files:
+#             return Response({"error": "Files required"}, status=status.HTTP_400_BAD_REQUEST)
+
+#         # Get and validate document types
+#         doc_types = request.data.getlist('document_types', []) or [request.data.get('document_types')]
+#         doc_types = [dt for dt in doc_types if dt and str(dt).isdigit()]  # Filter valid numeric types
+#         if not doc_types:
+#             return Response({"error": "Valid document types required"}, status=status.HTTP_400_BAD_REQUEST)
+
+#         # Prepare data with null handling for empty strings
+#         data = {
+#             'document_types': doc_types,
+#             'identities': request.data.get('identities'),
+#             **{f: int(request.data[f]) if request.data.get(f) and str(request.data[f]).isdigit() else None 
+#                for f in ['student', 'teacher', 'guardian', 'office_staff']}
+#         }
+
+#         # Find existing document
+#         existing = self._find_existing_document(data)
+        
+#         # Create or update document
+#         if existing:
+#             serializer = self.get_serializer(existing, data=data, partial=True)
+#             existing.files.all().delete()
+#             action = 'replaced'
+#         else:
+#             serializer = self.get_serializer(data=data)
+#             action = 'created'
+
+#         serializer.is_valid(raise_exception=True)
+#         doc = serializer.save()
+
+#         # Save all uploaded files
+#         for file in files:
+#             File.objects.create(document=doc, file=file)
+
+#         return Response({
+#             'status': action,
+#             'document': self.get_serializer(doc, context={'request': request}).data
+#         }, status=status.HTTP_201_CREATED)
+
+#     def _find_existing_document(self, data):
+#         """Helper method to find existing document matching criteria"""
+#         filter_params = {
+#             'identities': data.get('identities'),
+#             **{f: data.get(f) for f in ['student', 'teacher', 'guardian', 'office_staff'] 
+#                if data.get(f) is not None}
+#         }
+        
+#         for doc in Document.objects.filter(**filter_params).prefetch_related('document_types'):
+#             if set(doc.document_types.values_list('id', flat=True)) == set(map(int, data['document_types'])):
+#                 return doc
+#         return None
+
+
+
+from django.db import transaction
 
 
 class DocumentView(viewsets.ModelViewSet):
-    queryset = Document.objects.all()
+    queryset = Document.objects.prefetch_related('files', 'document_types')
     serializer_class = DocumentSerializer
-    parser_classes = (MultiPartParser, FormParser)
 
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
-        files = request.FILES.getlist('uploaded_files')
-        document_types = request.data.getlist('document_types')
-        identities = request.data.getlist('identities')
-
+        # Validate files
+        files = request.FILES.getlist('files')
         if not files:
-            return Response({"error": "No files uploaded"}, status=status.HTTP_400_BAD_REQUEST)
-        if not document_types:
-            return Response({"error": "At least one document type must be selected."}, status=status.HTTP_400_BAD_REQUEST)
-        if not identities:
-            return Response({"error": "Identities are required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Files required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        if len(document_types) != len(identities):
-            return Response({"error": "Identities count must match document types count."}, status=status.HTTP_400_BAD_REQUEST)
+        # Get and validate document types
+        doc_types = request.data.getlist('document_types', []) or [request.data.get('document_types')]
+        doc_types = [dt for dt in doc_types if dt and str(dt).isdigit()]
+        if not doc_types:
+            return Response({"error": "Valid document types required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        data = request.data.copy()
-        data.setlist('uploaded_files', files)
-        data.setlist('document_types', document_types)
-        data.setlist('identities', identities)
+        # Handle identities - accept both single value and array
+        identities = request.data.getlist('identities', []) or [request.data.get('identities')]
+        identities = [i for i in identities if i]  # Remove empty values
+        identities_str = ", ".join(identities) if identities else None
 
-        serializer = self.get_serializer(data=data)
+        # Prepare data with null handling
+        data = {
+            'document_types': doc_types,
+            'identities': identities_str,  # Store all identities as comma-separated string
+            **{f: int(request.data[f]) if request.data.get(f) and str(request.data[f]).isdigit() else None 
+               for f in ['student', 'teacher', 'guardian', 'office_staff']}
+        }
+
+        # Find existing document
+        existing = self._find_existing_document(data)
+        
+        # Create or update document
+        if existing:
+            serializer = self.get_serializer(existing, data=data, partial=True)
+            existing.files.all().delete()
+            action = 'replaced'
+        else:
+            serializer = self.get_serializer(data=data)
+            action = 'created'
+
         serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        doc = serializer.save()
+
+        # Save all uploaded files
+        for file in files:
+            File.objects.create(document=doc, file=file)
+
+        return Response({
+            'status': action,
+            'document': self.get_serializer(doc, context={'request': request}).data
+        }, status=status.HTTP_201_CREATED)
+
+    def _find_existing_document(self, data):
+        """Helper method to find existing document matching criteria"""
+        filter_params = {
+            **{f: data.get(f) for f in ['student', 'teacher', 'guardian', 'office_staff'] 
+               if data.get(f) is not None}
+        }
+        
+        # If identities exist in data, include them in filter
+        if data.get('identities'):
+            filter_params['identities'] = data['identities']
+        
+        for doc in Document.objects.filter(**filter_params).prefetch_related('document_types'):
+            if set(doc.document_types.values_list('id', flat=True)) == set(map(int, data['document_types'])):
+                return doc
+        return None
 
 
 
-
-
-
-    
-
-    
-    
-    
 # **************Assignment ClassPeriod for Student behalf of YearLevel(standard)****************   
     
 # As of 05May25 at 01:00 PM
@@ -1441,8 +1812,6 @@ class ClassPeriodView(viewsets.ModelViewSet):
             }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)    
 
-     
-    
 # As of 04June2025 at 12:15 AM
 # Re-implementation of Fee module based on the provided fee card
 from django.db.models import Q
@@ -1458,8 +1827,15 @@ class FeeTypeView(viewsets.ModelViewSet):
 class YearLevelFeeView(viewsets.ModelViewSet):
     serializer_class = YearLevelFeeSerializer
 
-    def get_queryset(self):           # just commneted as of 27june25 at 02:47 PM
-        return YearLevelFee.objects.select_related('year_level', 'fee_type')
+    def get_queryset(self):
+        qs = YearLevelFee.objects.select_related('year_level', 'fee_type')
+        fee_id = self.request.query_params.get('id')
+        if fee_id:
+            qs = qs.filter(id=fee_id)
+        return qs
+
+    # def get_queryset(self):           # just commneted as of 27june25 at 02:47 PM
+    #     return YearLevelFee.objects.select_related('year_level', 'fee_type')
     
     # def get_queryset(self):         # GET /api/year-level-fee/?id=3
     #     queryset = YearLevelFee.objects.select_related('year_level', 'fee_type')
@@ -1525,6 +1901,14 @@ def send_whatsapp_message(message_text):
             })
 
     return sent_messages
+
+
+
+#discount for students-----------
+class FeeDiscountView(viewsets.ModelViewSet):
+    queryset = FeeDiscount.objects.all()
+    serializer_class = FeeDiscountSerializer
+    permission_classes = [IsAuthenticated,IsDirector]
 
 # Fee Record View
 # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/
@@ -1896,6 +2280,462 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         return Response(defaulters_list)
     
+
+
+### --------------------- Income Distribution Dashboard API (Guardian name and student name and id added) --------------------------- ###
+### ------------------- As of 03 JUly at 12:35 --------------- ###   By daniyal
+
+@api_view(["GET"])
+def guardian_income_distribution_with_student(request):
+    # Define updated income brackets
+    brackets = {
+        "Below 1 Lakh": (0, 100000),
+        "1 – 3 Lakhs": (100001, 300000),
+        "3 – 5 Lakhs": (300001, 500000),
+        "5 – 8 Lakhs": (500001, 800000),
+        "8 – 10 Lakhs": (800001, 1000000),
+        "Above 10 Lakhs": (1000001, None),
+    }
+
+    total_guardians = Guardian.objects.exclude(annual_income__isnull=True).count()
+    results = []
+    #---------- Count and guardian filter as it is
+    for label, (min_income, max_income) in brackets.items():
+        if max_income is not None:
+            qs = Guardian.objects.filter(
+                annual_income__gte=min_income,
+                annual_income__lte=max_income
+            )
+        else:
+            qs = Guardian.objects.filter(
+                annual_income__gte=min_income,
+            )  
+        count = qs.count() 
+        guardian_names = [f"{g.user.first_name} {g.user.last_name}" for g in qs]  
+
+        student_data = [f" id:{s.studentguardian.get().student.id} {s.studentguardian.get().student.user.first_name} {s.studentguardian.get().student.user.last_name}" for s in qs]
+
+        percentage = round((count / total_guardians) * 100, 2) if total_guardians > 0 else 0.0
+
+        results.append({
+            "income_range": label,
+            "guardians":guardian_names,
+            "count": count,
+            "percentage": percentage,
+            "student info": student_data
+        })
+        
+    return Response(results, status=status.HTTP_200_OK)
+### -------------------------------------------------------------- ###    
+
+
+### --------------------- Deactivation of the users [NO access to them and data still stored] --------------------------- ###
+### ------------------- As of 24 JUly at 12:00 --------------- ###   By daniyal
+from rest_framework.decorators import permission_classes
+from django.db import transaction
+from authentication.models import UserStatusLog
+from authentication.serializers import UserSerializer
+
+@api_view(["POST"])
+def deactivate_user(request):
+    try:
+        with transaction.atomic():
+            user_id = request.data.get("user_id")
+            user = User.objects.all_including_inactive().get(id=user_id)
+            if not user.is_active:
+                return Response({"error": "User already deactivated"})
+            user.is_active = False
+            user.deactivation_reason = request.data.get('reason', '')
+            user.deactivation_date = timezone.now()
+            user.reactivation_date = None
+            user.save()
+            
+            # Handle Student    (classes [clear], admission, feeRecord, document, )
+            student = getattr(user, 'student', None)
+            if student is not None:
+                student = user.student
+                student.is_active = False
+                student.save()
+                # Clear Student.classes and StudentYearLevel 
+                student.classes.clear()
+                # Clear StudentYearLevel (handle missing studenyearlevel_set)
+                try:
+                    StudentYearLevel.objects.filter(student=student).delete()
+                except AttributeError:
+                    pass  # No StudentYearLevel relationship
+
+                # Clear related Admissions
+                admissions = Admission.objects.filter(student=student)
+                for admission in admissions:
+                    admission.is_active = False
+                    admission.save()
+                # Clear related FeeRecords
+                fee_records = FeeRecord.objects.filter(student=student)
+                for fee_record in fee_records:
+                    fee_record.is_active = False
+                    fee_record.save()
+                # Clear related Documents
+                documents = Document.objects.filter(student=student)
+                for document in documents:
+                    document.is_active = False
+                    document.save()
+                # Deactivate related Addresses
+                addresses = Address.objects.filter(user=user)
+                for address in addresses:
+                    address.is_active = False
+                    address.save()
+                # Deactivate Banking Details
+                bank_details = BankingDetail.objects.filter(user=user)
+                for bank_detail in bank_details:
+                    bank_detail.is_active = False
+                    bank_detail.save()    
+
+            # Handle Guardian   (Student guardian relation [clear], address, docs)
+            guardian = getattr(user, 'guardian_relation', None)
+            if guardian is not None:
+                guardian = user.guardian_relation
+                guardian.is_active = False
+                guardian.save()
+                # Clear StudentGuardian connections
+                student_guardians = StudentGuardian.objects.filter(guardian=guardian)
+                for sg in student_guardians:
+                    sg.delete()  # Clear the relationship
+                # Deactivate related Addresses
+                addresses = Address.objects.filter(user=user)
+                for address in addresses:
+                    address.is_active = False
+                    address.save()
+                # Clear related Documents
+                documents = Document.objects.filter(guardian=guardian)
+                for document in documents:
+                    document.is_active = False
+                    document.save() 
+                
+            # Handle Teacher  (classPeriod [clear {M2M}], address, docs)
+            teacher = getattr(user, 'teacher', None)
+            if teacher is not None:
+                teacher = user.teacher
+                teacher.is_active = False
+                teacher.save()
+
+                # Clear TeacherYearLevel connections
+                teacher.year_levels.clear()
+                # Remove teacher from ClassPeriod assignments
+                class_periods = ClassPeriod.objects.filter(teacher=teacher)
+                for cp in class_periods:
+                    cp.teacher = None  # Set to None to remove assignment
+                    cp.save()
+                ClassPeriod.objects.filter(teacher=teacher).delete()
+                # Deactivate related Addresses
+                addresses = Address.objects.filter(user=user)
+                for address in addresses:
+                    address.is_active = False
+                    address.save()
+                # Clear related Documents
+                documents = Document.objects.filter(teacher=teacher)
+                for document in documents:
+                    document.is_active = False
+                    document.save()    
+                    
+
+            # Handle OfficeStaff  ([student,teacher,admission {clear M2M}, address, docs])
+            office_staff = getattr(user, 'office_staff', None)
+            if office_staff is None:
+                # Attempt to fetch OfficeStaff directly to confirm relation
+                try:
+                    office_staff = OfficeStaff.objects.get(user=user)
+                except OfficeStaff.DoesNotExist:
+                    print(f"No OfficeStaff found for user {user.id} via query")
+            else:
+                try:
+                    office_staff.is_active = False
+                    office_staff.save()
+                    # Clear ManyToMany relationships
+                    office_staff.student.clear()
+                    office_staff.teacher.clear()
+                    office_staff.admissions.clear()
+                    # Deactivate related Addresses
+                    addresses = Address.objects.filter(user=user)
+                    for address in addresses:
+                        address.is_active = False
+                        address.save()
+                    # Clear related Documents
+                    documents = Document.objects.filter(office_staff=office_staff)
+                    for document in documents:
+                        document.is_active = False
+                        document.save()
+                except Exception as e:
+                    return Response({"error": f"Failed to deactivate OfficeStaff: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Handle Director (if needed)
+            director = getattr(user, 'director', None)
+            if director is not None:
+                director = user.director
+                director.is_active = False
+                director.save()
+                # Deactivate related Addresses
+                addresses = Address.objects.filter(user=user)
+                for address in addresses:
+                    address.is_active = False
+                    address.save()
+
+            # log termination
+            UserStatusLog.objects.create(user=user, status='TERMINATED', reason=user.deactivation_reason)
+            serializer = UserSerializer(user)
+            return Response(serializer.data)
+    except User.DoesNotExist:
+        return Response({"error": "User not found"})
+ 
+### -------------------------------------------------------------- ###
+
+# *************** Reactivation of the User *******************************************************
+from django.core.exceptions import ObjectDoesNotExist
+
+@api_view(["POST"])
+def reactivate_user(request):
+    try:
+        with transaction.atomic():
+            user_id = request.data.get("user_id")
+            user = User.objects.all_including_inactive().get(id=user_id)
+            if user.is_active:
+                return Response({"error": "User already active"})
+            user.is_active = True
+            user.deactivation_reason = None
+            user.reactivation_date = timezone.now()
+            user.save()
+            
+            # Handle Student    ([classes {make}, studentyearlevel, studentguardian] , admission, feeRecord, document, address,
+            # banking details )
+            student = getattr(user, 'student', None)
+            if student is not None:
+                student = user.student
+                student.is_active = True
+                student.save()
+
+                # retrieve related Admissions
+                admissions = Admission.objects.all_including_inactive().filter(student=student)
+                for admission in admissions:
+                    admission.is_active = True
+                    admission.save()
+                # retrieve related FeeRecords
+                fee_records = FeeRecord.objects.all_including_inactive().filter(student=student)
+                for fee_record in fee_records:
+                    fee_record.is_active = True
+                    fee_record.save()
+                # retrieve related Documents
+                documents = Document.objects.all_including_inactive().filter(student=student)
+                for document in documents:
+                    document.is_active = True
+                    document.save()
+                # retrieve related Addresses
+                addresses = Address.objects.all_including_inactive().filter(user=user)
+                for address in addresses:
+                    address.is_active = True
+                    address.save()
+                # retrieve Banking Details
+                bank_details = BankingDetail.objects.all_including_inactive().filter(user=user)
+                for bank_detail in bank_details:
+                    bank_detail.is_active = True
+                    bank_detail.save() 
+
+                
+                # Create Student.classes connection
+                class_period_ids = request.data.get("class_period_ids", [])
+                if class_period_ids:
+                    valid_class_period = ClassPeriod.objects.filter(id__in=class_period_ids)
+                    if valid_class_period:
+                        student.classes.set(valid_class_period)
+                    else:
+                        return Response({"erorr": "Invalid class period ids"})
+                    
+                # Create StudentYearLevel connection 
+                year_id = request.data.get("year_id")
+                level_id = request.data.get("level_id")
+                
+                if year_id and level_id:
+                    try:
+                        level = YearLevel.objects.get(id=level_id)
+                        year = SchoolYear.objects.get(id=year_id)
+                        StudentYearLevel.objects.update_or_create(
+                            student = student,
+                            defaults={"year": year, "level": level}
+                        )
+                    except ObjectDoesNotExist:
+                        return Response({"error":"Invalid year level id"})
+                    
+                # Create StudentGuardian connections
+                guardian_ids = request.data.get("guardian_ids", [])
+                if guardian_ids:
+                    valid_guardians = Guardian.objects.filter(id__in=guardian_ids, is_active=True)
+                    if valid_guardians.exists():
+                        guardian_type_id = request.data.get("guardian_type_id")
+                        try:
+                            guardian_type = GuardianType.objects.get(id=guardian_type_id) if guardian_type_id else GuardianType.objects.get(name="Parent")
+                            for guardian in valid_guardians:
+                                StudentGuardian.objects.update_or_create(
+                                    student=student,
+                                    guardian=guardian,
+                                    defaults={'guardian_type': guardian_type}
+                                )
+                        except ObjectDoesNotExist:
+                            return Response({"error": "Invalid or inactive GuardianType ID provided"}, status=status.HTTP_400_BAD_REQUEST)
+                    else:
+                        return Response({"error": "No valid or active Guardian IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
+                    
+
+            # Handle Guardian   (Student guardian relation [make], address, docs)
+            guardian = getattr(user, 'guardian_relation', None)
+            if guardian is not None:
+                guardian = user.guardian_relation
+                guardian.is_active = True
+                guardian.save()
+
+                # update StudentGuardian connections
+                student_ids = request.data.get("student_ids", [])
+                if student_ids:
+                    valid_students = Student.objects.filter(id__in=student_ids, is_active=True)
+                    if valid_students.exists():
+                        guardian_type_id = request.data.get("guardian_type_id")
+                        try:
+                            guardian_type = GuardianType.objects.get(id=guardian_type_id) if guardian_type_id else GuardianType.objects.get(name="Parent")  
+                            for student in valid_students:
+                                StudentGuardian.objects.update_or_create(
+                                    student=student,
+                                    guardian=guardian,
+                                    defaults={'guardian_type': guardian_type}
+                                )
+                        except ObjectDoesNotExist:
+                            return Response({"error": "Invalid or inactive GuardianType ID provided"})
+                    else:
+                        return Response({"error": "No valid or active Student IDs provided"})
+                
+                # retrieve related Addresses
+                addresses = Address.objects.all_including_inactive().filter(user=user)
+                for address in addresses:
+                    address.is_active = True
+                    address.save()
+                # retrieve related Documents
+                documents = Document.objects.all_including_inactive().filter(guardian=guardian)
+                for document in documents:
+                    document.is_active = True
+                    document.save() 
+                
+            # Handle Teacher  (classPeriod [create {M2M}], teacheryearlevel, address, docs)
+            teacher = getattr(user, 'teacher', None)
+            if teacher is not None:
+                teacher = user.teacher
+                teacher.is_active = True
+                teacher.save()
+
+                # Assign teacher from ClassPeriod assignments
+                class_period_ids = request.data.get("class_period_ids", [])
+                if class_period_ids:
+                    valid_class_periods = ClassPeriod.objects.filter(id__in=class_period_ids)
+                    if valid_class_periods.exists():
+                        for class_period in valid_class_periods:
+                            class_period.teacher = teacher
+                            class_period.save()
+                    else:
+                        return Response({"error": "No valid or active ClassPeriod IDs provided"})
+
+                # Teacher year level reassigning
+                year_level_id = request.data.get("year_level_id", [])
+                if year_level_id:
+                    valid_year_levels = YearLevel.objects.filter(id=year_level_id)
+                    if valid_year_levels.exists():
+                        teacher.year_levels.set(valid_year_levels)
+                    else:
+                        return Response({"error": "No valid or active YearLevel IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+                # retrieve related Addresses
+                addresses = Address.objects.all_including_inactive().filter(user=user)
+                for address in addresses:
+                    address.is_active = True
+                    address.save()
+                # retrieve related Documents
+                documents = Document.objects.all_including_inactive().filter(teacher=teacher)
+                for document in documents:
+                    document.is_active = True
+                    document.save()    
+                    
+
+            # Handle OfficeStaff  ([student,teacher,admisson {clear M2M}, address, docs])
+            office_staff = getattr(user, 'office_staff', None)
+            if office_staff is not None:
+                office_staff = user.office_staff
+                office_staff.is_active = True
+                office_staff.save()
+
+                # # Create ManyToMany relationships
+                #  Student connection
+                student_ids = request.data.get("student_ids", [])
+                if student_ids:
+                    valid_students = Student.objects.filter(id__in=student_ids, is_active=True)
+                    if valid_students.exists():
+                        office_staff.student.set(valid_students)
+                    else:
+                        return Response({"error": "No valid or active Student IDs provided"})
+
+                # Teacher connection
+                teacher_ids  = request.data.get("teacher_ids", [])
+                if teacher_ids:
+                    valid_teachers = Teacher.objects.filter(id__in=teacher_ids, is_active=True)
+                    if valid_teachers.exists():
+                        office_staff.teacher.set(valid_teachers)
+                    else:
+                        return Response({"error": "No valid or active Teacher IDs provided"})
+
+                # Admission connection
+                admission_ids = request.data.get("admission_ids", [])
+                if admission_ids:
+                    valid_admissions = Admission.objects.filter(id__in=admission_ids, is_active=True)
+                    if valid_admissions.exists():
+                        office_staff.admissions.set(valid_admissions)
+                    else:
+                        return Response({"error":"No valid or active Admission IDs provided"})
+                    
+
+                # retrieve related Addresses
+                addresses = Address.objects.all_including_inactive().filter(user=user)
+                for address in addresses:
+                    address.is_active = True
+                    address.save()
+                # retrieve related Documents
+                documents = Document.objects.all_including_inactive().filter(office_staff=office_staff)
+                for document in documents:
+                    document.is_active = True
+                    document.save() 
+
+            
+            # Handle Director (if needed)
+            director = getattr(user, 'director', None)
+            if director is not None:
+                director = user.director
+                director.is_active = True
+                director.save()
+                # Deactivate related Addresses
+                addresses = Address.objects.all_including_inactive().filter(user=user)
+                for address in addresses:
+                    address.is_active = True
+                    address.save()
+
+            # log termination
+            UserStatusLog.objects.create(user=user, status='ACTIVATED', reason=user.deactivation_reason)
+            serializer = UserSerializer(user)
+            return Response(serializer.data)
+    except User.DoesNotExist:
+        return Response({"error": "User not found"})
+    
+### -------------------------------------------------------------- ###
+# *************** Reactivation of the User *******************************************************
+
+@api_view(["GET"])
+def list_inactive_users(request):
+    users = User.objects.all_including_inactive().filter(is_active=False)
+    serializer = UserSerializer(users, many=True)
+    return Response(serializer.data)
+
+
     
 # Added as of 30June25 at 01:46 PM
 # Fee card API for individual student
@@ -1964,3 +2804,1697 @@ class FeeRecordView(viewsets.ModelViewSet):
             })
 
         return Response(result, status=status.HTTP_200_OK)
+
+
+
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated],url_path="student_unpaid_fees")
+    def student_unpaid_fees(self, request):
+        user = request.user
+        roles = [role.name.lower() for role in user.role.all()]
+        student_id = request.query_params.get("student_id")
+
+        if "director" in roles or "office staff" in roles:
+            if student_id:
+                queryset = FeeRecord.objects.filter(payment_status="Unpaid", student_id=student_id)
+            else:
+                queryset = FeeRecord.objects.filter(payment_status="Unpaid")
+
+
+        elif "teacher" in roles:
+            teacher_instance = get_object_or_404(Teacher, user=user)
+
+            assigned_class_ids = TeacherYearLevel.objects.filter(
+                teacher=teacher_instance
+            ).values_list("year_level_id", flat=True)
+
+            if student_id:
+                try:
+                    student_yl = StudentYearLevel.objects.select_related("student", "level").get(id=student_id)
+                except StudentYearLevel.DoesNotExist:
+                    return Response({"detail": "Student not found."}, status=404)
+
+                if student_yl.level.id not in assigned_class_ids:
+                    return Response({"detail": "You are not allowed to view this student's data."}, status=403)
+
+                queryset = FeeRecord.objects.filter(
+                    payment_status="Unpaid",
+                    student=student_yl.student
+                )
+
+            else:
+                student_ids = StudentYearLevel.objects.filter(
+                    level_id__in=assigned_class_ids
+                ).values_list("student_id", flat=True)
+
+                queryset = FeeRecord.objects.filter(
+                    payment_status="Unpaid",
+                    student_id__in=student_ids
+                )
+
+
+        elif "student" in roles:
+            if "student_id" in request.query_params:
+                return Response({"detail": "You are not allowed to provide student_id."}, status=400)
+
+            student = get_object_or_404(Student, user=user)
+            queryset = FeeRecord.objects.filter(
+                payment_status="Unpaid",
+                student=student
+            )
+
+
+        elif "guardian" in roles:
+            if "student_id" in request.query_params:
+                return Response({"detail": "You are not allowed to provide student_id."}, status=400)
+            guardian = get_object_or_404(Guardian, user=user)
+            student_ids = StudentGuardian.objects.filter(guardian=guardian).values_list("student_id", flat=True)
+            queryset = FeeRecord.objects.filter(
+                payment_status="Unpaid", student_id__in=student_ids
+            )
+
+        else:
+            return Response({"detail": "Permission denied."}, status=403)
+
+        serializer = FeeRecordSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+
+
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="overall_unpaid_fees")
+    def overall_unpaid_fees(self, request):
+        user = request.user
+        roles = [role.name.lower() for role in user.role.all()]
+
+        if not any(role in roles for role in ["director", "teacher", "office staff"]):
+            return Response({"detail": "You do not have permission to access this data."}, status=status.HTTP_403_FORBIDDEN)
+
+        class_id = request.query_params.get("class_id", "").strip()
+        month = request.query_params.get("month", "").strip()
+
+        unpaid_fee_records = []
+
+        student_levels = StudentYearLevel.objects.all().select_related("student", "level")
+
+        if "teacher" in roles:
+            try:
+                teacher = Teacher.objects.get(user=user)
+                teacher_classes = TeacherYearLevel.objects.filter(teacher=teacher).values_list("year_level_id", flat=True)
+            except Teacher.DoesNotExist:
+                return Response({"detail": "Teacher not found."}, status=status.HTTP_404_NOT_FOUND)
+            except TeacherYearLevel.DoesNotExist:
+                return Response({"detail": "Assigned class for teacher not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            student_levels = student_levels.filter(level_id__in=teacher_classes)
+
+        if class_id:
+            student_levels = student_levels.filter(level_id=class_id)
+
+        for student_level in student_levels:
+            student = student_level.student
+
+            fee_records = FeeRecord.objects.filter(
+                student=student,
+                payment_status="unpaid"
+            ).prefetch_related(
+                "year_level_fees__year_level",
+                "year_level_fees__fee_type"
+            )
+
+            if month:
+                fee_records = fee_records.filter(month__iexact=month)
+
+            for record in fee_records:
+                grouped_fees = {}
+                for ylf in record.year_level_fees.all():
+                    level_name = ylf.year_level.level_name
+                    if level_name not in grouped_fees:
+                        grouped_fees[level_name] = []
+                    grouped_fees[level_name].append({
+                        "id": ylf.id,
+                        "fee_type": ylf.fee_type.name,
+                        "amount": str(ylf.amount)
+                    })
+
+                grouped_fees_list = [
+                    {"year_level": level, "fees": fees}
+                    for level, fees in grouped_fees.items()
+                ]
+
+                unpaid_fee_records.append({
+                    "id": record.id,
+                    "student": {
+                        "id": student.id,
+                        "name": str(student)
+                    },
+                    "month": record.month,
+                    "year_level_fees_grouped": grouped_fees_list,
+                    "total_amount": str(record.total_amount),
+                    "paid_amount": str(record.paid_amount),
+                    "due_amount": str(record.due_amount),
+                    "payment_date": record.payment_date,
+                    "payment_mode": record.payment_mode,
+                    "is_cheque_cleared": record.is_cheque_cleared,
+                    "receipt_number": record.receipt_number,
+                    "late_fee": str(record.late_fee),
+                    "payment_status": record.payment_status,
+                    "remarks": record.remarks,
+                    "received_by": record.received_by,
+                })
+
+        return Response(unpaid_fee_records, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], url_path="highest_dues_students")
+    def highest_dues_students(self, request):
+        user = request.user
+        roles = [role.name.lower() for role in user.role.all()]
+
+        if not any(role in roles for role in ["director", "teacher", "office staff"]):
+            return Response({"detail": "You do not have permission to access this data."})
+
+        class_id = request.query_params.get("class_id")
+        month = request.query_params.get("month")
+        min_due = request.query_params.get("min_due_amount")
+        max_due = request.query_params.get("max_due_amount")
+        # top = request.query_params.get("top")
+
+        queryset = FeeRecord.objects.filter(payment_status="unpaid")
+        print("queryset : ",queryset)
+        class_id = request.query_params.get("class_id")
+        if class_id:
+            class_id = class_id.strip()  
+            student_ids = StudentYearLevel.objects.filter(level_id=class_id).values_list("student_id", flat=True)
+            print("student_ids:", list(student_ids))  
+            queryset = queryset.filter(student_id__in=student_ids)
+        if month:
+            queryset = queryset.filter(month=month)
+
+        if min_due:
+            try:
+                queryset = queryset.filter(due_amount__gte=float(min_due))
+            except ValueError:
+                return Response({"detail": "min_due_amount must be a number."})
+
+        if max_due:
+            try:
+                queryset = queryset.filter(due_amount__gte=float(max_due))
+            except ValueError:
+                return Response({"detail": "max_due_amount must be a number."})
+
+        queryset = queryset.order_by("due_amount")
+
+        # if top:
+        #     try:
+        #         top = int(top)
+        #         queryset = queryset[:top]
+        #     except ValueError:
+        #         return Response({"detail": "top must be an integer."})
+
+        # data = []
+        # for record in queryset:
+        #     for ylf in record.year_level_fees.all():
+        #         data.append({
+        #             "student_id": record.student.id,
+        #             "student_name": str(record.student),
+        #             "class_name": ylf.year_level.level_name,  
+        #             "month": record.month,
+        #             "due_amount": str(record.due_amount),
+        #             "total_amount": str(record.total_amount),
+        #             "paid_amount": str(record.paid_amount),
+        #         })
+        # return Response(data, status=status.HTTP_200_OK)
+
+        data = []
+        for record in queryset:
+            grouped_fees = {}
+            for ylf in record.year_level_fees.all():
+                level_name = ylf.year_level.level_name
+                if level_name not in grouped_fees:
+                    grouped_fees[level_name] = []
+                grouped_fees[level_name].append({
+                    "id": ylf.id,
+                    "fee_type": ylf.fee_type.name,
+                    "amount": str(ylf.amount)
+                })
+
+            grouped_fees_list = [
+                {"year_level": level, "fees": fees}
+                for level, fees in grouped_fees.items()
+            ]
+
+            data.append({
+                "id": record.id,
+                "student": {
+                    "id": record.student.id,
+                    "name": str(record.student)
+                },
+                "month": record.month,
+                "year_level_fees_grouped": grouped_fees_list,
+                "total_amount": str(record.total_amount),
+                "paid_amount": str(record.paid_amount),
+                "due_amount": str(record.due_amount),
+                "payment_date": record.payment_date,
+                "payment_mode": record.payment_mode,
+                "is_cheque_cleared": record.is_cheque_cleared,
+                "receipt_number": record.receipt_number,
+                "late_fee": str(record.late_fee),
+                "payment_status": record.payment_status,
+                "remarks": record.remarks,
+                "received_by": record.received_by,
+            })
+        return Response(data)
+
+#--------------------- Exam Module 
+
+from django.apps import apps
+from .utils import * 
+
+class DownloadFileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        model_name = request.query_params.get("model")
+        object_id = request.query_params.get("id")
+        file_field_name = request.query_params.get("field", "uploaded_file")
+        print(user,model_name,object_id,file_field_name)
+        if not model_name or not object_id:
+            return Response({"error": "model and id are required."}, status=400)
+
+        try:
+            model = apps.get_model(app_label="director", model_name=model_name)
+        except LookupError:
+            return Response({"error": f"Model '{model_name}' not found."}, status=404)
+
+        instance = get_object_or_404(model, pk=object_id)
+
+        user_roles = [role.name.lower() for role in user.role.all()]
+
+        is_director = "director" in user_roles
+        is_office = "office_staff" in user_roles
+        is_teacher = "teacher" in user_roles
+        is_student = "student" in user_roles
+        is_guardian = "guardian" in user_roles
+
+        student_related_id = getattr(instance, "student_id", None) or getattr(instance, "student", None)
+
+        if is_student:
+            if not StudentYearLevel.objects.filter(user=user, id=student_related_id).exists():
+                return Response({"error": "Access denied: not your file."}, status=403)
+
+        elif is_guardian:
+            if not StudentGuardian.objects.filter(guardian=user, student_id=student_related_id).exists():
+                return Response({"error": "Access denied: not your ward's file."}, status=403)
+
+        elif is_teacher:
+            assigned_classes = TeacherYearLevel.objects.filter(teacher=user).values_list("year_level_id", flat=True)
+            student_obj = StudentYearLevel.objects.filter(id=student_related_id).first()
+            if not student_obj or student_obj.year_level_id not in assigned_classes:
+                return Response({"error": "Access denied: not your class student."}, status=403)
+
+        elif not (is_director or is_office):
+            return Response({"error": "Access denied: unauthorized role."}, status=403)
+
+        file_field = getattr(instance, file_field_name, None)
+        if not file_field:
+            return Response({"error": f"Field '{file_field_name}' not found on model '{model_name}'."}, status=404)
+
+        if not file_field.name:
+            return Response({"error": f"{model_name} file not found."}, status=404)
+
+        file_path = file_field.path
+        print("File name:", file_field.name)
+        print("File path:", file_field.path)
+        print("File exists:", os.path.exists(file_field.path))
+
+
+        if not os.path.exists(file_path):
+            return Response({"error": f"{model_name} file not found."}, status=404)
+        
+
+        return get_file_response(file_field, file_label=f"{model_name} file")
+
+
+
+class ExamTypeView(viewsets.ModelViewSet):
+    queryset = ExamType.objects.all()
+    serializer_class = ExamTypeSerializer
+    permission_classes = [IsAuthenticated, RoleBasedExamPermission]
+    api_section = 'exam_type'
+
+    @action(detail=False, methods=["get"], url_path="get_examtype")
+    def get_examtypes(self, request):
+        exam_types = self.get_queryset()
+        serializer = self.get_serializer(exam_types, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["post"], url_path="create_examtype")
+    def create_examtype(self, request):
+        name = request.data.get("name")
+        if not name:
+            return Response({"error": "Name is required."}, status=400)
+
+        exam_type, created = ExamType.objects.get_or_create(name=name)
+        serializer = self.get_serializer(exam_type)
+        message = "Exam type created successfully." if created else "Exam type already exists."
+        return Response({"message": message, "data": serializer.data}, status=201 if created else 200)
+
+    @action(detail=False, methods=["put"], url_path="update_examtype")
+    def update_examtype(self, request):
+        try:
+            exam_type = ExamType.objects.get(id=request.data.get("id"))
+        except ExamType.DoesNotExist:
+            return Response({"error": "ExamType not found"}, status=404)
+
+        serializer = self.get_serializer(exam_type, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({"message": "Exam type updated successfully", "data": serializer.data})
+        return Response(serializer.errors, status=400)
+
+    @action(detail=False, methods=["delete"], url_path="delete_examtype")
+    def delete_examtype(self, request):
+        try:
+            exam_type = ExamType.objects.get(id=request.data.get("id"))
+            exam_type.delete()
+            return Response({"message": "ExamType deleted successfully."})
+        except ExamType.DoesNotExist:
+            return Response({"error": "ExamType not found"}, status=404)
+
+
+
+class ExamPaperView(viewsets.ModelViewSet):
+    queryset = ExamPaper.objects.all()
+    serializer_class = ExamPaperSerializer
+    permission_classes = [IsAuthenticated, RoleBasedExamPermission]
+    api_section = 'exam_paper'
+
+    @action(detail=False, methods=["get"], url_path="get_exampaper")
+    def get_exampapers(self, request):
+        user = request.user
+        role_names = [role.name.lower() for role in user.role.all()]
+
+        if "director" in role_names:
+            queryset = ExamPaper.objects.select_related('exam_type', 'term', 'subject', 'year_level', 'teacher')
+        
+        elif "teacher" in role_names:
+            teacher = Teacher.objects.filter(user=user).first()
+            queryset = ExamPaper.objects.filter(teacher=teacher).select_related('exam_type', 'term', 'subject', 'year_level', 'teacher')
+        
+        else:
+            return Response({"error": "You do not have permission to view exam papers."}, status=403)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+
+    @action(detail=False, methods=["post"], url_path="create_exampaper")
+    def create_paper(self, request):
+        user = request.user
+        role_names = [role.name.lower() for role in user.role.all()]
+
+        if "director" in role_names:
+            pass  
+        
+        elif "teacher" in role_names:
+            teacher = Teacher.objects.filter(user=user).first()
+            if not teacher:
+                return Response({"error": "Teacher not found."}, status=400)
+
+            assigned_class_ids = TeacherYearLevel.objects.filter(
+                teacher=teacher
+            ).values_list('year_level_id', flat=True)
+
+            class_name = request.data.get("year_level")  
+
+            if class_name is None:
+                return Response({"error": "year_level is required."}, status=400)
+
+            try:
+                class_name = int(class_name)
+            except ValueError:
+                return Response({"error": "Invalid year_level value."}, status=400)
+
+            if class_name not in assigned_class_ids:
+                return Response({"error": "You can only create papers for your assigned classes."}, status=403)
+        
+        else:
+            return Response({"error": "You do not have permission to create exam papers."}, status=403)
+
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "message": "Exam paper created successfully",
+                "data": serializer.data
+            }, status=status.HTTP_201_CREATED)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=["put"], url_path="update_exampaper")
+    def update_paper(self, request):
+        paper_code = request.data.get("paper_code")
+        if not paper_code:
+            return Response({"error": "paper_code is required for update."}, status=400)
+
+        try:
+            paper = ExamPaper.objects.get(paper_code=paper_code)
+        except ExamPaper.DoesNotExist:
+            return Response({"error": "ExamPaper not found"}, status=404)
+
+        serializer = self.get_serializer(paper, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "message": "Exam paper updated successfully", 
+                "data": serializer.data
+            })
+        return Response(serializer.errors, status=400)
+
+    @action(detail=False, methods=["delete"], url_path="delete_exampaper")
+    def delete_paper(self, request):
+        paper_ids = request.data.get("paper_ids")
+        if not paper_ids:
+            return Response({"error": "paper_ids list is required."}, status=400)
+
+        deleted = 0
+        for pid in paper_ids:
+            try:
+                paper = ExamPaper.objects.get(id=pid)
+                paper.delete()
+            except ExamPaper.DoesNotExist:
+                continue
+
+        return Response({"message": "Successfully deleted paper(s)."})
+
+from teacher.models import *
+class ExamScheduleView(viewsets.ModelViewSet):
+    queryset = ExamSchedule.objects.all()
+    serializer_class = ExamScheduleSerializer
+    permission_classes = [IsAuthenticated, RoleBasedExamPermission]
+    api_section = 'exam_schedule'
+
+
+    @staticmethod
+    def format_exam_schedule(queryset):
+        grouped_data = {}
+        group_id_counter = 1
+
+        for obj in queryset:
+            key = f"{obj.class_name.id}_{obj.term.year.id}_{obj.exam_type.id}"
+
+            if key not in grouped_data:
+                grouped_data[key] = {
+                    "id": group_id_counter,
+                    "class": obj.class_name.level_name,
+                    "school_year": obj.term.year.year_name,
+                    "exam_type": obj.exam_type.name,
+                    "papers": []
+                }
+                group_id_counter += 1
+
+            grouped_data[key]["papers"].append({
+                "subject_name": obj.subject.subject_name.lower(),
+                "exam_date": obj.exam_date,
+                "start_time": obj.start_time,
+                "end_time": obj.end_time,
+                "day": obj.exam_date.strftime('%A')
+            })
+
+        return list(grouped_data.values())
+    
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="get_timetable")
+    def get_timetable(self, request):
+        user = request.user
+        role_names = [role.name.lower() for role in user.role.all()]
+
+        if "director" in role_names:
+            queryset = ExamSchedule.objects.select_related("class_name", "term__year", "exam_type", "subject").all()
+
+        elif "teacher" in role_names or "office staff" in role_names:
+            teacher = Teacher.objects.filter(user=user).first()
+            if not teacher:
+                return Response({"error": "Teacher not found"}, status=400)
+            assigned_class_ids = TeacherYearLevel.objects.filter(teacher=teacher).values_list('year_level_id', flat=True)
+            queryset = ExamSchedule.objects.select_related("class_name", "term__year", "exam_type", "subject").filter(class_name_id__in=assigned_class_ids)
+
+        elif "student" in role_names:
+            student = Student.objects.filter(user=user).first()
+            student_class = StudentYearLevel.objects.filter(student=student).last()
+            if not student_class:
+                return Response({"error": "Student class not found"}, status=400)
+            queryset = ExamSchedule.objects.select_related("class_name", "term__year", "exam_type", "subject").filter(class_name=student_class.level)
+
+        else:
+            return Response({"error": "Access Denied"}, status=403)
+
+        if not queryset.exists():
+            return Response([])
+
+        return Response(self.format_exam_schedule(queryset))
+
+
+
+
+    
+    @action(detail=False, methods=["post"], permission_classes=[IsAuthenticated], url_path="create_timetable")
+    def create_timetable(self, request):
+        user = request.user
+        role_names = [role.name.lower() for role in user.role.all()]
+
+        if any(role in role_names for role in ["director", "teacher", "office staff"]):
+            serializer = ExamScheduleSerializer(data=request.data)
+            if serializer.is_valid():
+                schedules = serializer.save()
+                return Response({"message": f"exam schedule created successfully."}, status=201)
+            return Response(serializer.errors, status=400)
+
+        return Response({"error": "You do not have permission to create timetable."}, status=403)
+
+
+
+    @action(detail=False, methods=["put"], permission_classes=[IsAuthenticated], url_path="update_timetable")
+    def update_timetable(self, request):
+        user = request.user
+        role_names = [role.name.lower() for role in user.role.all()]
+
+        if not any(role in role_names for role in ["director", "teacher"]):
+            return Response({"error": "Permission denied"})
+
+        class_id = request.data.get("class_name")
+        year_id = request.data.get("school_year")
+        exam_type_id = request.data.get("exam_type")
+        print(class_id,year_id,exam_type_id)
+        
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            result = serializer.update(None, serializer.validated_data)  
+            return Response({
+                "message": "Exam timetable updated successfully.",
+                "data": result
+            }, status=200)
+
+        return Response(serializer.errors, status=400)
+
+
+
+class StudentMarksView(viewsets.ModelViewSet):
+    queryset = StudentMarks.objects.all()
+    serializer_class = StudentMarksSerializer
+    permission_classes = [IsAuthenticated,RoleBasedExamPermission] 
+    api_section = "student_marks"  
+
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="get_marks")
+    def get_marks(self, request):
+        user = request.user
+        role_names = [role.name.lower() for role in user.role.all()]
+
+        if "director" in role_names:
+            marks_qs = StudentMarks.objects.select_related(
+                "student__student__user",
+                "subject",
+                "teacher__user",
+                "exam_type",
+                "term__year",
+                "student__level"
+            )
+        elif "teacher" in role_names:
+            try:
+                teacher = Teacher.objects.get(user=user)
+            except Teacher.DoesNotExist:
+                return Response({"error": "Teacher not found."})
+
+            assigned_class_ids = TeacherYearLevel.objects.filter(
+                teacher=teacher
+            ).values_list("year_level_id", flat=True)
+
+            student_ids = StudentYearLevel.objects.filter(
+                level_id__in=assigned_class_ids
+            ).values_list("id", flat=True)
+
+            marks_qs = StudentMarks.objects.select_related(
+                "student__student__user",
+                "subject",
+                "teacher__user",
+                "exam_type",
+                "term__year",
+                "student__level"
+            ).filter(
+                student_id__in=student_ids,
+                teacher=teacher
+            )
+        else:
+            return Response({"error": "You do not have permission to view marks."})
+
+        # ----------- Filter
+        school_year_filter = request.query_params.get("school_year")
+        year_level_filter = request.query_params.get("year_level")
+        exam_type_filter = request.query_params.get("exam_type")
+
+        if school_year_filter:
+            marks_qs = marks_qs.filter(term__year__year_name=school_year_filter)
+        if year_level_filter:
+            marks_qs = marks_qs.filter(student__level__level_name=year_level_filter)
+        if exam_type_filter:
+            marks_qs = marks_qs.filter(exam_type__name=exam_type_filter)
+
+        if not marks_qs.exists():
+            return Response({"message": "No data found."})
+
+        grouped_data = {}
+        for mark in marks_qs:
+            teacher_name = mark.teacher.user.get_full_name().lower()
+            subject_name = mark.subject.subject_name.lower()
+            exam_type = mark.exam_type.name
+            school_year = mark.term.year.year_name
+            year_level = mark.student.level.level_name
+            key = (teacher_name, subject_name, exam_type, school_year, year_level)
+
+            grouped_data.setdefault(key, []).append({
+                "name": mark.student.student.user.get_full_name().lower(),
+                "marks": mark.marks_obtained
+            })
+
+        final_response = {}
+        for (teacher_name, subject_name, exam_type, school_year, year_level), student_marks in grouped_data.items():
+            group_key = (school_year, exam_type, year_level)
+            final_response.setdefault(group_key, []).append({
+                "teacher_name": teacher_name,
+                "subject": subject_name,
+                "student_marks": student_marks
+            })
+
+        formatted_output = {}
+        for (school_year, exam_type, year_level), data in final_response.items():
+            marks_filtered = marks_qs.filter(
+                term__year__year_name=school_year,
+                exam_type__name=exam_type,
+                student__level__level_name=year_level
+            )
+            first_mark = marks_filtered.first()
+            report_id = first_mark.id if first_mark else None
+            report_key = f"id : {report_id}" if report_id else f"{school_year}_{exam_type}_{year_level}".replace(" ", "_").lower()
+
+            formatted_output[report_key] = {
+                "school_year": school_year,
+                "exam_type": exam_type,
+                "year_level": year_level,
+                "data": data
+            }
+
+        return Response(formatted_output)
+
+
+
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated], url_path='create_marks')
+    def create_marks(self, request):
+        user = request.user
+        role_names = [role.name.lower() for role in user.role.all()]
+
+        is_director = "director" in role_names
+        is_teacher = "teacher" in role_names
+
+        if not (is_director or is_teacher):
+            return Response({"error": "You do not have permission to perform this action."})
+
+        if is_teacher:
+            try:
+                teacher = Teacher.objects.get(user=user)
+            except Teacher.DoesNotExist:
+                return Response({"error": "Teacher not found."})
+            assigned_class_ids = TeacherYearLevel.objects.filter(
+                teacher=teacher
+            ).values_list("year_level_id", flat=True)
+        else:
+            teacher = None
+            assigned_class_ids = []
+
+        data = request.data
+        school_year_id = data.get("school_year_id")
+        exam_type_id = data.get("exam_type_id")
+        year_level_id = data.get("year_level_id")
+
+        # print("school_year_id:", school_year_id)
+        # print("exam_type_id:", exam_type_id)
+        # print("year_level_id:", year_level_id)
+
+        if not school_year_id or not exam_type_id or not year_level_id:
+            return Response({
+                "error": "Missing required fields: school_year_id, exam_type_id, or year_level_id"
+            }, status=400)
+
+        try:
+            school_year_obj = SchoolYear.objects.get(id=school_year_id)
+            exam_type_obj = ExamType.objects.get(id=exam_type_id)
+            year_level_obj = YearLevel.objects.get(id=year_level_id)
+        except SchoolYear.DoesNotExist:
+            return Response({"error": "Invalid school_year"})
+        except ExamType.DoesNotExist:
+            return Response({"error": "Invalid exam_type"})
+        except YearLevel.DoesNotExist:
+            return Response({"error": "Invalid year_level"})
+
+        term_obj = Term.objects.filter(year=school_year_obj).first()
+        if not term_obj:
+            return Response({"error": "No term found for given school_year"})
+
+        any_error = False
+        errors = []     
+        success = []   
+        for group in data.get("data", []):
+            teacher_id = group.get("teacher_id")
+            subject_id = group.get("subject_id")
+
+            try:
+                teacher_obj = Teacher.objects.get(id=teacher_id)
+                subject_obj = Subject.objects.get(id=subject_id)
+            except (Teacher.DoesNotExist, Subject.DoesNotExist):
+                any_error = True
+                errors.append(f"Invalid teacher ({teacher_id}) or subject ({subject_id})")
+                continue
+
+            if is_teacher:
+                if teacher.id != teacher_obj.id:
+                    errors.append(f"Teacher mismatch: you are not allowed to submit for teacher ID {teacher_obj.id}")
+                    any_error = True
+                    continue
+                if year_level_obj.id not in assigned_class_ids:
+                    errors.append(f"Teacher not assigned to year_level ID {year_level_obj.id}")
+                    any_error = True
+                    continue
+
+            for student_data in group.get("student_marks", []):
+                student_id = student_data.get("student_id")
+                marks = student_data.get("marks")
+
+                try:
+                    student_yl = StudentYearLevel.objects.get(id=student_id, level=year_level_obj)
+                except StudentYearLevel.DoesNotExist:
+                    errors.append(f"Student ID {student_id} not found in year_level {year_level_id}")
+                    any_error = True
+                    continue
+
+                try:
+                    obj, created = StudentMarks.objects.get_or_create(
+                        student=student_yl,
+                        exam_type=exam_type_obj,
+                        term=term_obj,
+                        subject=subject_obj,
+                        teacher=teacher_obj,
+                        defaults={"marks_obtained": marks}
+                        
+                    )
+                    # print("Created:", created)
+                    # print("Student:", student_id, "Subject:", subject_obj.subject_name, "Exists:", not created)
+
+                    if created:
+                        success.append(student_id)
+                    else:
+                        errors.append(f"Marks already exist for student {student_id} in subject {subject_obj.subject_name}")
+                        any_error = True
+                except Exception as e:
+                    errors.append(f"Unexpected error for student {student_id}: {str(e)}")
+                    any_error = True
+
+        # print("Full request data:", data)
+        # print("Errors encountered:", errors)
+
+        if any_error:
+            return Response({
+                "message": "Some marks could not be inserted. Either already exist or invalid data.",
+                "errors": errors
+            }, status=400)
+
+        return Response({
+            "message": "Marks inserted successfully.",
+            "inserted_student_ids": success
+        }, status=201)
+
+
+
+
+    @action(detail=False, methods=['put'], permission_classes=[IsAuthenticated], url_path='update_marks')
+    def update_marks(self, request):
+        user = request.user
+        role_names = [role.name.lower() for role in user.role.all()]
+
+        is_director = "director" in role_names
+        is_teacher = "teacher" in role_names
+
+        if not (is_director or is_teacher):
+            return Response({"error": "You do not have permission to perform this action."}, status=403)
+
+        data = request.data.get("data", [])
+        school_year_id = request.data.get("school_year_id")
+        exam_type_id = request.data.get("exam_type_id")
+        year_level_id = request.data.get("year_level_id")
+
+        errors = []
+        updated_ids = []
+
+        try:
+            school_year = SchoolYear.objects.get(id=school_year_id)
+            exam_type = ExamType.objects.get(id=exam_type_id)
+            term = Term.objects.filter(year=school_year).first()
+
+            if not term:
+                return Response({"error": f"No term found for school year {school_year_id}"})
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=400)
+
+        for item in data:
+            subject_id = item.get("subject_id")
+            try:
+                subject = Subject.objects.get(id=subject_id)
+            except Subject.DoesNotExist:
+                errors.append(f"Subject not found with id {subject_id}")
+                continue
+
+            for student_data in item.get("student_marks", []):
+                student_id = student_data.get("student_id")
+                marks = student_data.get("marks")
+
+                try:
+                    student = StudentYearLevel.objects.get(student__id=student_id, level_id=year_level_id)
+
+                    student_mark = StudentMarks.objects.filter(
+                        student=student,
+                        subject=subject,
+                        exam_type=exam_type,
+                        term=term
+                    ).first()
+
+                    if not student_mark:
+                        errors.append(f"Marks not found for student {student_id}, subject {subject_id}")
+                        continue
+
+                    student_mark.marks_obtained = marks
+                    student_mark.save()
+                    updated_ids.append(student_id)
+
+                except StudentYearLevel.DoesNotExist:
+                    errors.append(f"StudentYearLevel not found for student {student_id}")
+                except Exception as e:
+                    errors.append(f"Error updating student {student_id}: {str(e)}")
+
+        if errors:
+            return Response({
+                "message": "Some marks could not be updated.",
+                "errors": errors
+            }, status=400)
+
+        return Response({
+            "message": "Marks updated successfully.",
+            "updated": updated_ids
+        },status=200)
+
+
+"""-------------------------------------------RESULT---------------------------------------------------"""
+from rest_framework.exceptions import PermissionDenied
+from collections import defaultdict
+
+class PersonalSocialGradeViewSet(viewsets.ModelViewSet):
+    queryset = PersonalSocialQualityTermWise.objects.all()
+    serializer_class = PersonalSocialGradeSerializer
+    permission_classes = [IsAuthenticated]
+
+    def _save_grade(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def _can_teacher_access_report_card(self, teacher, report_card_id):
+        if not teacher.year_levels.exists():
+            raise PermissionDenied("You are not assigned to any classes.")
+        return ReportCard.objects.filter(
+            id=report_card_id,
+            student_level__level__in=teacher.year_levels.all()
+        ).exists()
+
+    def get_queryset(self):
+        user = self.request.user
+        roles = [role.name for role in user.role.all()]
+        student_id = self.request.query_params.get("student_id")
+
+        qs = PersonalSocialQualityTermWise.objects.all()
+
+        if "office_staff" in roles or "director" in roles:
+            if student_id:
+                qs = qs.filter(report_card__student_level__student__id=student_id)
+            return qs
+
+        elif "teacher" in roles:
+            teacher = getattr(user, "teacher", None)
+            if not teacher:
+                return PersonalSocialQualityTermWise.objects.none()
+
+            if not teacher.year_levels.exists():
+                raise PermissionDenied("You are not assigned to any classes.")
+
+            qs = qs.filter(
+                report_card__student_level__level__in=teacher.year_levels.all()
+            )
+
+            if student_id:
+                qs = qs.filter(report_card__student_level__student__id=student_id)
+
+            return qs
+
+        return PersonalSocialQualityTermWise.objects.none()
+
+    def create(self, request, *args, **kwargs):
+        user = request.user
+        roles = [role.name for role in user.role.all()]
+
+        if "office_staff" in roles or "director" in roles:
+            return self._save_grade(request)
+
+        elif "teacher" in roles:
+            teacher = getattr(user, "teacher", None)
+            report_card_id = request.data.get("report_card")
+
+            if not teacher:
+                return Response({"error": "Teacher profile not found."}, status=400)
+            if not report_card_id:
+                return Response({"error": "report_card ID is required"}, status=400)
+
+            if self._can_teacher_access_report_card(teacher, report_card_id):
+                return self._save_grade(request)
+            else:
+                return Response(
+                    {"error": "You're not authorized to add grades for this report card."},
+                    status=403
+                )
+
+        return Response({"error": "Not allowed for your role."}, status=403)
+
+    def update(self, request, *args, **kwargs):
+        user = request.user
+        roles = [role.name for role in user.role.all()]
+        instance = self.get_object()
+
+        if "office_staff" in roles or "director" in roles:
+            return super().update(request, *args, **kwargs)
+
+        elif "teacher" in roles:
+            teacher = getattr(user, "teacher", None)
+            if not teacher:
+                return Response({"error": "Teacher profile not found."}, status=400)
+
+            report_card = instance.report_card
+            if report_card.student_level.level in teacher.year_levels.all():
+                return super().update(request, *args, **kwargs)
+            else:
+                return Response(
+                    {"error": "Not authorized to update this grade."}, status=403
+                )
+
+        return Response({"error": "Not allowed for your role."}, status=403)
+
+    def destroy(self, request, *args, **kwargs):
+        user = request.user
+        roles = [role.name for role in user.role.all()]
+        instance = self.get_object()
+
+        if "office_staff" in roles or "director" in roles:
+            return super().destroy(request, *args, **kwargs)
+
+        elif "teacher" in roles:
+            teacher = getattr(user, "teacher", None)
+            if not teacher:
+                return Response({"error": "Teacher profile not found."}, status=400)
+
+            report_card = instance.report_card
+            if report_card.student_level.level in teacher.year_levels.all():
+                return super().destroy(request, *args, **kwargs)
+            else:
+                return Response(
+                    {"error": "Not authorized to delete this grade."}, status=403
+                )
+
+        return Response({"error": "Not allowed for your role."}, status=403)
+
+class NonScholasticGradeViewSet(viewsets.ModelViewSet):
+    queryset = NonScholasticGradeTermWise.objects.all()
+    serializer_class = NonScholasticGradeTermWiseSerializer
+    permission_classes = [IsAuthenticated]
+
+    def _save_grade(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def _can_teacher_access_report_card(self, teacher, report_card_id):
+        return ReportCard.objects.filter(
+            id=report_card_id,
+            student_level__level__in=teacher.year_levels.all()
+        ).exists()
+    
+    def get_queryset(self):
+        user = self.request.user
+        roles = [role.name for role in user.role.all()]
+        print("role:",roles)
+        student_id = self.request.query_params.get("student_id")
+
+        if "office_staff" in roles or "director" in roles:
+            qs = NonScholasticGradeTermWise.objects.all()
+            if student_id:
+                qs = qs.filter(report_card__student_level__student__id=student_id)
+            return qs
+
+        elif "teacher" in roles:
+            teacher = getattr(user, "teacher", None)
+            if not teacher:
+                return PersonalSocialQualityTermWise.objects.none()
+
+            if not teacher.year_levels.exists():
+                raise PermissionDenied("You are not assigned to any classes.")
+
+            qs = qs.filter(
+                report_card__student_level__level__in=teacher.year_levels.all()
+            )
+
+            if student_id:
+                qs = qs.filter(report_card__student_level__student__id=student_id)
+
+            return qs
+
+
+        return NonScholasticGradeTermWise.objects.none()
+
+    def create(self, request, *args, **kwargs):
+        user = request.user
+        roles = [role.name for role in user.role.all()]
+
+        if "office_staff" in roles or "director" in roles:
+            return self._save_grade(request)
+
+        elif "teacher" in roles:
+            teacher = getattr(user, "teacher", None)
+            report_card_id = request.data.get("report_card")
+
+            if not teacher:
+                return Response({"error": "Teacher profile not found."}, status=400)
+            if not report_card_id:
+                return Response({"error": "report_card ID is required"}, status=400)
+
+            if self._can_teacher_access_report_card(teacher, report_card_id):
+                return self._save_grade(request)
+            else:
+                return Response({"error": "You're not authorized to add grades for this report card."}, status=403)
+
+        return Response({"error": "Not allowed for your role."}, status=403)
+
+    def update(self, request, *args, **kwargs):
+        user = request.user
+        roles =[role.name for role in user.role.all()]
+
+        instance = self.get_object()
+
+        if "office_staff" in roles or "director" in roles:
+            return super().update(request, *args, **kwargs)
+
+        elif "teacher" in roles:
+            teacher = user.teacher
+            if not teacher:
+                return Response({"error": "Teacher profile not found."}, status=400)
+
+            report_card = instance.report_card
+            if report_card.student_level.level in teacher.year_levels.all():
+                return super().update(request, *args, **kwargs)
+            else:
+                return Response({"error": "Not authorized to update this grade."}, status=403)
+
+        return Response({"error": "Not allowed for your role."}, status=403)
+
+    def destroy(self, request, *args, **kwargs):
+        user = request.user
+        roles = [role.name for role in user.role.all()]
+
+        instance = self.get_object()
+
+        if "office_staff" in roles or "director" in roles:
+            return super().destroy(request, *args, **kwargs)
+
+        elif "teacher" in roles:
+            teacher = user.teacher
+            if not teacher:
+                return Response({"error": "Teacher profile not found."}, status=400)
+
+            report_card = instance.report_card
+            if report_card.student_level.level in teacher.year_levels.all():
+                return super().destroy(request, *args, **kwargs)
+            else:
+                return Response({"error": "Not authorized to delete this grade."}, status=403)
+
+        return Response({"error": "Not allowed for your role."}, status=403)
+
+
+class ReportCardViewSet(viewsets.ModelViewSet):
+    queryset = ReportCard.objects.all()
+    serializer_class = ReportCardSerializer
+    permission_classes = [IsAuthenticated, RoleBasedPermission]
+
+    def get_user_roles(self):
+        user = self.request.user
+        return [role.name for role in user.role.all()]
+
+    def get_queryset(self):
+        user = self.request.user
+        roles = self.get_user_roles()
+
+        student_id = self.request.query_params.get('student_id')
+        standard_filter = self.request.query_params.get('standard')
+        division_filter = self.request.query_params.get('division')
+
+        if student_id:
+            return self.queryset.filter(student_level__student__id=student_id)
+
+        if standard_filter:
+            return self.queryset.filter(student_level__level__level_name=standard_filter)
+        
+        if division_filter:
+            return self.queryset.filter(report_card__division=division_filter)
+
+
+        if 'director' in roles or 'office staff' in roles:
+            return self.queryset
+
+        if 'teacher' in roles:
+            try:
+                teacher = user.teacher
+                return self.queryset.filter(
+                    student_level__level__in=teacher.year_levels.all()
+                )
+            except Teacher.DoesNotExist:
+                return self.queryset.none()
+
+        if 'guardian' in roles:
+            student_ids = StudentGuardian.objects.filter(
+                guardian__user=user
+            ).values_list('student_id', flat=True)
+            return self.queryset.filter(student_level__student__id__in=student_ids)
+
+        if 'student' in roles:
+            return self.queryset.filter(student_level__student__user=user)
+
+        return self.queryset.none()
+
+
+    def get_attendance_string(self, report_card):
+        student_level = report_card.student_level
+        attendance_qs = StudentAttendance.objects.filter(student=student_level.student)
+        present = attendance_qs.filter(status='P').count()
+        total = 230
+        attendance= f"{present}/{total}" 
+        return attendance
+
+    def get_promoted_class(self, report_card):
+        # division = report_card.division
+        sup = report_card.supplementary_in
+        failed_subjects = [s.strip() for s in ( sup or "").split(",") if s.strip()]
+        
+        if failed_subjects:
+            return None
+        
+        # if division=="Fail":
+        #     return None
+            
+        current_level = report_card.student_level.level
+        current_year = report_card.student_level.year
+        student = report_card.student_level.student
+
+        # Try getting the next level
+        next_level = YearLevel.objects.filter(level_order=current_level.level_order + 1).first()
+        if not next_level:
+
+            return None  # Already in the highest class
+        
+        next_year = SchoolYear.objects.filter(start_date__gt=current_year.start_date).order_by('start_date').first()
+        if not current_year or not current_year.start_date:
+            return None
+
+        
+        # Get or create the corresponding StudentYearLevel for next class in same year
+        promoted_to, _ = StudentYearLevel.objects.get_or_create(
+            student=student,
+            level=next_level,
+            year=next_year # or next academic year if needed
+        )
+        return promoted_to 
+
+    def get_document(self, report_card):
+        documents_data = []
+
+        for doc_rel in report_card.documents.select_related("documents").all():
+            document = doc_rel.documents
+            if document:
+                doc_types = list(document.document_types.values_list("name", flat=True))
+                documents_data.append({
+                    "identities": document.identities,
+                    "document_types": doc_types
+                })
+
+        return documents_data
+
+    def get_non_scholastic_data(self,report_card):
+        return [
+            {
+                "subject": item.non_scholastic_subject.subject_name,
+                "term": f"Term {item.term.term_number}",
+                "grade": item.grade
+            }
+            for item in report_card.non_scholastic_grades.select_related("term", "non_scholastic_subject")
+        ]
+        
+    def get_subject_score(self, report_card):
+        from collections import defaultdict
+
+        temp = defaultdict(dict)
+
+        for score in report_card.subject_scores.select_related(
+            "marks_obtained__student",
+            "marks_obtained__subject",
+            "marks_obtained__exam_type"
+        ).all():
+            mark = score.marks_obtained
+            if mark and mark.subject and mark.exam_type:
+                exam_type = mark.exam_type.name.lower()  # normalize to lowercase
+                subject = mark.subject.subject_name
+                temp[exam_type][subject] = float(mark.marks_obtained or 0)
+
+        examwise_subjects = []
+        for exam_type, subjects in temp.items():
+            subject_count = len(subjects)
+            is_fa = exam_type.startswith("fa")  # check if it's FA
+            max_per_subject = 10 if is_fa else 100  # apply correct max marks
+            total = sum(subjects.values())
+            max_marks = subject_count * max_per_subject
+            percentage = round((total / max_marks) * 100, 2) if max_marks else 0
+
+            #  Add grading logic
+            if percentage >= 90:
+                grade = "A+"
+            elif percentage >= 75:
+                grade = "A"
+            elif percentage >= 60:
+                grade = "B"
+            elif percentage >= 50:
+                grade = "C"
+            elif percentage >= 40:
+                grade = "D"
+            else:
+                grade = "F"
+
+            #  Append full exam summary
+            examwise_subjects.append({
+                "exam_type": exam_type,
+                "subjects": subjects,
+                "total": total,
+                "max_marks": max_marks,
+                "percentage": percentage,
+                "grade": grade
+            })
+
+        return examwise_subjects
+
+    def sync_subject_scores(self, report_card):
+        terms = Term.objects.filter(year=report_card.student_level.year)
+
+        student_marks = StudentMarks.objects.filter(
+            student=report_card.student_level,
+            term__in=terms
+        )
+        for mark in student_marks:
+            SubjectScore.objects.get_or_create(report_card=report_card, marks_obtained=mark)
+    
+    def save_documents(self, report_card):
+        student = report_card.student_level.student
+        student_docs = Document.objects.filter(
+            student=student,
+            document_types__isnull=False
+        ).distinct()
+
+        for doc in student_docs:
+            # Only link if not already linked
+            if not ReportCardDocument.objects.filter(report_card=report_card, documents=doc).exists():
+                ReportCardDocument.objects.create(report_card=report_card, documents=doc)
+
+    def save_subject_scores(self, report_card, subjects_data):
+        for subject_data in subjects_data:
+            subject_name = subject_data.get("subject")
+            if not subject_name:
+                continue
+            subject = Subject.objects.get(subject_name=subject_name)
+            for exam_key in ["fa1", "fa2", "fa3", "sa1", "sa2", "sa3"]:
+                marks = subject_data.get(exam_key)
+                if marks is not None:
+                    exam_type = ExamType.objects.get(name__iexact=exam_key.upper())
+                    term = Term.objects.filter(year=report_card.student_level.year.year_name).first()
+                    student_marks = StudentMarks.objects.create(
+                        exam_type=exam_type,
+                        subject=subject,
+                        term=term,
+                        student=report_card.student_level.student,
+                        teacher=Teacher.objects.first(),
+                        marks_obtained=marks
+                    )
+                    SubjectScore.objects.create(
+                        report_card=report_card,
+                        marks_obtained=student_marks
+                    )
+                    # print("RC ID", report_card.id)  
+
+    def save_non_scholastic(self, report_card, grades):
+        for subject_name, values in grades.items():
+            subject = Subject.objects.get(subject_name=subject_name)
+            for term_key, grade in values.items():
+                term = Term.objects.get(name__iexact=term_key)
+                NonScholasticGradeTermWise.objects.create(
+                    report_card=report_card,
+                    non_scholastic_subject=subject,
+                    term=term,
+                    grade=grade
+                )
+
+    def save_personal_social(self, report_card, data):
+        all_qualities = PersonalSocialQuality.objects.all()
+        for term_key, quality_dict in data.items():
+            term_number = 1 if term_key == "Term 1" else 2
+            term = Term.objects.get(term_number=term_number, year=report_card.student_level.year)
+            for quality in all_qualities:
+                grade = quality_dict.get(quality.quality_name)
+                if grade:
+                    NonScholasticGradeTermWise.objects.create(
+                        report_card=report_card,
+                        personal_quality=quality,
+                        term=term,
+                        grade=grade
+                    )
+
+
+
+    def create(self, request, *args, **kwargs):
+        roles = self.get_user_roles()
+        if 'director' not in roles:
+            if 'teacher' in roles:
+                teacher = getattr(request.user, 'teacher', None)
+                student_level_id = request.data.get("student_level")
+                if teacher and student_level_id:
+                    try:
+                        student_level = StudentYearLevel.objects.get(id=student_level_id)
+                        if student_level.level not in teacher.year_levels.all():
+                            return Response({"error": "Permission denied."}, status=403)
+                    except StudentYearLevel.DoesNotExist:
+                        return Response({"error": "Invalid student_level ID."}, status=400)
+                else:
+                    return Response({"error": "Permission denied."}, status=403)
+            else:
+                return Response({"error": "Permission denied."}, status=403)
+            
+        data = request.data.copy()
+        student_level = StudentYearLevel.objects.get(id=data.get("student_level"))
+        student = student_level.student
+        academic_year = student_level.year
+        student_level = StudentYearLevel.objects.get(student=student, year=academic_year)
+
+        existing = ReportCard.objects.filter(student_level=student_level).first()
+        if existing:
+            return Response(
+                {"error": "Report card for this student and academic year already exists."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # STEP 1: Create report_card first with temporary placeholder values
+        report_card = ReportCard.objects.create(
+            student_level=student_level,
+            total_marks=0,
+            max_marks=0,
+            percentage=0.0,
+            grade="F",
+            division="Fail",
+            rank=data.get("rank"),
+            attendance=None,
+            supplementary_in = [],
+            teacher_remark=data.get("teacher_remark"),
+            promoted_to_class= None,#self.get_promoted_class(ReportCard),  
+            school_reopen_date=parse_date(data.get("school_reopen_date"))
+        )
+
+        # STEP 2: Save related data (required for subject score calc)
+        self.save_documents(report_card)
+        self.save_subject_scores(report_card, data.get("subjects", []))
+        self.save_non_scholastic(report_card, data.get("non_scholastic", {}))
+        self.save_personal_social(report_card, data.get("personal_social", {}))
+
+        # STEP 3: Sync marks to SubjectScore and recalculate
+        self.sync_subject_scores(report_card)
+        subjects = self.get_subject_score(report_card)
+        subject_avg = calculate_subject_summary(subjects)
+
+        total_obtained = subject_avg["total_marks"]
+        total_possible = subject_avg["max_marks"]
+        percentage = subject_avg["percentage"]
+        grade = subject_avg["grade"]
+        supplementary_in = ", ".join(subject_avg["supplementary_in"]) if subject_avg["supplementary_in"] else ""
+
+        if percentage >= 60:
+            division = "First"
+        elif percentage >= 50:
+            division = "Second"
+        elif percentage >= 40:
+            division = "Third"
+        else:
+            division = "Fail"
+
+        # STEP 4: Save final calculated fields
+        report_card.attendance = self.get_attendance_string(report_card)
+        report_card.total_marks = total_obtained
+        report_card.max_marks = total_possible
+        report_card.percentage = percentage
+        report_card.grade = grade
+        report_card.division = division
+        report_card.supplementary_in = supplementary_in
+        report_card.promoted_to_class = self.get_promoted_class(report_card)
+        
+        report_card.save()
+
+        return Response(self.build_report_card_response(report_card), status=status.HTTP_201_CREATED)
+    
+    def build_report_card_response(self, report_card):
+        student = report_card.student_level.student
+        user = student.user
+        
+        self.sync_subject_scores(report_card)
+        subjects = self.get_subject_score(report_card)
+
+        subject_avg = calculate_subject_summary(subjects)
+
+        total_obtained = subject_avg["total_marks"]
+        total_possible = subject_avg["max_marks"]
+        percentage = subject_avg["percentage"]
+        grade = subject_avg["grade"]
+        supplementary_in = subject_avg["supplementary_in"]
+
+        if percentage >= 60:
+            division = "First"
+        elif percentage >= 50:
+            division = "Second"
+        elif percentage >= 40:
+            division = "Third"
+        else:
+            division = "Fail"
+
+
+        documents_list = []
+
+        for doc_link in report_card.documents.select_related("documents").all():
+            doc = doc_link.documents
+            if doc and doc.document_types.exists():
+                try:
+                    # Force identities into list if stored as a string
+                    identities = doc.identities
+                    if isinstance(identities, str):
+                        identities = json.loads(identities)
+
+                    if not isinstance(identities, list):
+                        identities = [identities]
+
+                    for doc_type in doc.document_types.all():
+                        documents_list.append({doc_type.name: identities[0] if identities else None})
+
+                except Exception as e:
+                    # fallback when json.loads fails
+                    print("Error parsing identities:", e)
+                    continue
+
+                    
+        non_scholastic = {}
+        for ns_grade in report_card.non_scholastic_grades.select_related("non_scholastic_subject", "term"):
+            subject = ns_grade.non_scholastic_subject.subject_name
+            term = f"Term {ns_grade.term.term_number}"
+            if subject not in non_scholastic:
+                non_scholastic[subject] = {}
+            non_scholastic[subject][term] = ns_grade.grade
+
+        personal_social = [
+            {
+                "quality": psq.personal_quality.quality_name,
+                "term": f"Term {psq.term.term_number}",
+                "grade": psq.grade
+            }
+            for psq in report_card.personal_qualities.select_related("personal_quality", "term")
+        ]
+
+        full_name = " ".join(filter(None, [user.first_name, user.middle_name, user.last_name]))
+
+        return {
+            "id": report_card.id,
+            "student": student.id,
+            "student_name": full_name,
+            "father_name": student.father_name,
+            "mother_name": student.mother_name,
+            "date_of_birth": student.date_of_birth,
+            "contact_number": student.contact_number,
+            "scholar_number": student.scholar_number,
+            "standard": report_card.student_level.level.level_name,
+            "academic_year": report_card.student_level.year.year_name,
+            "total_marks": total_obtained,
+            "max_marks": total_possible,
+            "percentage": percentage,
+            "grade": grade,
+            "division": division,
+            "rank": report_card.rank,
+            "attendance": self.get_attendance_string(report_card),
+            "teacher_remark": report_card.teacher_remark,
+            "supplementary_in": supplementary_in,
+            "promoted_to_class": (report_card.promoted_to_class.level.level_name 
+                if report_card.promoted_to_class and report_card.promoted_to_class.level 
+                else None),
+            "school_reopen_date": report_card.school_reopen_date,
+            "documents": documents_list,
+            "subjects": self.get_subject_score(report_card),
+            "subject_avg": subject_avg["subject_avg"],
+            "non_scholastic": self.get_non_scholastic_data(report_card),
+            "personal_social": personal_social,
+
+        } 
+
+    def retrieve(self, request, *args, **kwargs):
+        report_card = self.get_object()
+        data = self.build_report_card_response(report_card)
+        return Response(data)
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        return Response([self.build_report_card_response(rc) for rc in queryset])
+
+    def update(self, request, *args, **kwargs):
+        roles = self.get_user_roles()
+        if 'director' not in roles:
+            if 'teacher' in roles:
+                teacher = getattr(request.user, 'teacher', None)
+                instance = self.get_object()
+                if not teacher or instance.student_level.level not in teacher.year_levels.all():
+                    return Response({"error": "Permission denied."}, status=403)
+            else:
+                return Response({"error": "Permission denied."}, status=403)
+            
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+        data = request.data
+
+        instance.total_marks = data.get("total_marks", instance.total_marks)
+        instance.max_marks = data.get("max_marks", instance.max_marks)
+        instance.percentage = data.get("percentage", instance.percentage)
+        instance.grade = data.get("grade", instance.grade)
+        instance.division = data.get("division", instance.division)
+        instance.rank = data.get("rank", instance.rank)
+        instance.attendance = data.get("attendance", instance.attendance)
+        instance.teacher_remark = data.get("teacher_remark", instance.teacher_remark)
+        instance.supplementary_in = data.get("supplementary_in", instance.supplementary_in)
+        instance.school_reopen_date = data.get("school_reopen_date", instance.school_reopen_date)
+
+        promoted_id = data.get("promoted_to_class")
+        if promoted_id:
+            instance.promoted_to_class_id = promoted_id
+
+        instance.save()
+
+        subjects_data = data.get("subjects", [])
+        if subjects_data:
+            instance.subject_scores.all().delete()
+            for sub in subjects_data:
+                subject_name = sub.get("subject")
+                exam_type = sub.get("exam_type")
+                marks = sub.get("marks")
+                try:
+                    subject_obj = Subject.objects.get(subject_name=subject_name)
+                    exam_type_obj = ExamType.objects.get(name=exam_type)
+                    student_mark = StudentMarks.objects.create(
+                        student=instance.student,
+                        subject=subject_obj,
+                        exam_type=exam_type_obj,
+                        marks_obtained=marks,
+                        term=Term.objects.filter(year=instance.academic_year.year).first()
+                    )
+                    SubjectScore.objects.create(report_card=instance, marks_obtained=student_mark)
+                except Exception as e:
+                    print("Subject Update Error:", e)
+
+
+        documents_data = data.get("documents", {})
+        if documents_data:
+            # Clear existing linked documents
+            instance.documents.all().delete()
+
+            #  Fetch all documents related to the same student
+            student_docs = Document.objects.filter(student=instance.student_level.student)
+
+            #  Link all of them to the report card
+            for doc in student_docs:
+                ReportCardDocument.objects.create(
+                    report_card=instance,
+                    documents=doc
+                )
+
+
+        non_scholastic_data = data.get("non_scholastic", {})
+        if non_scholastic_data:
+            instance.non_scholastic_grades.all().delete()
+            for subject_name, terms in non_scholastic_data.items():
+                subject_obj = Subject.objects.get(subject_name=subject_name)
+                for term_name, grade in terms.items():
+                    term_obj = Term.objects.get(term_number=term_name)
+                    NonScholasticGradeTermWise.objects.create(
+                        report_card=instance,
+                        non_scholastic_subject=subject_obj,
+                        term=term_obj,
+                        grade=grade
+                    )
+
+        personal_data = data.get("personal_social", [])
+        if personal_data:
+            instance.personal_qualities.all().delete()
+            for item in personal_data:
+                quality = item.get("quality")
+                term = item.get("term")
+                grade = item.get("grade")
+                try:
+                    quality_obj = PersonalSocialQuality.objects.get(quality_name=quality)
+                    term_obj = Term.objects.get(term_number=term)
+                    PersonalSocialQualityTermWise.objects.create(
+                        report_card=instance,
+                        personal_quality=quality_obj,
+                        term=term_obj,
+                        grade=grade
+                    )
+                except Exception as e:
+                    print("PSQ Update Error:", e)
+
+        return self.retrieve(request, *args, **kwargs)
+
+
+
