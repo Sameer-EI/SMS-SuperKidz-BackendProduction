@@ -4,6 +4,14 @@ from authentication.models import User
 
 
 # Create your models here.
+
+class TeacherManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
+    
+    def all_including_inactive(self):
+        return super().get_queryset()
+    
 class Teacher(models.Model):
     user = models.OneToOneField(User, on_delete=models.DO_NOTHING)
     phone_no = models.CharField(max_length=100,null=True,blank=True)
@@ -11,13 +19,16 @@ class Teacher(models.Model):
     adhaar_no = models.BigIntegerField(null=True,blank=True)
     pan_no = models.BigIntegerField(null=True,blank=True)
     qualification = models.CharField(max_length=250,null=True,blank=True)
+    is_active = models.BooleanField(default=True)
 
     year_levels = models.ManyToManyField('director.YearLevel', through='TeacherYearLevel')
     
-    
-    
+    objects = TeacherManager()
     def __str__(self):
         return f'{self.user.first_name}  {self.user.last_name}'
+    class Meta:
+        db_table = "Teacher"
+        indexes = [models.Index(fields=['is_active'])]
     
 class TeacherYearLevel(models.Model):
     teacher = models.ForeignKey(Teacher, on_delete=models.CASCADE)

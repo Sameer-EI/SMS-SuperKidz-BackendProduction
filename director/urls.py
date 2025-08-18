@@ -62,6 +62,10 @@ urlpatterns = [
     path('income-distribution-dashboard/', guardian_income_distribution, name='guardian-income-distribution'), 
     path('income-distribution-dashboard-student/', guardian_income_distribution_with_student, name='guardian-income-distribution-student'), 
     path("fee-dashboard/", fee_dashboard, name="fee-dashboard-summary"),    # complete dashboard
+    # Termination process api below
+    path("deactivate-user/", deactivate_user, name="deactivate-user"),
+    path("reactivate-user/", reactivate_user, name="reactivate-user"),
+    path("inactive-user/", list_inactive_users, name="inactive-user"),
 ]
 
 

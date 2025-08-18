@@ -136,6 +136,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from .filters import StudentFilter
 class StudentView(ModelViewSet):
     queryset = Student.objects.all()
+    # queryset = Student.objects.filter(is_active=True)
     serializer_class = StudentSerializer
     
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]

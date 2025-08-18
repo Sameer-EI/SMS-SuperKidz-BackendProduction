@@ -61,7 +61,13 @@ class City(models.Model):
         verbose_name_plural = "Cities"
         db_table = "City"
 
-
+class AddressManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
+    
+    def all_including_inactive(self):
+        return super().get_queryset()
+    
 class Address(models.Model):
     user = models.ForeignKey("authentication.User", on_delete=models.DO_NOTHING)
     house_no = models.IntegerField(null=True, blank=True)
@@ -76,6 +82,9 @@ class Address(models.Model):
     state = models.ForeignKey(State, on_delete=models.DO_NOTHING)
     city = models.ForeignKey(City, on_delete=models.DO_NOTHING)
     address_line = models.CharField(max_length=250,null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    objects = AddressManager()
 
     def __str__(self):
         return f"{self.user} - {self.address_line}"
@@ -84,12 +93,22 @@ class Address(models.Model):
         verbose_name = "Address"
         verbose_name_plural = "Addresses"
         db_table = "Address"
+        indexes = [models.Index(fields=['is_active'])]
 
-
+class DirectorManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
+    
+    def all_including_inactive(self):
+        return super().get_queryset()
+    
 class Director(models.Model):
     user = models.OneToOneField("authentication.User", on_delete=models.SET_NULL,null=True)
     phone_no = models.CharField(max_length=250, null=True, blank=True)
     gender = models.CharField(max_length=50,null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    objects = DirectorManager()
 
     def __str__(self):
         return str(self.user)
@@ -98,14 +117,24 @@ class Director(models.Model):
         verbose_name = "Director"
         verbose_name_plural = "Directors"
         db_table = "Director"
+        indexes = [models.Index(fields=['is_active'])]
 
-
+class BankingDetailsManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
+    
+    def all_including_inactive(self):
+        return super().get_queryset()
+    
 class BankingDetail(models.Model):
     account_no = models.BigIntegerField( )
     # account_no = models.BigIntegerField(primary_key=True, unique=True)
     ifsc_code = models.CharField(max_length=225)
     holder_name = models.CharField(max_length=255)
     user = models.OneToOneField("authentication.User", on_delete=models.DO_NOTHING)
+    is_active = models.BooleanField(default=True)
+
+    objects = BankingDetailsManager()
 
     # def __str__(self):
     #     return str(self.account_no)
@@ -117,6 +146,7 @@ class BankingDetail(models.Model):
         verbose_name = "Banking Detail"
         verbose_name_plural = "Banking Details"
         db_table = "BankingDetail"
+        indexes = [models.Index(fields=['is_active'])]
 
 
 class SchoolYear(models.Model):
@@ -221,7 +251,7 @@ class ClassRoom(models.Model):
 
 class ClassPeriod(models.Model):
     subject = models.ForeignKey(Subject, on_delete=models.DO_NOTHING)
-    teacher = models.ForeignKey("teacher.Teacher", on_delete=models.DO_NOTHING)
+    teacher = models.ForeignKey("teacher.Teacher", on_delete=models.SET_NULL, null=True, blank=True)
     term = models.ForeignKey(Term, on_delete=models.DO_NOTHING)
     start_time = models.ForeignKey(
         Period, on_delete=models.DO_NOTHING, related_name="start_time"
@@ -244,9 +274,12 @@ class ClassPeriod(models.Model):
 
 
 
-
-
-
+class AdmissionManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
+    
+    def all_including_inactive(self):
+        return super().get_queryset()
 
 class Admission(models.Model):
     enrollment_no = models.CharField( max_length=20,blank=True, null=True)
@@ -265,13 +298,10 @@ class Admission(models.Model):
     obtain_marks = models.FloatField()
     total_marks = models.FloatField()
     previous_percentage = models.FloatField(blank=True, null=True)  # Allow null/blank since auto-calculated
+    is_active = models.BooleanField(default=True)
 
-    # def save(self, *args, **kwargs):
-    #     if self.total_marks > 0:
-    #         self.previous_percentage = (self.obtain_marks / self.total_marks) * 100
-    #     else:
-    #         self.previous_percentage = 0  
-    #     super().save(*args, **kwargs)
+    objects = AdmissionManager()
+
     def save(self, *args, **kwargs):
         if not self.enrollment_no:
             current_year = now().year
@@ -298,6 +328,9 @@ class Admission(models.Model):
     def __str__(self):
      return f"Admission of {self.student} (Guardian: {self.guardian}) - YearLevel: {self.year_level if self.year_level else 'None'}"
     
+    class Meta:
+        db_table = "Admission"
+        indexes = [models.Index(fields=['is_active'])]
 
 
 
@@ -349,6 +382,14 @@ class YearLevelFee(models.Model):
         verbose_name_plural = "Year Level Fees"
         db_table = "YearLevelFee"
 
+
+class FeeRecordManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
+    
+    def all_including_inactive(self):
+        return super().get_queryset()
+    
 class FeeRecord(models.Model):
     student = models.ForeignKey("student.Student", on_delete=models.CASCADE)
     MONTH_CHOICES = [
@@ -373,6 +414,9 @@ class FeeRecord(models.Model):
     razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)
     razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
     razorpay_signature_id = models.CharField(max_length=255, blank=True, null=True)
+    is_active = models.BooleanField(default=True)  
+
+    objects = FeeRecordManager()
 
     def __str__(self):
         return f"{self.student.user.get_full_name()} - {self.month}"
@@ -392,16 +436,17 @@ class FeeRecord(models.Model):
         verbose_name = "Fee Record"
         verbose_name_plural = "Fee Records"
         db_table = "FeeRecord"
+        indexes = [models.Index(fields=['is_active'])]
 
-
-
-
-
-
-
+class OfficeStaffManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
+    
+    def all_including_inactive(self):
+        return super().get_queryset()
 
 class OfficeStaff(models.Model):
-    user = models.OneToOneField("authentication.User", on_delete=models.SET_NULL, null=True)
+    user = models.OneToOneField("authentication.User", on_delete=models.SET_NULL, null=True, related_name="office_staff")
     phone_no = models.CharField(max_length=20)
     gender = models.CharField(max_length=20)
     department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True)
@@ -409,6 +454,9 @@ class OfficeStaff(models.Model):
     student = models.ManyToManyField("student.Student", blank=True, related_name="managed_by_staff")
     teacher = models.ManyToManyField("teacher.Teacher", blank=True, related_name="managed_by_staff")
     admissions = models.ManyToManyField(Admission, blank=True, related_name="handled_by_staff")
+    is_active = models.BooleanField(default=True)
+
+    objects = OfficeStaffManager()
 
     def __str__(self):
         return f"{self.user.first_name} {self.user.last_name} ({self.department})"
@@ -417,6 +465,7 @@ class OfficeStaff(models.Model):
         verbose_name = "Office Staff"
         verbose_name_plural = "Office Staff"
         db_table = "OfficeStaff"
+        indexes = [models.Index(fields=['is_active'])]
         
         
 
@@ -431,7 +480,12 @@ class DocumentType(models.Model):
         db_table = "DocumentType"
         
         
-        
+class DocumentManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
+    
+    def all_including_inactive(self):
+        return super().get_queryset()        
 
 class Document(models.Model):
     document_types = models.ManyToManyField(DocumentType)
@@ -441,8 +495,10 @@ class Document(models.Model):
     teacher = models.ForeignKey("teacher.Teacher", on_delete=models.SET_NULL, null=True, blank=True)
     guardian = models.ForeignKey("student.Guardian", on_delete=models.SET_NULL, null=True, blank=True)
     office_staff = models.ForeignKey(OfficeStaff, on_delete=models.SET_NULL, null=True, blank=True)
-
     uploaded_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)  
+
+    objects = DocumentManager()
 
     def __str__(self):
         entity = self.student or self.teacher or self.guardian or self.office_staff
@@ -450,6 +506,7 @@ class Document(models.Model):
 
     class Meta:
         db_table = "Document"
+        indexes = [models.Index(fields=['is_active'])]
         
 class File(models.Model):
     file = models.FileField(upload_to=Document_folder) 
@@ -462,3 +519,12 @@ class File(models.Model):
 
     class Meta:
         db_table = "File"
+
+# # Deactivated User model for handling
+# class DeactivatedUsers(models.Model):
+#     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='deactive_user')
+#     deactivated_at = models.DateTimeField(auto_now_add=True)
+#     # reason = models.CharField(max_length=1000, blank=True, null=True)
+#     # deactivated_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='deactivated_by')
+
+    
