@@ -29,9 +29,13 @@ class UserSerializer(serializers.ModelSerializer):
         fields = [
             "first_name", "last_name", "email", "password", "role",
             "year_level", "school_year", "gender", "date_of_birth",
-             "user_profile"
+            "user_profile",
             # "enrolment_date", "user_profile"
+            # added here for termination
+            'is_active', 'deactivation_reason', 'deactivation_date', 'reactivation_date'
         ]
+        # no changes by api
+        read_only_fields = ['id', 'deactivation_date', 'reactivation_date']
         extra_kwargs = {
             'password': {'write_only': True},
         }
