@@ -1,3 +1,4 @@
+from email.mime import base
 from django.urls import path,include
 from .views import *
 from director.views import Director_Dashboard_Summary
@@ -23,13 +24,24 @@ router.register(r'officestaff',OfficeStaffView)
 router.register(r'DocumentType',DocumentTypeView)
 
 router.register(r'File',FileView),
-router.register(r'Document',DocumentView),
+router.register(r'Document',DocumentView,basename='document'),
 router.register(r'subject',subjectView),
-# router.register(r'class-periods', ClassPeriodView),
 router.register(r'fee-types', FeeTypeView) # whole code commented as of 06June25 at 12:30 PM
 router.register(r'year-level-fee', YearLevelFeeView, basename='year-level-fee')
 router.register(r'fee-record', FeeRecordView, basename='fee-record') #
-# router.register(r'submit_fee',FeeSubmitView, basename='submit_fee')
+
+router.register(r'fee-discounts',FeeDiscountView, basename='fee-discounts')
+
+router.register(r'Exam-Type',ExamTypeView)
+router.register(r'Exam-Paper',ExamPaperView)
+router.register(r'Exam-Schedule',ExamScheduleView)
+router.register(r'Student-Marks',StudentMarksView,basename='student-marks')
+
+
+router.register(r'personal-social-grades', PersonalSocialGradeViewSet, basename='personal-social-grades')
+router.register(r'non-scholastic-grades', NonScholasticGradeViewSet, basename='non-scholastic')
+router.register(r'report-cards', ReportCardViewSet, basename='report-cards')
+
 
 
 urlpatterns = [
@@ -48,14 +60,13 @@ urlpatterns = [
     path("guardian-dashboard/<int:id>/", guardian_dashboard),
     path("student_dashboard/<int:id>/", student_dashboard),
     path('office-staff-dashboard/', office_staff_dashboard),
-    # path('office-staff-dashboard/<int:id>/', office_staff_dashboard),
-    # path("student-dashboard/<int:id>/", student_dashboard),
     path("director/fee-summary/", director_fee_summary),
     path('income_filter/', guardian_income_distribution),
     path('livelihood_filter/', livelihood_distribution),
+    path('periods/', assigned_periods),
+    path("fetch_upload_doc/",document_fetch_dashboard),
     path('', include(router.urls)),
-    # path('submit-fee/', FeeView.as_view(), name='submit-fee'),
-    # path("fee_submission/<int:student_id>/", FeeSubmissionView.as_view(), name='fee-submission'),
+   
     
     # As of 25June25 at 12:35
     path('student-category-dashboard/', student_category, name='student-category'),
@@ -66,6 +77,7 @@ urlpatterns = [
     path("deactivate-user/", deactivate_user, name="deactivate-user"),
     path("reactivate-user/", reactivate_user, name="reactivate-user"),
     path("inactive-user/", list_inactive_users, name="inactive-user"),
+
 ]
 
 

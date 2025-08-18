@@ -11,6 +11,7 @@ from django.utils.crypto import get_random_string
 from django.core.mail import send_mail
 from django.core.cache import cache
 from rest_framework.views import APIView
+from rest_framework import viewsets
 
 
 
@@ -55,12 +56,14 @@ def ChangePasswordView(request):
     return Response(serialized.errors, status=400)
 
 
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
-from rest_framework import status
-from django.contrib.auth import authenticate
-from rest_framework_simplejwt.tokens import RefreshToken
-from .serializers import LoginSerializers  # adjust import if needed
+# from rest_framework.decorators import api_view
+# from rest_framework.response import Response
+# from rest_framework import status
+# from django.contrib.auth import authenticate
+# from rest_framework_simplejwt.tokens import RefreshToken
+# from .serializers import LoginSerializers  # adjust import if needed
+# from rest_framework.permissions import IsAdminUser 
+
 
 @api_view(["POST"])
 def LoginView(request):
@@ -268,3 +271,11 @@ def ForgotPasswordView(request):
         return Response({"Message": "Invalid OTP "}, status=status.HTTP_400_BAD_REQUEST)
 
     return Response(serializer_data.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+# ***********************ErroView**********************************
+class ErrorLogViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = ErrorLog.objects.all()
+    # queryset = ErrorLog.objects.all().order_by('-created_at')
+    serializer_class = ErrorLogSerializer
+    # permission_classes = [IsAdminUser]

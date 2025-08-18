@@ -4,7 +4,9 @@ from authentication . models import User
 from director . models import Role
 from django.db import IntegrityError
 from django.core.exceptions import MultipleObjectsReturned
-from director.models import YearLevel
+from director.models import YearLevel 
+from director.serializers import ClassPeriodSerializer
+
 
 
 
@@ -25,7 +27,7 @@ class TeacherSerializer(serializers.ModelSerializer):
     phone_no = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True)
     gender = serializers.CharField(max_length=50, required=False, allow_blank=True, allow_null=True)
     adhaar_no = serializers.IntegerField(required=False, allow_null=True)
-    pan_no = serializers.IntegerField(required=False, allow_null=True)
+    pan_no = serializers.CharField(max_length=50, required=False, allow_blank=True, allow_null=True)
     qualification = serializers.CharField(max_length=250, required=False, allow_blank=True, allow_null=True)
 
     class Meta:
@@ -115,8 +117,41 @@ class TeacherSerializer(serializers.ModelSerializer):
 
 
 # ******************TeacherYearLevelSerializer***********************************
-class TeacherYearLevelSerializer(serializers.ModelSerializer):
-    class Meta:
-        model =TeacherYearLevel
-        fields ="__all__"
+# class TeacherYearLevelSerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model =TeacherYearLevel
+#         fields ="__all__"
         
+
+from rest_framework import serializers
+from .models import TeacherYearLevel
+
+class TeacherYearLevelSerializer(serializers.ModelSerializer):
+    teacher_name = serializers.SerializerMethodField()
+    year_level_name = serializers.CharField(source='year_level.level_name', read_only=True)
+
+    class Meta:
+        model = TeacherYearLevel
+        fields = "__all__"
+       
+    def get_teacher_name(self, obj):
+        if obj.teacher and obj.teacher.user:
+            return obj.teacher.user.get_full_name() or f"{obj.teacher.user.first_name} {obj.teacher.user.last_name}".strip()
+        return ""
+
+    def validate(self, data):
+        year_level = data.get('year_level')
+        instance = self.instance  # None if create, else update instance
+
+        qs = TeacherYearLevel.objects.filter(year_level=year_level)
+        if instance:
+            qs = qs.exclude(pk=instance.pk)
+
+        if qs.exists():
+            raise serializers.ValidationError({
+                'year_level': f"'{year_level}' is already assigned to another teacher."
+            })
+        return data
+
+
+

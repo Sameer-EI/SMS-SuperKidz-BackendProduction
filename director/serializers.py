@@ -42,11 +42,8 @@ class ClassRoomTypeSerializer(serializers.ModelSerializer):
         model = ClassRoomType
         fields = "__all__"
         
-        
-class ClassPeriodSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ClassPeriod
-        fields = "__all__"        
+ 
+    
 
 
 class BankingDetailsSerializer(serializers.ModelSerializer):
@@ -621,6 +618,56 @@ class AdmissionSerializer(serializers.ModelSerializer):
 # As of 05May25 at 01:00 PM
 
 
+# class ClassPeriodSerializer(serializers.ModelSerializer):
+#     # Extra fields for the custom POST action
+#     year_level_name = serializers.CharField(write_only=True, required=False)
+#     class_period_names = serializers.ListField(
+#         child=serializers.CharField(), write_only=True, required=False
+#     )
+
+#     class Meta:
+#         model = ClassPeriod
+#         fields = [
+#             'id', 'subject', 'teacher', 'term',
+#             'start_time', 'end_time', 'classroom', 'name',
+#             'year_level', 'year_level_name', 'class_period_names'
+#         ]
+
+#     def to_representation(self, instance):
+#         representation = super().to_representation(instance)
+#         representation['start_time'] = instance.start_time.start_period_time.strftime('%I:%M %p')
+#         representation['end_time'] = instance.end_time.end_period_time.strftime('%I:%M %p')
+#         return representation
+
+#     def create(self, validated_data):
+#         # Handle assignment logic only if year_level_name and class_period_names are present
+#         year_level_name = validated_data.pop('year_level_name', None)
+#         class_period_names = validated_data.pop('class_period_names', None)
+
+#         if year_level_name and class_period_names:
+#             try:
+#                 year_level = YearLevel.objects.get(level_name=year_level_name)
+#             except YearLevel.DoesNotExist:
+#                 raise serializers.ValidationError("Invalid YearLevel name.")
+
+#             class_periods = ClassPeriod.objects.filter(name__in=class_period_names)
+#             if class_periods.count() != len(class_period_names):
+#                 raise serializers.ValidationError("Some ClassPeriod names are invalid.")
+
+#             student_ids = StudentYearLevel.objects.filter(level=year_level).values_list("student_id", flat=True)
+#             students = Student.objects.filter(id__in=student_ids)
+
+#             for student in students:
+#                 student.classes.add(*class_periods)
+
+#             return {
+#                 "students_updated": students.count(),
+#                 "class_periods_assigned": [cp.name for cp in class_periods]
+#             }
+
+#         # If not an assignment request, create a regular ClassPeriod (fallback)
+#         return super().create(validated_data)
+
 class ClassPeriodSerializer(serializers.ModelSerializer):
     # Extra fields for the custom POST action
     year_level_name = serializers.CharField(write_only=True, required=False)
@@ -633,7 +680,7 @@ class ClassPeriodSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'subject', 'teacher', 'term',
             'start_time', 'end_time', 'classroom', 'name',
-            'year_level_name', 'class_period_names'  
+            'year_level', 'year_level_name', 'class_period_names'
         ]
 
     def to_representation(self, instance):
@@ -641,6 +688,28 @@ class ClassPeriodSerializer(serializers.ModelSerializer):
         representation['start_time'] = instance.start_time.start_period_time.strftime('%I:%M %p')
         representation['end_time'] = instance.end_time.end_period_time.strftime('%I:%M %p')
         return representation
+
+    def validate(self, attrs):
+        teacher = attrs.get('teacher')
+        start_time = attrs.get('start_time')
+        end_time = attrs.get('end_time')
+
+        if teacher and start_time and end_time:
+            overlapping = ClassPeriod.objects.filter(
+                teacher=teacher,
+                start_time__lt=end_time,
+                end_time__gt=start_time,
+            )
+
+            if self.instance:
+                overlapping = overlapping.exclude(id=self.instance.id)
+
+            if overlapping.exists():
+                raise serializers.ValidationError(
+                    {"non_field_errors": ["This teacher is already assigned to another class during this time."]}
+                )
+
+        return attrs
 
     def create(self, validated_data):
         # Handle assignment logic only if year_level_name and class_period_names are present
@@ -733,6 +802,80 @@ class YearLevelFeeSerializer(serializers.ModelSerializer):
         return list(grouped_fees.values())
 
 
+class FeeDiscountSerializer(serializers.ModelSerializer):
+    student_id = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all(),source='student')
+    student_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FeeDiscount
+        fields = ["id","student_id","student_name","admission_fee_discount","tuition_fee_discount","discount_reason","is_allowed","created_at","updated_at",]
+        read_only_fields = ["created_at", "updated_at"]  
+    
+    def get_student_name(self, obj):
+        return f"{obj.student.user.first_name} {obj.student.user.last_name}".strip()
+
+    def validate(self, attrs):
+        student = attrs.get("student")
+
+        # On create: block if any existing record for this student
+        if self.instance is None and FeeDiscount.objects.filter(student=student).exists():
+            raise serializers.ValidationError(
+                {"student_id": f"A discount already exists for this student."}
+            )
+
+        # On update: block if trying to assign to another student that already has a discount
+        if self.instance and student != self.instance.student:
+            if FeeDiscount.objects.filter(student=student).exists():
+                raise serializers.ValidationError(
+                    {"student_id": f"A discount already exists for this student."}
+                )
+        # Get student's year level current)
+        student_year_level = (
+            StudentYearLevel.objects
+            .filter(student=student)
+            .order_by('-year')  # if multiple, get the latest
+            .first()
+        )
+
+        if not student_year_level:
+            raise serializers.ValidationError({
+                "student_id": "No year level found for this student."
+            })
+
+        # Get actual fees for student's class/year level
+        admission_fee = (
+            YearLevelFee.objects
+            .filter(year_level=student_year_level.level, fee_type__name__icontains="admission fee")
+            .first()
+        )
+        tuition_fee = (
+            YearLevelFee.objects
+            .filter(year_level=student_year_level.level, fee_type__name__icontains="tuition fee")
+            .first()
+        )
+
+        admission_fee_amount = Decimal(admission_fee.amount) if admission_fee else Decimal("0")
+        tuition_fee_amount = Decimal(tuition_fee.amount) if tuition_fee else Decimal("0")
+
+        admission_discount = Decimal(attrs.get("admission_fee_discount") or 0)
+        tuition_discount = Decimal(attrs.get("tuition_fee_discount") or 0)
+
+        errors = {}
+
+        if admission_discount > admission_fee_amount:
+            errors["admission_fee_discount"] = (
+                f"Cannot exceed actual admission fee ({admission_fee_amount})."
+            )
+
+        if tuition_discount > tuition_fee_amount:
+            errors["tuition_fee_discount"] = (
+                f"Cannot exceed actual tuition fee ({tuition_fee_amount})."
+            )
+
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
 
 ### just added to submit fee for multiple months as of 09Jun25 at 06:53 PM
 class FeeRecordSerializer(serializers.ModelSerializer):
@@ -740,7 +883,7 @@ class FeeRecordSerializer(serializers.ModelSerializer):
     student_id = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all(), source='student', write_only=True)
     year_level_fees = serializers.PrimaryKeyRelatedField(queryset=YearLevelFee.objects.all(), many=True, write_only=True)
     year_level_fees_grouped = serializers.SerializerMethodField(read_only=True)
-
+    discounted_amount = serializers.SerializerMethodField()
     total_amount = serializers.DecimalField(max_digits=8, decimal_places=2, read_only=True)
     paid_amount = serializers.DecimalField(max_digits=8, decimal_places=2)
     due_amount = serializers.DecimalField(max_digits=8, decimal_places=2, read_only=True)
@@ -759,7 +902,7 @@ class FeeRecordSerializer(serializers.ModelSerializer):
         model = FeeRecord
         fields = [
             'id', 'student', 'student_id', 'month', 'year_level_fees', 'year_level_fees_grouped',
-            'total_amount', 'paid_amount', 'due_amount', 'payment_date', 'payment_mode', 'is_cheque_cleared','receipt_number',
+            'total_amount', 'paid_amount', 'due_amount','discounted_amount', 'payment_date', 'payment_mode', 'is_cheque_cleared','receipt_number',
             'late_fee', 'payment_status', 'remarks', 'received_by'
         ]
         read_only_fields = ['receipt_number', 'payment_date', 'total_amount', 'due_amount', 'late_fee']
@@ -769,7 +912,35 @@ class FeeRecordSerializer(serializers.ModelSerializer):
             "id": obj.student.id,
             "name": f"{obj.student.user.first_name} {obj.student.user.last_name}"
         }
+    
+    def get_discounted_amount(self, obj):
+        total_discount = 0
 
+        try:
+            discount = FeeDiscount.objects.get(student=obj.student, is_allowed=True)
+        except FeeDiscount.DoesNotExist:
+            return "0.00"
+
+        for fee in obj.year_level_fees.all():
+            fee_type = fee.fee_type.name.lower()
+            if "admission fee" in fee_type and discount.admission_fee_discount:
+                total_discount += float(discount.admission_fee_discount)
+            if "tuition fee" in fee_type and discount.tuition_fee_discount:
+                total_discount += float(discount.tuition_fee_discount)
+
+        return f"{total_discount:.2f}"
+    
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        user = self.context['request'].user
+
+        # Check role
+        if not user.role.filter(name="Director").exists():
+            data.pop('discounted_amount', None)  # hide it from non-directors
+
+        return data
+    
+    
     def get_year_level_fees_grouped(self, obj):
         grouped = defaultdict(list)
         for fee in obj.year_level_fees.all():
@@ -781,53 +952,68 @@ class FeeRecordSerializer(serializers.ModelSerializer):
             })
         return [{"year_level": yl, "fees": fees} for yl, fees in grouped.items()]
     
-    
     def validate(self, data):
         student = data.get('student')
-        month = data.get('month')
+        month = data.get('month')  # e.g., 'July'
         year_level_fees = data.get('year_level_fees', [])
         paid_amount = data.get('paid_amount', 0)
 
-        # Prevent duplicate fee entry for same student + month
-        if self.instance is None:  # Only during creation
-            if FeeRecord.objects.filter(student=student, month=month).exists():
-                raise serializers.ValidationError(f"Fee already submitted for {month} for this student.")
+        # if self.instance is None:
+        #     if FeeRecord.objects.filter(student=student, month=month).exists():
+        #         raise serializers.ValidationError(f"Fee already submitted for {month} for this student.")
 
-        # Validate fees
+        if self.instance is None:
+            for fee in year_level_fees:
+                if FeeRecord.objects.filter(student=student, month=month, year_level_fees=fee).exists():
+                    raise serializers.ValidationError(
+                        f"{fee.fee_type.name} of {month} is already submitted for {student}."
+                    )
+
         if not year_level_fees:
             raise serializers.ValidationError("At least one year level fee must be selected.")
 
-        # Calculate total amount
         total = 0
         for fee in year_level_fees:
             total += fee.amount
+
+        # Get applicable discount (only allowed ones)
+        try:
+            discount = FeeDiscount.objects.get(student=student, is_allowed=True)
+        except FeeDiscount.DoesNotExist:
+            discount = None
+
+        total_discount = 0
+        if discount:
+            for fee in year_level_fees:
+                fee_type = fee.fee_type.name.lower()
+                if "admission fee" in fee_type:
+                    total_discount += discount.admission_fee_discount or 0
+                if "tuition fee" in fee_type:
+                    total_discount += discount.tuition_fee_discount or 0
+
+        # Subtract discount from total but never negative
+        total = max(total - total_discount, 0)
         data['total_amount'] = total
 
-        # Apply late fee only for current or past months
+        # # caluculate total amount based on year level fee
+        # data['total_amount'] = total
+
+        # calculate late fee, if submitted after 15th
         today = date.today()
-        month_map = {
-            'January': 1, 'February': 2, 'March': 3, 'April': 4,
-            'May': 5, 'June': 6, 'July': 7, 'August': 8,
-            'September': 9, 'October': 10, 'November': 11, 'December': 12
-        }
+        data['late_fee'] = 25 if today.day > 15 else 0
 
-        fee_month_num = month_map.get(month)
-
-        if fee_month_num is not None and (fee_month_num <= today.month):
-            # If the fee is for current/past month and today is after the 15th
-            data['late_fee'] = 25 if today.day > 15 else 0
-        else:
-            data['late_fee'] = 0
-
-        # Calculate due amount
+        #paid amount should be equal or less than total amount
+        if paid_amount > total:
+            raise serializers.ValidationError("Paid amount cannot be greater than total amount.")
+        
+        # calculate due amount
         due = total + data['late_fee'] - paid_amount
         data['due_amount'] = due if due > 0 else 0
         
-        # Set payment status based on due amount
-        data['payment_status'] = 'Paid' if data['due_amount'] == 0 else 'Unpaid'
+        # Determine payment status  commented as of 11June25
+        # data['payment_status'] = 'Paid' if data['due_amount'] == 0 else 'Unpaid'
 
         return data
-
     
     ### Added this as of 11June25 at 01:39 PM
     def create(self, validated_data):
@@ -892,11 +1078,37 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
         if not year_level_fees:
             raise serializers.ValidationError("At least one year level fee must be selected.")
 
-        if FeeRecord.objects.filter(student=student, month=month).exists():
-            raise serializers.ValidationError(f"Fee already submitted for {month} month for this student.")
+        # if FeeRecord.objects.filter(student=student, month=month).exists():
+        #     raise serializers.ValidationError(f"Fee already submitted for {month} month for this student.")
+
+        if self.instance is None:
+            for fee in year_level_fees:
+                if FeeRecord.objects.filter(student=student, month=month, year_level_fees=fee).exists():
+                    raise serializers.ValidationError(
+                        f"{fee.fee_type.name} of {month} is already submitted for {student}."
+                    )
 
         # Calculate total fees
         total = sum(fee.amount for fee in year_level_fees)
+
+        # Get applicable discount (only allowed ones)
+        try:
+            discount = FeeDiscount.objects.get(student=student, is_allowed=True)
+        except FeeDiscount.DoesNotExist:
+            discount = None
+
+        total_discount = Decimal("0.00")
+        if discount:
+            for fee in year_level_fees:
+                fee_type = fee.fee_type.name.lower()
+                if "admission fee" in fee_type:
+                    total_discount += discount.admission_fee_discount or Decimal("0.00")
+                if "tuition fee" in fee_type:
+                    total_discount += discount.tuition_fee_discount or Decimal("0.00")
+
+        # Subtract discount from total but never negative
+        total = max(total - total_discount, Decimal("0.00"))
+
 
         # Calculate late fee based on current or past month logic (same as cash serializer)
         month_map = {
@@ -913,6 +1125,10 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
             late_fee = Decimal("0.00")
 
         due_amount = total + late_fee - paid_amount
+        if paid_amount > (total + late_fee):
+            raise serializers.ValidationError(
+                f"Paid amount ({paid_amount}) cannot be greater than the total due ({total + late_fee})."
+            )
 
         data['total_amount'] = total
         data['late_fee'] = late_fee
@@ -1085,71 +1301,488 @@ class FileSerializer(serializers.ModelSerializer):
 
 
 
+# class DocumentSerializer(serializers.ModelSerializer):
+#     files = FileSerializer(many=True, read_only=True)
+
+#     uploaded_files = serializers.ListField(
+#         child=serializers.FileField(),
+#         write_only=True,
+#         required=True,
+#         allow_empty=False
+#     )
+
+#     # Accepts list of IDs at POST/PUT time
+#     document_types = serializers.PrimaryKeyRelatedField(
+#         queryset=DocumentType.objects.all(),
+#         many=True,
+#         required=True,
+#         allow_empty=False
+#     )
+
+#     identities = serializers.ListField(
+#         child=serializers.CharField(),
+#         write_only=True
+#     )
+
+#     identities_read = serializers.SerializerMethodField(read_only=True)
+
+#     class Meta:
+#         model = Document
+#         fields = [
+#             'id', 'document_types', 'identities', 'identities_read', 'files', 'uploaded_files',
+#             'student', 'teacher', 'guardian', 'office_staff', 'uploaded_at'
+#         ]
+
+#     def get_identities_read(self, obj):
+#         import json
+#         try:
+#             return json.loads(obj.identities) if obj.identities else []
+#         except:
+#             return []
+
+#     def to_representation(self, instance):
+#         """Customize the output to show document type names instead of just IDs."""
+#         representation = super().to_representation(instance)
+#         document_types = instance.document_types.all()
+#         representation['document_types'] = [
+#             {"id": dt.id, "name": dt.name} for dt in document_types
+#         ]
+#         return representation
+
+#     def create(self, validated_data):
+#         import json
+
+#         uploaded_files = validated_data.pop('uploaded_files')
+#         document_types = validated_data.pop('document_types')
+#         identities_list = validated_data.pop('identities')
+
+#         if len(document_types) != len(identities_list):
+#             raise serializers.ValidationError("Number of document_types and identities must match.")
+
+#         document = Document.objects.create(**validated_data)
+#         document.document_types.set(document_types)
+#         document.identities = json.dumps(identities_list)
+#         document.save()
+
+#         for uploaded_file in uploaded_files:
+#             File.objects.create(file=uploaded_file, document=document)
+
+#         return document
+
+
+
+# from rest_framework import serializers
+# from .models import Document, DocumentType
+
+# class DocumentSerializer(serializers.ModelSerializer):
+#     # Make document_types write-only to prevent it from being included in validated_data
+#     document_types = serializers.PrimaryKeyRelatedField(
+#         many=True,
+#         queryset=DocumentType.objects.all(),
+#         write_only=True
+#     )
+    
+#     # Add read-only field for the response
+#     document_types_read = serializers.PrimaryKeyRelatedField(
+#         many=True,
+#         source='document_types',
+#         read_only=True
+#     )
+    
+#     class Meta:
+#         model = Document
+#         fields = '__all__'
+#         extra_kwargs = {
+#             'student': {'required': False, 'allow_null': True},
+#             'teacher': {'required': False, 'allow_null': True},
+#             'guardian': {'required': False, 'allow_null': True},
+#             'office_staff': {'required': False, 'allow_null': True},
+#         }
+
+#     def create(self, validated_data):
+#         # Remove document_types from validated_data before creation
+#         document_types = validated_data.pop('document_types', [])
+        
+#         # Create the document instance
+#         instance = super().create(validated_data)
+        
+#         # Set the many-to-many relationship after creation
+#         if document_types:
+#             instance.document_types.set(document_types)
+        
+#         return instance
+
+#     def update(self, instance, validated_data):
+#         # Handle document_types separately for updates too
+#         document_types = validated_data.pop('document_types', None)
+        
+#         instance = super().update(instance, validated_data)
+        
+#         if document_types is not None:
+#             instance.document_types.set(document_types)
+        
+#         return instance
+
+from rest_framework import serializers
+from .models import Document, DocumentType
+
+
 class DocumentSerializer(serializers.ModelSerializer):
-    files = FileSerializer(many=True, read_only=True)
-
-    uploaded_files = serializers.ListField(
-        child=serializers.FileField(),
-        write_only=True,
-        required=True,
-        allow_empty=False
-    )
-
-    # Accepts list of IDs at POST/PUT time
     document_types = serializers.PrimaryKeyRelatedField(
-        queryset=DocumentType.objects.all(),
         many=True,
-        required=True,
-        allow_empty=False
-    )
-
-    identities = serializers.ListField(
-        child=serializers.CharField(),
+        queryset=DocumentType.objects.all(),
         write_only=True
     )
-
-    identities_read = serializers.SerializerMethodField(read_only=True)
-
+    
+    document_types_read = serializers.PrimaryKeyRelatedField(
+        many=True,
+        source='document_types',
+        read_only=True
+    )
+    
+    files = FileSerializer(many=True, read_only=True)
+    
     class Meta:
         model = Document
-        fields = [
-            'id', 'document_types', 'identities', 'identities_read', 'files', 'uploaded_files',
-            'student', 'teacher', 'guardian', 'office_staff', 'uploaded_at'
-        ]
-
-    def get_identities_read(self, obj):
-        import json
-        try:
-            return json.loads(obj.identities) if obj.identities else []
-        except:
-            return []
-
-    def to_representation(self, instance):
-        """Customize the output to show document type names instead of just IDs."""
-        representation = super().to_representation(instance)
-        document_types = instance.document_types.all()
-        representation['document_types'] = [
-            {"id": dt.id, "name": dt.name} for dt in document_types
-        ]
-        return representation
+        fields = '__all__'
+        extra_kwargs = {
+            'student': {'required': False, 'allow_null': True},
+            'teacher': {'required': False, 'allow_null': True},
+            'guardian': {'required': False, 'allow_null': True},
+            'office_staff': {'required': False, 'allow_null': True},
+        }
 
     def create(self, validated_data):
-        import json
+        document_types = validated_data.pop('document_types', [])
+        instance = super().create(validated_data)
+        
+        if document_types:
+            instance.document_types.set(document_types)
+        
+        # Handle file creation separately in the view
+        return instance
 
-        uploaded_files = validated_data.pop('uploaded_files')
-        document_types = validated_data.pop('document_types')
-        identities_list = validated_data.pop('identities')
+# --------------------exam module
+class ExamPaperItemSerializer(serializers.Serializer):
+    subject_id = serializers.IntegerField()
+    exam_date = serializers.DateField()
+    start_time = serializers.TimeField()
+    end_time = serializers.TimeField()
 
-        if len(document_types) != len(identities_list):
-            raise serializers.ValidationError("Number of document_types and identities must match.")
+from collections import Counter
+class ExamScheduleSerializer(serializers.Serializer):
+    class_name = serializers.IntegerField()
+    school_year = serializers.IntegerField()
+    exam_type = serializers.IntegerField()
+    papers = ExamPaperItemSerializer(many=True)
 
-        document = Document.objects.create(**validated_data)
-        document.document_types.set(document_types)
-        document.identities = json.dumps(identities_list)
-        document.save()
+    def validate(self, data):
+        subject_ids = [paper["subject_id"] for paper in data.get("papers", [])]
+        duplicate_subjects = [sub_id for sub_id, count in Counter(subject_ids).items() if count > 1]
 
-        for uploaded_file in uploaded_files:
-            File.objects.create(file=uploaded_file, document=document)
+        if duplicate_subjects:
+            raise serializers.ValidationError({
+                "papers": f"Duplicate subject(s) found in timetable: {duplicate_subjects}"
+            })
+        return data
 
-        return document
 
+    def create(self, validated_data):
+        class_id = validated_data["class_name"]
+        year_id = validated_data["school_year"]
+        exam_type_id = validated_data["exam_type"]
+        papers_data = validated_data["papers"]
+
+        try:
+            school_year = SchoolYear.objects.get(id=year_id)
+        except SchoolYear.DoesNotExist:
+            raise serializers.ValidationError({"school_year": f"School year with ID {year_id} not found"})
+
+        term = Term.objects.filter(year=school_year).first()
+        if not term:
+            raise serializers.ValidationError({"term": f"No term found for school year '{school_year.year_name}'"})
+
+        created_schedules = []
+        for paper in papers_data:
+            subject_id = paper["subject_id"]
+
+            existing_schedule = ExamSchedule.objects.filter(
+                class_name_id=class_id,
+                exam_type_id=exam_type_id,
+                subject_id=subject_id,
+                term_id=term.id
+            ).first()
+
+            if existing_schedule:
+                subject = Subject.objects.get(id=subject_id)
+                level = YearLevel.objects.get(id=class_id)
+                exam_type = ExamType.objects.get(id=exam_type_id)
+
+                raise serializers.ValidationError(
+                    f"Subject '{subject.subject_name}' is already scheduled for class '{level.level_name}', "
+                    f"year '{school_year.year_name}', and exam type '{exam_type.name}'."
+                )
+
+            schedule = ExamSchedule.objects.create(
+                exam_date=paper["exam_date"],
+                start_time=paper["start_time"],
+                end_time=paper["end_time"],
+                exam_type_id=exam_type_id,
+                class_name_id=class_id,
+                term_id=term.id,
+                subject_id=subject_id
+            )
+
+            created_schedules.append(schedule)
+
+        return created_schedules
+
+
+    def update(self, instance, validated_data):
+        class_id = validated_data["class_name"]
+        year_id = validated_data["school_year"]
+        exam_type_id = validated_data["exam_type"]
+        papers_data = validated_data["papers"]
+
+        level = YearLevel.objects.get(id=class_id)
+        year = SchoolYear.objects.get(id=year_id)
+        exam_type = ExamType.objects.get(id=exam_type_id)
+
+        result = []
+
+        from datetime import date, time, datetime
+        def safe_serialize(value):
+            if isinstance(value, (date, time, datetime)):
+                return value.isoformat()
+            return str(value)
+
+        for paper in papers_data:
+            subject_id = paper.get("subject_id")
+
+            try:
+                schedule = ExamSchedule.objects.get(
+                    subject_id=subject_id,
+                    exam_type_id=exam_type_id,
+                    class_name_id=class_id,
+                )
+            except ExamSchedule.DoesNotExist:
+                raise serializers.ValidationError(f"Schedule not found for subject ID {subject_id}")
+
+            except ExamSchedule.MultipleObjectsReturned:
+                subject = Subject.objects.filter(id=subject_id).first()
+                subject_name = subject.subject_name if subject else f"ID {subject_id}"
+
+                raise serializers.ValidationError(
+                    f"Duplicate entry found: Subject '{subject_name}' already has a schedule for "
+                    f"class '{level.level_name}', school year '{year.year_name}', and exam type '{exam_type.name}'."
+                )
+
+
+            schedule.exam_date = paper["exam_date"]
+            schedule.start_time = paper["start_time"]
+            schedule.end_time = paper["end_time"]
+            schedule.day = paper["exam_date"].strftime('%A')
+            schedule.save()
+
+            subject = Subject.objects.get(id=subject_id)
+
+            result.append({
+                "subject_name": subject.subject_name,
+                "exam_date": safe_serialize(schedule.exam_date),
+                "start_time": safe_serialize(schedule.start_time),
+                "end_time": safe_serialize(schedule.end_time),
+                "day": schedule.day
+            })
+
+        return {
+            "class": level.level_name,
+            "school_year": year.year_name,
+            "exam_type": exam_type.name,
+            "papers": result
+        }
+
+class ExamTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExamType
+        fields = "__all__"
+
+
+class ExamPaperSerializer(serializers.ModelSerializer):
+    subject_name = serializers.CharField(source='subject.subject_name', read_only=True)
+    year_level_name = serializers.CharField(source='year_level.level_name', read_only=True)
+    exam_name = serializers.CharField(source='exam_type.name', read_only=True)
+    teacher_name = serializers.SerializerMethodField()
+    year = serializers.CharField(source='term.year.year_name', read_only=True)
+
+    class Meta:
+        model = ExamPaper
+        fields = [
+            'id', 'subject_name', 'year_level_name', 'exam_name', 'teacher_name',
+            'total_marks', 'paper_code', 'uploaded_file', 'year',
+            'exam_type', 'term', 'subject', 'year_level', 'teacher'
+        ]
+        extra_kwargs = {
+            'exam_type': {'write_only': True},
+            'term': {'write_only': True},
+            'subject': {'write_only': True},
+            'year_level': {'write_only': True},
+            'teacher': {'write_only': True}
+        }
+
+    def get_teacher_name(self, obj):
+        if obj.teacher and obj.teacher.user:
+            return obj.teacher.user.get_full_name()
+        return None
+
+    def create(self, validated_data):
+        subject = validated_data["subject"]
+        exam_type = validated_data["exam_type"]
+        term = validated_data["term"]
+        year_level = validated_data["year_level"]
+        paper_code = validated_data["paper_code"]
+
+        if ExamPaper.objects.filter(
+            subject=subject,
+            exam_type=exam_type,
+            term=term,
+            year_level=year_level
+        ).exists():
+            raise serializers.ValidationError(
+                f"Exam paper already exists for subject '{subject.subject_name}', "
+                f"class '{year_level.level_name}', year '{term.year.year_name}', and exam '{exam_type.name}'."
+            )
+        
+        if ExamPaper.objects.filter(paper_code=paper_code).exists():
+            raise serializers.ValidationError({"paper_code": ["exam paper with this paper code already exists."]})
+
+        return super().create(validated_data)
+
+
+
+    def update(self, instance, validated_data):
+        subject = validated_data.get("subject", instance.subject)
+        teacher = validated_data.get("teacher", instance.teacher)
+        paper_code = validated_data.get("paper_code", instance.paper_code)
+        total_marks = validated_data.get("total_marks", instance.total_marks)
+
+        instance.subject = subject
+        instance.teacher = teacher
+        instance.paper_code = paper_code
+        instance.total_marks = total_marks
+
+        instance.save()
+        return instance
+
+
+class StudentMarksSerializer(serializers.ModelSerializer):
+    teacher_name = serializers.CharField(source='teacher.user.first_name', read_only=True)
+    school_year = serializers.CharField(source='term.year.year_name', read_only=True)
+    year_level = serializers.CharField(source='student.year_level.level_name', read_only=True)
+    subject = serializers.CharField(source='subject.subject_name', read_only=True)
+    exam_type = serializers.CharField(source='exam_type.name', read_only=True)
+    student_name = serializers.CharField(source='student.user.first_name', read_only=True)
+    marks = serializers.DecimalField(source='marks_obtained', max_digits=5, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = StudentMarks
+        fields = ['id','teacher_name','school_year','year_level','subject','exam_type','student_name','marks']
+
+
+
+
+
+
+"""---------------------------------------------RESULT---------------------------------------------------------------------"""
+
+"""----------------------------------------ReportCardDocument-------------------------------------------------"""
+class ReportCardDocumentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ReportCardDocument
+        fields = '__all__'
+
+"""----------------------------------------SubjectScore----------------------------------------------------"""
+class StudentMarksMiniSerializer(serializers.ModelSerializer):
+    student_name = serializers.CharField(source="student.user.first_name", read_only=True)
+    subject_name = serializers.CharField(source="subject.subject_name")
+    exam_type = serializers.CharField(source="exam_type.name")
+    marks_obtained = serializers.DecimalField(decimal_places=2,max_digits=5,required=False,allow_null=True,coerce_to_string=False)
+
+    class Meta:
+        model = StudentMarks
+        fields = ["student_name","exam_type", "subject_name", "marks_obtained"]
+    
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        marks = rep.get("marks_obtained")
+        try:
+            rep["marks_obtained"] = str(marks) if marks is not None else "0.00"
+        except:
+            rep["marks_obtained"] = "0.00"
+        return rep
+
+    
+class SubjectScoreSerializer(serializers.ModelSerializer):
+    marks_obtained = StudentMarksMiniSerializer()
+    # print("marks_obtained", marks_obtained )
+    class Meta:
+        model = SubjectScore
+        fields = ["marks_obtained"]
+
+"""----------------------------------------NonScholasticGradeTermWise-------------------------------------------------"""
+
+        
+class NonScholasticGradeTermWiseSerializer(serializers.ModelSerializer):
+    ALLOWED_GRADES = ["A++", "A+", "A", "B", "C", "D"]
+
+    def validate_non_scholastic_subject(self, subject):
+        
+        expected_department = "Non-scholatic"  # change if needed
+        
+        if not subject.department or subject.department.department_name != expected_department:
+            raise serializers.ValidationError(
+                f"Subject must belong to the '{expected_department}' department."
+            )
+        return subject
+
+    def validate_grade(self, value):
+        if value not in self.ALLOWED_GRADES:
+            raise serializers.ValidationError("Grade must be one of: A++, A+, A, B, C, D.")
+        return value
+    
+    class Meta:
+        model = NonScholasticGradeTermWise
+        fields = ['id', 'report_card', 'non_scholastic_subject', 'term', 'grade']
+
+"""----------------------------------------PersonalSocialQualityTermWise-------------------------------------------------"""
+      
+class PersonalSocialGradeSerializer(serializers.ModelSerializer):
+
+    ALLOWED_GRADES = ["A++", "A+", "A", "B", "C", "D"]
+
+    def validate_grade(self, value):
+        if value not in self.ALLOWED_GRADES:
+            raise serializers.ValidationError("Grade must be one of: A++, A+, A, B, C, D.")
+        return value
+
+    class Meta:
+        model = PersonalSocialQualityTermWise
+        fields = ['id', 'report_card', 'personal_quality', 'term', 'grade']
+
+"""----------------------------------------ReportCard-------------------------------------------------"""
+    
+class ReportCardSerializer(serializers.ModelSerializer):
+    PersonalSocialQualityTermWise = PersonalSocialGradeSerializer(many=True, read_only=True)
+    subjects = SubjectScoreSerializer(many=True,read_only=True, source='subject_scores')
+    
+    class Meta:
+        model = ReportCard
+        fields = ["id","student_level",
+            "rank","percentage","grade",
+            "division", "attendance","PersonalSocialQualityTermWise","subjects", "teacher_remark", "supplementary_in", "school_reopen_date", "promoted_to_class",
+        ]
+        read_only_fields = ["total_marks", "max_marks", "percentage","grade","division","subjects","attendance","supplementary_in", "promoted_to_class"]
+
+    def get_promoted_to_class(self, obj):
+        if obj.promoted_to_class:
+            return str(obj.promoted_to_class.level.level_name)
+        return '0'

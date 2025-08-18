@@ -100,3 +100,18 @@ class UserStatusLog(models.Model):
 
     def __str__(self):
         return f"{self.user.email} - {self.status} at {self.timestamp}"
+
+
+
+class ErrorLog(models.Model):
+    user = models.ForeignKey("User", null=True, blank=True, on_delete=models.SET_NULL)
+    endpoint = models.CharField(max_length=255)
+    method = models.CharField(max_length=10)
+    status_code = models.IntegerField()
+    error_type = models.CharField(max_length=100)
+    error_message = models.TextField()
+    traceback_info = models.TextField(blank=True, null=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.error_type} at {self.endpoint}"

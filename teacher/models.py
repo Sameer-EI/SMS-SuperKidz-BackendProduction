@@ -17,7 +17,7 @@ class Teacher(models.Model):
     phone_no = models.CharField(max_length=100,null=True,blank=True)
     gender = models.CharField(max_length=50,null=True,blank=True)
     adhaar_no = models.BigIntegerField(null=True,blank=True)
-    pan_no = models.BigIntegerField(null=True,blank=True)
+    pan_no = models.CharField(max_length=50,null=True,blank=True)
     qualification = models.CharField(max_length=250,null=True,blank=True)
     is_active = models.BooleanField(default=True)
 
@@ -37,6 +37,21 @@ class TeacherYearLevel(models.Model):
     class Meta:
         unique_together = ('teacher', 'year_level')
 
+    def __str__(self):  
+        return f"{self.teacher} - {self.year_level}"   
+
+
+
+
+class TeacherAttendance(models.Model):
+    teacher = models.ForeignKey('teacher.Teacher', on_delete=models.CASCADE)
+    date = models.DateField()
+    status = models.CharField(max_length=10, choices=[('present', 'Present'), ('absent', 'Absent')])
+
+    class Meta:
+        unique_together = ('teacher', 'date')
+
     def __str__(self):
-        return f"{self.teacher} - {self.year_level}"    
+        return f"{self.teacher} - {self.date} - {self.status}"
+ 
 
