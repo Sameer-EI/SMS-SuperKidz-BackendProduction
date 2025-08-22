@@ -1,7 +1,7 @@
 from rest_framework.exceptions import ValidationError
 from rest_framework import serializers
 
-from authentication.models import ErrorLog, User
+from authentication.models import ErrorLog, User, UserStatusLog
 from director.models import Director, OfficeStaff, Role,YearLevel, SchoolYear, ClassPeriod, Director, Guardian
 
 from director.serializers import RoleSerializer
@@ -169,4 +169,12 @@ class ForgotSerializers(serializers.Serializer):
 class ErrorLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = ErrorLog
+        fields = '__all__'
+
+
+# ******************** UserStatusLog**************
+        
+class UserStatusLogSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserStatusLog
         fields = '__all__'

@@ -2737,7 +2737,7 @@ def reactivate_user(request):
         return Response({"error": "User not found"})
     
 ### -------------------------------------------------------------- ###
-# *************** Reactivation of the User *******************************************************
+# *************** List of the Deactivated *******************************************************
 
 @api_view(["GET"])
 def list_inactive_users(request):
