@@ -526,10 +526,11 @@ class Document(models.Model):
     is_active = models.BooleanField(default=True)  
 
     objects = DocumentManager()
-
+        
     def __str__(self):
         entity = self.student or self.teacher or self.guardian or self.office_staff
-        return f"{self.document_types.name} - {entity}"
+        doc_types = ", ".join([dt.name for dt in self.document_types.all()]) if self.document_types.exists() else "NoType"
+        return f"{doc_types} - {entity}"
 
     class Meta:
         db_table = "Document"
