@@ -266,7 +266,7 @@ def ForgotPasswordView(request):
             cache.delete(email)
 
             return Response(
-                {"Message": "Forgot otp Successfull"}, status=status.HTTP_200_OK
+                {"Message": "Password changed Successfull"}, status=status.HTTP_200_OK
             )
         return Response({"Message": "Invalid OTP "}, status=status.HTTP_400_BAD_REQUEST)
 
