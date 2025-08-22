@@ -547,13 +547,6 @@ class File(models.Model):
     class Meta:
         db_table = "File"
 
-# # Deactivated User model for handling
-# class DeactivatedUsers(models.Model):
-#     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='deactive_user')
-#     deactivated_at = models.DateTimeField(auto_now_add=True)
-#     # reason = models.CharField(max_length=1000, blank=True, null=True)
-#     # deactivated_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='deactivated_by')
-
     
 
 # -----------------------Exam module
