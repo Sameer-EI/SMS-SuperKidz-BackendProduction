@@ -37,11 +37,13 @@ router.register(r'Exam-Paper',ExamPaperView)
 router.register(r'Exam-Schedule',ExamScheduleView)
 router.register(r'Student-Marks',StudentMarksView,basename='student-marks')
 
-
+router.register(r'personal-social-quality', PersonalSocialQualityView, basename='personal-social-quality')
 router.register(r'personal-social-grades', PersonalSocialGradeViewSet, basename='personal-social-grades')
 router.register(r'non-scholastic-grades', NonScholasticGradeViewSet, basename='non-scholastic')
 router.register(r'report-cards', ReportCardViewSet, basename='report-cards')
 
+# router.register(r'income-category', IncomeCategoryView, basename='income-category')
+# router.register(r'school-income', SchoolIncomeViewSet, basename='school-income')
 
 
 urlpatterns = [

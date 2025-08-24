@@ -29,6 +29,20 @@ admin.site.register(
         City,
         State,
         Country,
-        Address
+        Address,
+        ExamType,
+        ExamPaper,
+        ExamSchedule,
+        StudentMarks,
+        ReportCard,
+        SubjectScore,
+        ReportCardDocument,
+        NonScholasticGradeTermWise,
+        PersonalSocialQuality,
+        PersonalSocialQualityTermWise,
+        # ExpenseCategory,
+        # SchoolExpense,
+        IncomeCategory,
+        SchoolIncome
     ]
 )

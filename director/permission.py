@@ -103,7 +103,21 @@ class RoleBasedPermission(BasePermission):
 
 class IsDirector(BasePermission):
     """
-    Allows access only to users with the 'Director' role.
+    Allows access only to users with the 'director' role.
     """
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.role.filter(name="Director").exists()
+        return request.user.is_authenticated and request.user.role.filter(name="director").exists()
+    
+class IsDirectororOfficeStaff(BasePermission):
+    """
+    Allows access only to users with the 'office_staff'and'director' role.
+    """
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and request.user.role.filter(name="director").exists() or request.user.role.filter(name="office_staff").exists()
+    
+# class IsTeacher(BasePermission):
+#     """
+#     Allows access only to users with the 'teacher' role.
+#     """
+#     def has_permission(self, request, view):
+#         return request.user.is_authenticated and request.user.role.filter(name="teacher").exists()

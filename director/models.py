@@ -355,7 +355,9 @@ class YearLevelFee(models.Model):
 class FeeDiscount(models.Model):
     student = models.OneToOneField("student.Student", on_delete=models.CASCADE,related_name="discount_info")
     admission_fee_discount = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
+    admission_fee = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)  # Added as of 21Aug25
     tuition_fee_discount = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
+    tuition_fee = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)  # Added as of 21Aug25
     discount_reason = models.CharField(max_length=255, blank=True, null=True)
     is_allowed = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -373,7 +375,8 @@ class FeeRecord(models.Model):
         ("January", "January"), ("February", "February"), ("March", "March"),
         ("April", "April"), ("May", "May"), ("June", "June"),
     ]
-    month = models.CharField(max_length=20, choices=MONTH_CHOICES)
+    month = models.CharField(max_length=20, choices=MONTH_CHOICES, null=True, blank=True)
+    school_year = models.ForeignKey(StudentYearLevel, on_delete=models.PROTECT,null=True, blank=True)  # Added as of 20Aug25
     year_level_fees = models.ManyToManyField(YearLevelFee)
     total_amount = models.DecimalField(max_digits=8, decimal_places=2)
     paid_amount = models.DecimalField(max_digits=8, decimal_places=2)
@@ -605,3 +608,44 @@ class PersonalSocialQualityTermWise(models.Model):
     
     def __str__(self):
         return f"{self.personal_quality.quality_name} - {self.term.term_number} - {self.report_card.student_level.student.user.first_name}-{self.report_card.student_level.year.year_name} - {self.report_card.student_level.level.level_name}"
+
+
+# --------------------------------------------income---------------------------------------------
+
+# class IncomeCategory(models.Model): 
+#     name = models.CharField(max_length=100, unique=True)# 
+
+#     def __str__(self): 
+#         return self.name 
+    
+# class SchoolIncome(models.Model): 
+#     PAYMENT_METHOD_CHOICES = [ 
+#         ('cash', 'Cash'), 
+#         ('cheque', 'Cheque'), 
+#         ('online', 'Online'),] 
+#     STATUS_CHOICES = [ 
+#         ('pending', 'Pending'), 
+#         ('confirmed', 'Confirmed'), ] 
+#     MONTH_CHOICES = [
+#         ("July", "July"), ("August", "August"), ("September", "September"),
+#         ("October", "October"), ("November", "November"), ("December", "December"),
+#         ("January", "January"), ("February", "February"), ("March", "March"),
+#         ("April", "April"), ("May", "May"), ("June", "June"),
+#     ]
+#     month = models.CharField(max_length=20, choices=MONTH_CHOICES)
+#     category = models.ForeignKey(IncomeCategory, on_delete=models.PROTECT, related_name='incomes')# 
+#     amount = models.DecimalField(max_digits=12, decimal_places=2)# 
+#     description = models.TextField(blank=True, null=True)# 
+#     income_date = models.DateField()# 
+#     school_year = models.ForeignKey(SchoolYear, on_delete=models.PROTECT,null=True, blank=True)  # Added as of 20Aug25
+#     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='cash') 
+#     attachment = models.FileField(upload_to=income_attachments, blank=True, null=True) 
+#     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending') 
+#     created_by = models.ForeignKey("authentication.User", on_delete=models.SET_NULL, null=True, blank=True, related_name='created_incomes') 
+#     created_at = models.DateTimeField(auto_now_add=True)# 
+    
+#     def __str__(self): 
+#         return f"{self.category.name} + ₹{self.amount} on {self.income_date}"
+    
+#     class Meta:
+#         unique_together = ['category', 'income_date', 'amount']

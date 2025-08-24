@@ -1850,8 +1850,9 @@ class FeeDiscountView(viewsets.ModelViewSet):
 class FeeRecordView(viewsets.ModelViewSet):
     serializer_class = FeeRecordSerializer
     queryset = FeeRecord.objects.all()
+    permission_classes = [IsAuthenticated]
     filter_backends = [SearchFilter]
-
+    # authentication_classes = [IsAuthenticated]
     # Enables search using ?search=something
     search_fields = [
         'remarks',
@@ -1865,6 +1866,19 @@ class FeeRecordView(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         request = self.request
+        
+
+        month = request.query_params.get('month')
+        if month:
+            queryset = queryset.filter(month=month)
+
+        school_year = request.query_params.get('school_year')
+        if school_year:
+            queryset = queryset.filter(school_year__year__year_name = school_year)
+
+        student_id = request.query_params.get('student_id')
+        if student_id:
+            queryset = queryset.filter(student_id=student_id)
 
         year_level_id = request.query_params.get('year_level')
         if year_level_id:
@@ -1887,6 +1901,290 @@ class FeeRecordView(viewsets.ModelViewSet):
                 )
 
         return queryset.distinct()
+
+    @action(detail=False, methods=["get"], url_path="fee-preview")
+    # def preview(self, request):
+    #     """
+    #     GET /api/fee-record/preview/?student_id=1
+    #     Returns grouped year-level fees for a student with discounts applied,
+    #     excluding already-paid fees (per school year rules).
+    #     """
+    #     student_id = request.query_params.get("student_id")
+    #     if not student_id:
+    #         return Response({"detail": "student_id is required"}, status=400)
+
+    #     try:
+    #         student = Student.objects.get(id=student_id)
+    #     except Student.DoesNotExist:
+    #         return Response({"detail": "Student not found"}, status=404)
+
+    #     # Get student's active year level
+    #     student_year_level = (
+    #         StudentYearLevel.objects
+    #         .filter(student=student)
+    #         .order_by("-year")  # latest school year
+    #         .first()
+    #     )
+
+    #     if not student_year_level:
+    #         raise serializers.ValidationError({
+    #             "student_id": "No year level found for this student."
+    #         })
+
+
+    #     # Fetch all year-level fees
+    #     year_level_fees = YearLevelFee.objects.filter(year_level=student_year_level.level)
+
+    #     # Fetch already paid fees for this student + school year
+    #     paid_fees = FeeRecord.objects.filter(school_year__year__year_name=student_year_level.year.year_name)
+
+    #     # ---- Handle admission fee (once per school year) ----
+    #     admission_paid_fee_ids = (
+    #         paid_fees
+    #         .filter(year_level_fees__fee_type__name__iexact="admission fee")
+    #         .values_list("year_level_fees__id", flat=True)
+    #     )
+
+    #     # ---- Handle monthly fees (once per month in school year) ----
+    #     # assumes FeeRecord has "month" field like "August"
+    #     current_month = student_year_level.current_month if hasattr(student_year_level, "current_month") else None
+    #     monthly_paid_fee_ids = []
+    #     if current_month:
+    #         monthly_paid_fee_ids = paid_fees.exclude(
+    #             fee__fee_type__name__iexact="admission fee"
+    #         ).filter(
+    #             month=current_month
+    #         ).values_list("fee_id", flat=True)
+
+    #     # Combine all already-paid fee IDs
+    #     exclude_fee_ids = list(admission_paid_fee_ids) + list(monthly_paid_fee_ids)
+
+    #     # Filter year_level_fees to exclude already-paid ones
+    #     year_level_fees = year_level_fees.exclude(id__in=exclude_fee_ids)
+
+    #     # Pass student in context so serializer applies discounts
+    #     serializer = YearLevelFeeSerializer(year_level_fees, many=True, context={"student": student})
+    #     grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
+
+    #     #if tuition fee is paid after 15th of the month, then it will apply 25 rupee fine
+    #     today = date.today()
+    #     for group in grouped_fees:
+    #         for fee in group["fees"]:
+    #             if fee["fee_type"].lower() == "tuition fee" and today.day > 15:
+    #                 fee["late_fee"] = 25
+
+    #     return Response(grouped_fees)
+
+    # def preview(self, request):
+    #     """
+    #     GET /api/fee-record/preview/?student_id=1
+    #     Returns grouped year-level fees for a student with discounts applied,
+    #     showing 'Already Paid' for paid fees (per school year rules).
+    #     """
+    #     student_id = request.query_params.get("student_id")
+    #     if not student_id:
+    #         return Response({"detail": "student_id is required"}, status=400)
+
+    #     try:
+    #         student = Student.objects.get(id=student_id)
+    #     except Student.DoesNotExist:
+    #         return Response({"detail": "Student not found"}, status=404)
+
+    #     # Get student's active year level
+    #     student_year_level = (
+    #         StudentYearLevel.objects
+    #         .filter(student=student)
+    #         .order_by("-year")  # latest school year
+    #         .first()
+    #     )
+
+    #     if not student_year_level:
+    #         raise serializers.ValidationError({
+    #             "student_id": "No year level found for this student."
+    #         })
+
+    #     # Fetch all year-level fees
+    #     year_level_fees = YearLevelFee.objects.filter(year_level=student_year_level.level)
+
+    #     # Fetch already paid fees for this student + school year
+    #     paid_fees = FeeRecord.objects.filter(
+    #         school_year__year__year_name=student_year_level.year.year_name
+    #     )
+
+    #     # Admission fee (once per school year)
+    #     admission_paid_fee_ids = (
+    #         paid_fees.filter(year_level_fees__fee_type__name__iexact="admission fee")
+    #         .values_list("year_level_fees__id", flat=True)
+    #     )
+
+    #     # Monthly fees (once per month)
+    #     current_month = getattr(student_year_level, "current_month", None)
+    #     monthly_paid_fee_ids = []
+    #     if current_month:
+    #         monthly_paid_fee_ids = (
+    #             paid_fees.exclude(year_level_fees__fee_type__name__iexact="admission fee")
+    #             .filter(month=current_month)
+    #             .values_list("year_level_fees__id", flat=True)
+    #         )
+
+    #     paid_fee_ids = set(admission_paid_fee_ids) | set(monthly_paid_fee_ids)
+
+    #     # Serialize
+    #     serializer = YearLevelFeeSerializer(year_level_fees, many=True, context={"student": student})
+    #     grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
+
+    #     # Mark already paid + late fee logic
+    #     today = date.today()
+    #     for group in grouped_fees:
+    #         for fee in group["fees"]:
+    #             if fee["id"] in paid_fee_ids:
+    #                 fee["status"] = "Already Paid"
+    #             elif fee["fee_type"].lower() == "tuition fee" and today.day > 15:
+    #                 fee["late_fee"] = 25
+
+    #     return Response(grouped_fees)
+
+    # def preview(self, request):
+    #     """
+    #     GET /api/fee-record/preview/?student_id=1
+    #     Returns grouped year-level fees for a student with discounts applied,
+    #     admission fee only once per year, tuition fee only once per month,
+    #     marking already-paid fees with "status": "Already Paid".
+    #     """
+    #     student_id = request.query_params.get("student_id")
+    #     if not student_id:
+    #         return Response({"detail": "student_id is required"}, status=400)
+
+    #     month = request.query_params.get("month")
+    #     if not month:
+    #         return Response({"detail": "month is required"}, status=400)
+
+    #     try:
+    #         student = Student.objects.get(id=student_id)
+    #     except Student.DoesNotExist:
+    #         return Response({"detail": "Student not found"}, status=404)
+
+    #     # Get student's active year level
+    #     student_year_level = (
+    #         StudentYearLevel.objects
+    #         .filter(student=student)
+    #         .order_by("-year")  # latest school year
+    #         .first()
+    #     )
+    #     if not student_year_level:
+    #         raise serializers.ValidationError({
+    #             "student_id": "No year level found for this student."
+    #         })
+
+    #     # Fetch all year-level fees for this level
+    #     year_level_fees = YearLevelFee.objects.filter(year_level=student_year_level.level)
+
+    #     # Paid fee records for this student & school year
+    #     paid_fees = FeeRecord.objects.filter(
+    #         school_year__year__year_name=student_year_level.year.year_name
+    #     )
+
+    #     # Admission fee (once per year)
+    #     admission_paid_fee_ids = paid_fees.filter(
+    #         year_level_fees__fee_type__name__iexact="admission fee"
+    #     ).values_list("year_level_fees__id", flat=True)
+
+    #     # Tuition fee (once per month)
+    #     today = date.today()
+    #     # current_month = today.strftime("%B")  # e.g. "August"
+
+    #     monthly_paid_fee_ids = paid_fees.exclude(
+    #         year_level_fees__fee_type__name__iexact="admission fee"
+    #     ).filter(
+    #         month=month
+    #     ).values_list("year_level_fees__id", flat=True)
+
+    #     # Combine all paid fees
+    #     paid_fee_ids = set(admission_paid_fee_ids) | set(monthly_paid_fee_ids)
+
+    #     # Serialize fees
+    #     serializer = YearLevelFeeSerializer(year_level_fees, many=True, context={"student": student})
+    #     grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
+
+    #     # Add status/late fee
+    #     for group in grouped_fees:
+    #         for fee in group["fees"]:
+    #             if fee["id"] in paid_fee_ids:
+    #                 fee["status"] = "Already Paid"
+    #                 # wipe out amounts if you don’t want them visible
+    #                 fee.pop("amount", None)
+    #                 fee.pop("final_amount", None)
+    #             elif fee["fee_type"].lower() == "tuition fee" and today.day > 15:
+    #                 fee["late_fee"] = 25
+
+    #     return Response(grouped_fees)
+    def preview(self, request):
+        student_id = request.query_params.get("student_id")
+        month = request.query_params.get("month")
+
+        if not student_id or not month:
+            return Response({"detail": "student_id and month are required"}, status=400)
+
+        try:
+            student = Student.objects.get(id=student_id)
+        except Student.DoesNotExist:
+            return Response({"detail": "Student not found"}, status=404)
+
+        # Latest active year level
+        student_year_level = (
+            StudentYearLevel.objects
+            .filter(student=student)
+            .order_by("-year")
+            .first()
+        )
+        if not student_year_level:
+            return Response({"detail": "No year level found for this student."}, status=404)
+
+        # All year-level fees
+        year_level_fees = YearLevelFee.objects.filter(year_level=student_year_level.level)
+
+        # Paid fee records for this student & school year
+        paid_fees = FeeRecord.objects.filter(
+            school_year__year__year_name=student_year_level.year.year_name
+        )
+
+
+        # Admission fee (once per year)
+        admission_paid_fee_ids = paid_fees.filter(
+            year_level_fees__fee_type__name__iexact="admission fee"
+        ).values_list("year_level_fees", flat=True)
+
+        # Other fees (per month)
+        monthly_paid_fee_ids = paid_fees.exclude(
+            year_level_fees__fee_type__name__iexact="admission fee"
+        ).filter(
+            month=month
+        ).values_list("year_level_fees", flat=True)
+
+        # Combine for quick lookup
+        paid_fee_ids = set(admission_paid_fee_ids) | set(monthly_paid_fee_ids)
+
+        # Serialize fees
+        serializer = YearLevelFeeSerializer(year_level_fees, many=True, context={"student": student})
+        grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
+
+        today = date.today()
+        # Add status/late fee
+        for group in grouped_fees:
+            for fee in group["fees"]:
+                fee_id = fee["id"]
+                fee_type = fee["fee_type"].lower()
+
+                if (fee_type == "admission fee" and fee_id in admission_paid_fee_ids) or \
+                (fee_type != "admission fee" and fee_id in monthly_paid_fee_ids):
+                    fee["status"] = "Already Paid"
+                    fee.pop("amount", None)
+                    fee.pop("final_amount", None)
+                elif fee_type == "tuition fee" and today.day > 15:
+                    fee["late_fee"] = 25
+
+        return Response(grouped_fees)
+
 
     # API to submit fee more than a single month
     # https://187gwsw1-7000.inc1.devtunnels.ms/d/fee-record/submit_single_multi_month_fees/
@@ -2136,14 +2434,15 @@ class FeeRecordView(viewsets.ModelViewSet):
         month = request.query_params.get("month", "").strip()
         year_level = request.query_params.get("year_level", "").strip()
         search = request.query_params.get("search", "").strip()
+        school_year = request.query_params.get("school_year", "").strip()
 
         qs = self.get_queryset()
         filters = Q()
 
         if month:
             filters &= Q(month__iexact=month)
-
-
+        if school_year:    
+            filters &= Q(school_year__year__year_name__iexact=school_year)
         if year_level.isdigit():
             filters &= Q(student__student_year_levels__level__id=year_level)
         elif search:
@@ -2153,10 +2452,12 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         if not qs.exists():
             return Response({"detail": "No records found."}, status=status.HTTP_404_NOT_FOUND)
+        
 
         summary = (
             qs.values(
                 "month",
+                "school_year__year__year_name",
                 "student__user__first_name",
                 "student__user__last_name",
                 "student__student_year_levels__level__level_name"
@@ -2167,14 +2468,15 @@ class FeeRecordView(viewsets.ModelViewSet):
                 late_fee=Coalesce(Sum("late_fee", output_field=FloatField()), Value(0.0))
             )
         )
-
+        print(summary)
         formatted_summary = []
         for item in summary:
             total = item["total_amount"] + item["late_fee"]
             due = max(0, total - item["paid_amount"])
-
+            
             formatted_summary.append({
                 "month": item["month"],
+                "school_year": item["school_year__year__year_name"] or "N/A",
                 "student_name": f"{item['student__user__first_name']} {item['student__user__last_name']}",
                 "year_level": item["student__student_year_levels__level__level_name"],
                 "total_amount": float(total),
@@ -3213,6 +3515,11 @@ class StudentMarksView(viewsets.ModelViewSet):
 from rest_framework.exceptions import PermissionDenied
 from collections import defaultdict
 
+class PersonalSocialQualityView(viewsets.ModelViewSet):
+    queryset = PersonalSocialQuality.objects.all()
+    serializer_class = PersonalSocialQualitySerializer
+    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+
 class PersonalSocialGradeViewSet(viewsets.ModelViewSet):
     queryset = PersonalSocialQualityTermWise.objects.all()
     serializer_class = PersonalSocialGradeSerializer
@@ -3997,4 +4304,15 @@ class ReportCardViewSet(viewsets.ModelViewSet):
         return self.retrieve(request, *args, **kwargs)
 
 
+
+# class IncomeCategoryView(viewsets.ModelViewSet):
+#     queryset = IncomeCategory.objects.all()
+#     serializer_class = IncomeCategorySerializer
+#     permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+
+# class SchoolIncomeViewSet(viewsets.ModelViewSet):
+#     queryset = SchoolIncome.objects.all()
+#     serializer_class = SchoolIncomeSerializer
+#     permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+    
     

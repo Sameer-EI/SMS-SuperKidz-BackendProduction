@@ -87,6 +87,7 @@
 #     return os.path.join(base_path, folder_path, filename)
 
 
+from datetime import datetime
 import os
 
 def Document_folder(instance, filename):
@@ -272,3 +273,11 @@ def calculate_subject_summary(subjects_data):
     }
 
 
+def income_attachments(instance, filename):
+    category_name = instance.category.name.replace(" ", "_").lower()
+    return os.path.join(
+        "income_attachments",
+        str(datetime.now().year),                  # Year
+        str(datetime.now().month).zfill(2),        # Month
+        f"{category_name}_{filename}"  # FileName = id_category_filename
+    )
