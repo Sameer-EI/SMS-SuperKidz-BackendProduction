@@ -2337,7 +2337,9 @@ from authentication.models import UserStatusLog
 from authentication.serializers import UserSerializer
 
 @api_view(["POST"])
+@permission_classes([RoleBasedUserManagementPermission])
 def deactivate_user(request):
+    deactivate_user.api_section = "deactivate_user" 
     try:
         with transaction.atomic():
             user_id = request.data.get("user_id")
@@ -2482,7 +2484,10 @@ def deactivate_user(request):
             # log termination
             UserStatusLog.objects.create(user=user, status='TERMINATED', reason=user.deactivation_reason)
             serializer = UserSerializer(user)
-            return Response(serializer.data)
+            return Response({
+                "message": f"User {user.id} has been successfully terminated.",
+                "user_id": user.id,
+                "data": serializer.data})
     except User.DoesNotExist:
         return Response({"error": "User not found"})
  
@@ -2492,7 +2497,9 @@ def deactivate_user(request):
 from django.core.exceptions import ObjectDoesNotExist
 
 @api_view(["POST"])
+@permission_classes([RoleBasedUserManagementPermission])
 def reactivate_user(request):
+    reactivate_user.api_section = "reactivate_user" 
     try:
         with transaction.atomic():
             user_id = request.data.get("user_id")
@@ -2722,12 +2729,15 @@ def reactivate_user(request):
             # log termination
             UserStatusLog.objects.create(user=user, status='ACTIVATED', reason=user.deactivation_reason)
             serializer = UserSerializer(user)
-            return Response(serializer.data)
+            return Response({
+                "message": f"User {user.id} has been successfully reactivated.",
+                "user_id": user.id,
+                "data": serializer.data})
     except User.DoesNotExist:
         return Response({"error": "User not found"})
     
 ### -------------------------------------------------------------- ###
-# *************** Reactivation of the User *******************************************************
+# *************** List of the Deactivated *******************************************************
 
 @api_view(["GET"])
 def list_inactive_users(request):

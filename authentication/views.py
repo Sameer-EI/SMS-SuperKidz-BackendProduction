@@ -1,7 +1,7 @@
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
-from .models import User
+from .models import User , UserStatusLog
 from .serializers import *
 from rest_framework import status
 from django.contrib.auth import authenticate
@@ -266,7 +266,7 @@ def ForgotPasswordView(request):
             cache.delete(email)
 
             return Response(
-                {"Message": "Forgot otp Successfull"}, status=status.HTTP_200_OK
+                {"Message": "Password changed Successfull"}, status=status.HTTP_200_OK
             )
         return Response({"Message": "Invalid OTP "}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -279,3 +279,8 @@ class ErrorLogViewSet(viewsets.ReadOnlyModelViewSet):
     # queryset = ErrorLog.objects.all().order_by('-created_at')
     serializer_class = ErrorLogSerializer
     # permission_classes = [IsAdminUser]
+
+# ************ User Status Log View*******************
+class UserStatusLogView(viewsets.ModelViewSet):
+    queryset = UserStatusLog.objects.all()
+    serializer_class = UserStatusLogSerializer

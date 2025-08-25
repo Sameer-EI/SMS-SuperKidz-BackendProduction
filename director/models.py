@@ -527,10 +527,11 @@ class Document(models.Model):
     is_active = models.BooleanField(default=True)  
 
     objects = DocumentManager()
-
+        
     def __str__(self):
         entity = self.student or self.teacher or self.guardian or self.office_staff
-        return f"{self.document_types.name} - {entity}"
+        doc_types = ", ".join([dt.name for dt in self.document_types.all()]) if self.document_types.exists() else "NoType"
+        return f"{doc_types} - {entity}"
 
     class Meta:
         db_table = "Document"
@@ -547,13 +548,6 @@ class File(models.Model):
 
     class Meta:
         db_table = "File"
-
-# # Deactivated User model for handling
-# class DeactivatedUsers(models.Model):
-#     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='deactive_user')
-#     deactivated_at = models.DateTimeField(auto_now_add=True)
-#     # reason = models.CharField(max_length=1000, blank=True, null=True)
-#     # deactivated_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='deactivated_by')
 
     
 
