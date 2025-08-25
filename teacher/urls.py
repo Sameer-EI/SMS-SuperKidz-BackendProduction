@@ -11,5 +11,6 @@ urlpatterns = [
     path('', include(router.urls)),
     path('all-teachers/', AllTeachersWithYearLevelsAPIView.as_view()),
     path('teacher-attendance/', TeacherAttendanceAPIView.as_view(), name='teacher-attendance'),
-    # path('teacheryearlevel/', TeacherYearLevelView.as_view())
+    path('substitute-assign/', SubstituteAssignmentView.as_view()),
+    path('absent-teacher/', AbsentTeacherFreeReplacementAPIView.as_view()),
 ]
