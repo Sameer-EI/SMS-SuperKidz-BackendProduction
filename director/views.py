@@ -1496,8 +1496,8 @@ def send_whatsapp_message(message_text):
     twilio_whatsapp_number = 'whatsapp:+14155238886'
     
     phone_numbers = [
-        '+918109145639',
-        '+918847418400',
+       '+918109145639',
+        # '+918847418400',
         '+918102637122'
     ]
 
@@ -1568,8 +1568,46 @@ class FeeRecordView(viewsets.ModelViewSet):
                 )
 
         return queryset.distinct()
+    @action(detail=False, methods=['post'], url_path='notification_for_dues_students')
+    def send_due_fee_notifications(self, request):
+        due_students = (
+            FeeRecord.objects
+            .filter(due_amount__gt=0) 
+            .select_related("student__user")
+            .values(
+                'student_id',
+                'student__user__first_name',
+                'student__user__last_name',
+                'due_amount'
+            )
+            .distinct()
+        )
 
-    
+        if not due_students.exists():
+            return Response({"status": "success", "message": "No students have due fees."})
+
+        all_status = []
+        for student in due_students:
+            student_name = f"{student['student__user__first_name']} {student['student__user__last_name']}"
+            due_amt = student['due_amount']
+            
+            message_body = (
+                f"Dear {student_name},\n\n"
+                f"Your school fees of ₹{due_amt} are pending. Kindly clear your dues at the earliest to avoid late charges.\n\n"
+                "Thank you."
+            )
+            status = send_whatsapp_message(message_body)
+            all_status.append({
+                "student": student_name,
+                "due_amount": str(due_amt),
+                "status": status
+            })
+
+        return Response({
+            "status": "completed",
+            "total_students": len(due_students),
+            "message_status": all_status
+        })    
     @action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
     def submit_single_multi_month_fees(self, request):
         student_id = request.data.get('student_id')
@@ -1579,6 +1617,15 @@ class FeeRecordView(viewsets.ModelViewSet):
         payment_mode = request.data.get('payment_mode')
         remarks = request.data.get('remarks')
         received_by = request.data.get('received_by')
+        
+        admission = Admission.objects.filter(student_id=student_id).first()
+        
+        if admission and admission.is_rte and admission.rte_number:
+            return Response(
+                {"message": f"Student {admission.student.user.get_full_name()} belongs to RTE category, fees record not created."},
+                status=status.HTTP_400_BAD_REQUEST
+        )
+
 
         if not months or not isinstance(months, list):
             return Response({"error": "Months must be a non-empty list."}, status=status.HTTP_400_BAD_REQUEST)
@@ -1640,6 +1687,7 @@ class FeeRecordView(viewsets.ModelViewSet):
             f"Paid Amount: ₹{paid_amount:.2f}\n"
             f"Due Amount: ₹{total_due:.2f}\n"
             f"Payment Mode: {payment_mode}\n"
+            f"received_by: {received_by}\n"
             f"Thank you!"
         )
         send_whatsapp_message(message_text)
