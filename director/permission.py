@@ -127,3 +127,69 @@ class RoleBasedUserManagementPermission(BasePermission):
                 return True
 
         return False
+    
+
+
+
+
+
+from rest_framework.permissions import BasePermission, SAFE_METHODS
+from teacher.models import Teacher, TeacherYearLevel
+
+class RoleBasedPermissionteacheryearlevel(BasePermission):
+    """
+    Director / Office Staff → full CRUD + full queryset
+    Teacher → only GET/HEAD/OPTIONS + their own data
+    Others → deny
+    """
+
+    def has_permission(self, request, view):
+        user = request.user
+        
+        # Check if the user is authenticated
+        if not user.is_authenticated:
+            return False  # Deny access if the user is not authenticated
+
+        role_names = [role.name.lower() for role in user.role.all()]
+
+        # Director & Office Staff: all methods allowed
+        if 'director' in role_names or 'office staff' in role_names:
+            return True
+
+        # Teacher: only safe methods
+        if 'teacher' in role_names:
+            return request.method in SAFE_METHODS
+
+        # Other roles: deny
+        return False
+
+    def filter_queryset(self, request, queryset, view):
+        """
+        Role-based queryset filtering
+        """
+        user = request.user
+        
+        # Check if the user is authenticated
+        if not user.is_authenticated:
+            return queryset.none()  # Deny access if the user is not authenticated
+
+        role_names = [role.name.lower() for role in user.role.all()]
+
+        if 'director' in role_names or 'office staff' in role_names:
+            return queryset
+
+        elif 'teacher' in role_names:
+            try:
+                teacher = Teacher.objects.get(user=user)
+                return queryset.filter(teacher=teacher)
+            except Teacher.DoesNotExist:
+                return queryset.none()
+
+        return queryset.none()
+
+
+
+
+
+
+

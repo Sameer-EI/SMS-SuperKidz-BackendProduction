@@ -37,12 +37,12 @@ class TeacherView(viewsets.ModelViewSet):
     search_fields = ['user__email', 'user__first_name', 'phone_no']
     
     # ***************with out JWT******************
-    def get_permissions(self):
-        if self.action in ['assign_teacher_details', 'get_all_teacher_assignments']:
-            return [IsAuthenticated(), IsDirector()]
-        elif self.action in ['list', 'create', 'retrieve','update', 'partial_update']:
-            return [AllowAny()]
-        return [IsAuthenticated()]
+    # def get_permissions(self):
+    #     if self.action in ['assign_teacher_details', 'get_all_teacher_assignments']:
+    #         return [IsAuthenticated(), IsDirector()]
+    #     elif self.action in ['list', 'create', 'retrieve','update', 'partial_update']:
+    #         return [AllowAny()]
+    #     return [IsAuthenticated()]
 
     
     
@@ -52,6 +52,7 @@ class TeacherView(viewsets.ModelViewSet):
         yearlevel_id = request.data.get("yearlevel_id")
         subject_ids = request.data.get("subject_ids", [])
         period_ids = request.data.get("period_ids", [])
+        
 
         # Validate teacher
         if not teacher_id:
@@ -106,6 +107,7 @@ class TeacherView(viewsets.ModelViewSet):
                     cp = ClassPeriod.objects.create(
                         teacher=teacher,
                         subject=subject,
+                         year_level=yearlevel,
                         term=Term.objects.first(),  
                         start_time=period,  # Assign Period instance to start_time
                         end_time=period,  # Assign Period instance to end_time
@@ -133,13 +135,19 @@ class TeacherView(viewsets.ModelViewSet):
 
 
 
+   
     @action(detail=False, methods=['get'], url_path='all-teacher-assignments')
     def get_all_teacher_assignments(self, request):
+        from django.db.models import Prefetch
+
         teachers = Teacher.objects.prefetch_related(
             'year_levels',
-            'classperiod_set__start_time',
-            'classperiod_set__end_time',
-            'classperiod_set__subject',
+            Prefetch(
+                'assigned_periods',
+                queryset=ClassPeriod.objects.select_related(
+                    'subject', 'start_time', 'end_time'
+                ).order_by('start_time__start_period_time')  # 👈 sort by start_time
+            )
         ).select_related('user')
 
         response_data = []
@@ -155,23 +163,21 @@ class TeacherView(viewsets.ModelViewSet):
                 for yl in teacher.year_levels.all()
             }
 
-            # Step 2: Assign each period to the FIRST year level from teacher's year_levels
+            # Step 2: Assign each period in sorted order (round-robin year_levels)
             year_level_ids = list(yearlevel_map.keys())
-
             if not year_level_ids:
                 continue  # skip if teacher has no assigned year level
 
-            index = 0  # for round-robin assignment
-
-            for period in teacher.classperiod_set.all():
+            index = 0
+            for period in teacher.assigned_periods.all():
                 assigned_year_level_id = year_level_ids[index % len(year_level_ids)]
                 yearlevel_map[assigned_year_level_id]["periods"].append({
                     'period_id': period.id,
                     'period_name': period.name,
                     'start_time': period.start_time.start_period_time.strftime("%H:%M") if period.start_time else None,
                     'end_time': period.end_time.end_period_time.strftime("%H:%M") if period.end_time else None,
-                    'subject_id': period.subject.id,
-                    'subject_name': period.subject.subject_name
+                    'subject_id': period.subject.id if period.subject else None,
+                    'subject_name': period.subject.subject_name if period.subject else None
                 })
                 index += 1
 
@@ -179,13 +185,12 @@ class TeacherView(viewsets.ModelViewSet):
             response_data.append({
                 'teacher_id': teacher.id,
                 'teacher_name': teacher.user.get_full_name() if teacher.user else str(teacher),
-                'total_assigned_periods': teacher.classperiod_set.count(),
+                'total_assigned_periods': teacher.assigned_periods.count(),
                 'max_periods_allowed': 6,
                 'assignments': list(yearlevel_map.values())
             })
 
         return Response(response_data, status=status.HTTP_200_OK)
-
 
 
 
@@ -221,7 +226,8 @@ class TeacherView(viewsets.ModelViewSet):
     
     
   
-from rest_framework import viewsets
+from rest_framework import viewsets, status
+from rest_framework.response import Response
 from .models import TeacherYearLevel
 from .serializers import TeacherYearLevelSerializer
 from permission import RoleBasedPermission
@@ -235,90 +241,79 @@ class TeacherYearLevelView(viewsets.ModelViewSet):
         # Permission class ke filter_queryset() ka use karo
         return self.permission_classes[0]().filter_queryset(self.request, super().get_queryset(), self)
 
+    def get(self, request, *args, **kwargs):
+        # Check if the token is present in the request
+        if not request.META.get('HTTP_AUTHORIZATION'):
+            return Response({"detail": "Token not given"}, status=status.HTTP_401_UNAUTHORIZED)
+        
+        # If token is present, proceed with the normal get method
+        return super().get(request, *args, **kwargs)
 
+
+
+
+
+from collections import defaultdict
 from datetime import datetime
-from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from django.utils import timezone
 
 class AllTeachersWithYearLevelsAPIView(APIView):
     def get(self, request):
-        teachers = Teacher.objects.select_related('user').all()
-
-        # Date filter
         date_value = request.GET.get('date_value')
-        if date_value:
-            try:
-                target_date = datetime.strptime(date_value, "%Y-%m-%d").date()
-            except ValueError:
-                return Response({"error": "Invalid date format. Use YYYY-MM-DD."},
-                                status=status.HTTP_400_BAD_REQUEST)
-        else:
-            target_date = timezone.now().date()
+        try:
+            target_date = datetime.strptime(date_value, "%Y-%m-%d").date() if date_value else timezone.now().date()
+        except ValueError:
+            return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
 
         filter_status = request.GET.get('status', 'all').lower()
+        if filter_status not in ['present', 'absent', 'all']:
+            return Response({"error": "Invalid status filter"}, status=status.HTTP_400_BAD_REQUEST)
+
+        teacher_id = request.GET.get('teacher_id')
+        teachers = Teacher.objects.select_related('user').all()
+
+        if teacher_id:
+            teachers = teachers.filter(id=teacher_id)
+            if not teachers.exists():
+                return Response({"error": "Teacher not found"}, status=status.HTTP_404_NOT_FOUND)
 
         result = []
-        present_teachers = []
 
-        # Step 1: Gather teacher data
         for teacher in teachers:
-            year_levels = TeacherYearLevel.objects.filter(
-                teacher=teacher
-            ).select_related('year_level')
+            attendance = TeacherAttendance.objects.filter(teacher=teacher, date=target_date).first()
+            attendance_status = attendance.status.lower() if attendance else "not marked"
+
+            if filter_status != 'all':
+                if attendance_status == "not marked":
+                    continue
+                if attendance_status != filter_status:
+                    continue
+
+            #  Fetch all periods assigned to this teacher
+            periods = ClassPeriod.objects.filter(teacher=teacher).select_related(
+                'subject', 'year_level', 'start_time'
+            ).order_by('year_level__id', 'start_time')
+
+            # Group periods by year_level
+            grouped = defaultdict(list)
+            for p in periods:
+                grouped[p.year_level].append({
+                    "id": p.id,
+                    "name": getattr(p.start_time, "name", p.start_time.strftime("%H:%M") if hasattr(p.start_time, "strftime") else None),
+                    "subject": p.subject.subject_name if p.subject else None
+                })
 
             year_level_data = [
                 {
-                    'id': yl.year_level.id,
-                    'level_name': yl.year_level.level_name,
-                    'level_order': yl.year_level.level_order
-                } for yl in year_levels
+                    "id": yl.id,
+                    "level_name": yl.level_name,
+                    "periods": grouped[yl]
+                }
+                for yl in grouped.keys()
             ]
-
-            attendance = TeacherAttendance.objects.filter(
-                teacher=teacher, date=target_date
-            ).first()
-            attendance_status = attendance.status if attendance else "not marked"
-
-            if filter_status == 'present' and attendance_status != 'present':
-                continue
-            elif filter_status == 'absent' and attendance_status != 'absent':
-                continue
-            elif filter_status not in ['present', 'absent', 'all', '']:
-                return Response({"error": "Invalid status filter"}, status=400)
-
-            periods = ClassPeriod.objects.filter(
-                teacher=teacher
-            ).select_related('year_level', 'classroom', 'start_time', 'end_time', 'subject')
-
-            period_data = [
-                {
-                    "id": period.id,
-                    "subject": period.subject.subject_name,
-                    "start_time": period.start_time.name if period.start_time else None,
-                    "end_time": period.end_time.name if period.end_time else None,
-                    "start_time_id": period.start_time.id if period.start_time else None,
-                    "end_time_id": period.end_time.id if period.end_time else None,
-                    "year_level": {
-                        "id": period.year_level.id,
-                        "level_name": period.year_level.level_name
-                    },
-                    "classroom": {
-                        "id": period.classroom.id,
-                        "room_name": period.classroom.room_name
-                    }
-                } for period in periods
-            ]
-
-            if attendance_status == "present":
-                present_teachers.append({
-                    "id": teacher.id,
-                    "year_levels": [yl.year_level.id for yl in year_levels],
-                    "periods": [(p.start_time.id if p.start_time else None,
-                                 p.end_time.id if p.end_time else None) for p in periods],
-                    "name": f"{teacher.user.first_name} {teacher.user.last_name}"
-                })
 
             result.append({
                 'id': teacher.id,
@@ -327,81 +322,161 @@ class AllTeachersWithYearLevelsAPIView(APIView):
                 'email': teacher.user.email,
                 'phone_no': teacher.phone_no,
                 'year_levels': year_level_data,
-                'attendance': {
-                    'date': str(target_date),
-                    'status': attendance_status
-                },
-                # 'assigned_periods': period_data
+                'attendance': {'date': str(target_date), 'status': attendance_status},
             })
 
-        # Step 2: Match absent teacher periods
-        absent_matches = []
-        seen_matches = set()
+        return Response({"count": len(result), "teachers": result}, status=status.HTTP_200_OK)
 
-        for teacher in teachers:
-            attendance = TeacherAttendance.objects.filter(
-                teacher=teacher, date=target_date
-            ).first()
-            attendance_status = attendance.status if attendance else "not marked"
 
-            if attendance_status == "absent":
-                periods = ClassPeriod.objects.filter(
-                    teacher=teacher
-                ).select_related('year_level', 'classroom', 'start_time', 'end_time', 'subject')
 
-                for period in periods:
-                    period_key = (period.start_time.id if period.start_time else None,
-                                  period.end_time.id if period.end_time else None)
-                    year_level_id = period.year_level.id
 
-                    match_found = False
 
-                    # Step 2.1: Try same year level teachers first
-                    for present_teacher in present_teachers:
-                        if (year_level_id in present_teacher["year_levels"] and
-                            period_key not in present_teacher["periods"]):
-                            match_key = (teacher.id, present_teacher["id"], *period_key)
-                            if match_key not in seen_matches:
-                                seen_matches.add(match_key)
-                                absent_matches.append({
-                                    "absent_teacher": f"{teacher.user.first_name} {teacher.user.last_name}",
-                                    "absent_subject": period.subject.subject_name,
-                                    "matched_present_teacher": present_teacher["name"],
-                                    "period_time": f"{period.start_time.name if period.start_time else None} - {period.end_time.name if period.end_time else None}",
-                                    # "priority": "same year level",
-                                    "year_level": {
-                                        "id": period.year_level.id,
-                                        "level_name": period.year_level.level_name
-                                    }
-                                })
-                                match_found = True
-                                break
 
-                    # Step 2.2: If no match in same year level, try other teachers
-                    if not match_found:
-                        for present_teacher in present_teachers:
-                            if (year_level_id not in present_teacher["year_levels"] and
-                                period_key not in present_teacher["periods"]):
-                                match_key = (teacher.id, present_teacher["id"], *period_key)
-                                if match_key not in seen_matches:
-                                    seen_matches.add(match_key)
-                                    absent_matches.append({
-                                        "absent_teacher": f"{teacher.user.first_name} {teacher.user.last_name}",
-                                        "absent_subject": period.subject.subject_name,
-                                        "matched_present_teacher": present_teacher["name"],
-                                        "period_time": f"{period.start_time.name if period.start_time else None} - {period.end_time.name if period.end_time else None}",
-                                        # "priority": "other year level",
-                                        "year_level": {
-                                            "id": period.year_level.id,
-                                            "level_name": period.year_level.level_name
-                                        }
-                                    })
-                                    break
 
-        return Response({
-            "teachers": result,
-            "absent_period_matches": absent_matches
-        }, status=status.HTTP_200_OK)
+
+
+
+
+
+
+
+
+class AbsentTeacherFreeReplacementAPIView(APIView):
+    def get(self, request):
+        date_value = request.GET.get('date_value')
+        teacher_id = request.GET.get('teacher_id')
+
+        try:
+            target_date = datetime.strptime(date_value, "%Y-%m-%d").date() if date_value else timezone.now().date()
+        except ValueError:
+            return Response(
+                {"error": "Invalid date format. Use YYYY-MM-DD."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 1) Absent & Present sets build
+        absent_ids = set(
+            TeacherAttendance.objects.filter(date=target_date, status__iexact="absent")
+            .values_list("teacher_id", flat=True)
+        )
+        present_ids = set(
+            TeacherAttendance.objects.filter(date=target_date, status__iexact="present")
+            .values_list("teacher_id", flat=True)
+        )
+
+        # 2) Absent teachers list (only with assigned periods)
+        absent_teachers_qs = Teacher.objects.filter(
+            id__in=absent_ids,
+            assigned_periods__isnull=False
+        ).distinct().select_related("user")
+
+        if teacher_id:
+            absent_teachers_qs = absent_teachers_qs.filter(id=teacher_id)
+
+        if not absent_teachers_qs.exists():
+            return Response({"absent_teachers": []}, status=status.HTTP_200_OK)
+
+        result = []
+
+        for teacher in absent_teachers_qs:
+            # 3) Absent teacher ke assigned periods
+            periods = ClassPeriod.objects.filter(teacher=teacher)\
+                .select_related("subject", "start_time", "year_level")\
+                .order_by("start_time")
+
+            period_data = []
+
+            for p in periods:
+                # 4) Busy teachers = jo isi time slot par kahin class le rahe hain
+                busy_teacher_ids = set(
+                    ClassPeriod.objects.filter(start_time=p.start_time)
+                    .values_list("teacher_id", flat=True)
+                )
+
+                # 5) Free teachers = Present - busy - absent
+                candidate_ids = present_ids - busy_teacher_ids - absent_ids
+
+                # 6) Same class (year_level) ke teachers
+                same_class_teacher_ids = set(
+                    ClassPeriod.objects.filter(year_level=p.year_level)
+                    .values_list("teacher_id", flat=True)
+                )
+
+                # 7) Divide into same class & other class
+                same_class_free_ids = candidate_ids & same_class_teacher_ids
+                other_class_free_ids = candidate_ids - same_class_free_ids
+
+                # Querysets
+                same_class_teachers_qs = Teacher.objects.filter(id__in=same_class_free_ids)\
+                    .select_related("user")\
+                    .order_by("user__first_name", "user__last_name")
+
+                other_teachers_qs = Teacher.objects.filter(id__in=other_class_free_ids)\
+                    .select_related("user")\
+                    .order_by("user__first_name", "user__last_name")
+
+                same_class_free_teachers = [
+                    {
+                        "id": t.id,
+                        "first_name": t.user.first_name,
+                        "last_name": t.user.last_name,
+                        "email": t.user.email,
+                    }
+                    for t in same_class_teachers_qs
+                ]
+
+                other_class_free_teachers = [
+                    {
+                        "id": t.id,
+                        "first_name": t.user.first_name,
+                        "last_name": t.user.last_name,
+                        "email": t.user.email,
+                    }
+                    for t in other_teachers_qs
+                ]
+
+                # 👇 merged free teachers list
+                all_free_teachers = same_class_free_teachers + other_class_free_teachers
+
+                period_data.append({
+                    "period_id": p.id,
+                    "period_name": getattr(p.start_time, "name", str(p.start_time)),
+                    "subject": p.subject.subject_name if p.subject else None,
+                    "year_level": p.year_level.level_name if p.year_level else None,
+                    "same_class_free_teachers": same_class_free_teachers,
+                    "other_class_free_teachers": other_class_free_teachers,
+                    "all_free_teachers": all_free_teachers
+                })
+
+            result.append({
+                "absent_teacher": {
+                    "id": teacher.id,
+                    "name": f"{teacher.user.first_name} {teacher.user.last_name}".strip(),
+                    "email": teacher.user.email
+                },
+                "periods": period_data
+            })
+
+        return Response({"absent_teachers": result}, status=status.HTTP_200_OK)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -441,4 +516,55 @@ class TeacherAttendanceAPIView(APIView):
             'date': attendance_date
         }, status=200)
 
-    
+
+
+
+
+
+
+class SubstituteAssignmentView(APIView):
+    def get(self, request):
+        assignments = SubstituteAssignment.objects.all()
+        serializer = SubstituteAssignmentSerializer(assignments, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        data = request.data
+        print(data)
+
+        # Single dict -> wrap in list for iteration
+        if isinstance(data, dict):
+            data = [data]
+            many = False
+        else:
+            many = True
+
+        errors = []
+        for item in data:
+            absent_teacher = item.get("absent_teacher")
+            period = item.get("period")
+            date = item.get("date")
+
+            if SubstituteAssignment.objects.filter(
+                absent_teacher=absent_teacher,
+                period=period,
+                date=date
+            ).exists():
+                errors.append(
+                    f"Duplicate found: Teacher {absent_teacher} already has substitute "
+                    f"for {period} on {date}"
+                )
+
+        if errors:
+            return Response({"errors": errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        # If single dict, unwrap data again before serializer
+        serializer_data = data if many else data[0]
+
+        serializer = SubstituteAssignmentSerializer(data=serializer_data, many=many)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
