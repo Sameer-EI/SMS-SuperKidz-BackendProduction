@@ -1,5 +1,6 @@
 from django.db import models
 from authentication.models import User
+
 # from director.models import YearLevel
 
 
@@ -55,3 +56,13 @@ class TeacherAttendance(models.Model):
         return f"{self.teacher} - {self.date} - {self.status}"
  
 
+class SubstituteAssignment(models.Model):
+    absent_teacher = models.ForeignKey(Teacher, related_name='absent_assignments', on_delete=models.CASCADE)
+    substitute_teacher = models.ForeignKey(Teacher, related_name='substitute_assignments', on_delete=models.CASCADE)
+    year_level = models.ForeignKey('director.YearLevel', on_delete=models.CASCADE)
+    period = models.CharField(max_length=100)
+    date = models.DateField(auto_now_add=True)
+
+
+
+    # substitute table  and teacher attendance new create by saqib
