@@ -459,6 +459,7 @@ def guardian_dashboard(request, id=None):
 #         "children": children_data
 #     })
 
+
 @api_view(["GET"])
 def student_dashboard(request, id=None):
     if not id:
@@ -1573,9 +1574,32 @@ class TermView(viewsets.ModelViewSet):
     serializer_class = TermSerializer
 
 
+from django_filters.rest_framework import DjangoFilterBackend  
+from .filters import AdmissionFilter
 class AdmissionView(viewsets.ModelViewSet):
     queryset = Admission.objects.all()
     serializer_class = AdmissionSerializer
+
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = AdmissionFilter
+
+    search_fields = [
+        "student__user__first_name",
+        "student__user__last_name",
+        "student__user__email",
+        "guardian__user__first_name",
+        "guardian__user__last_name",
+        "tc_letter",
+        "enrollment_no",
+        "previous_school_name",
+    ]
+
+    ordering_fields = [
+        "admission_date",
+        "year_level__level_name",
+        "student__user__first_name",
+        "previous_percentage",
+    ]
     # parser_classes=[MultiPartParser,FormParser]
     
     # ***************OfficeStaffView**************
@@ -1837,6 +1861,47 @@ class YearLevelFeeView(viewsets.ModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
         return Response(grouped_fees[0] if grouped_fees else {})
+    
+    
+
+from twilio.rest import Client
+
+def send_whatsapp_message(message_text):
+    account_sid = 'AC75f0880296f2c1377b2ca30442bbd3e1'
+    auth_token = '01dfff8731923c8e91e47b469f533fd5'
+    twilio_whatsapp_number = 'whatsapp:+14155238886'
+    
+    phone_numbers = [
+        '+918109145639',
+        '+918847418400',
+        '+918102637122'
+    ]
+
+    client = Client(account_sid, auth_token)
+
+    sent_messages = []
+    print('\n\n\n',sent_messages)
+    for number in phone_numbers:
+        try:
+            message = client.messages.create(
+                from_=twilio_whatsapp_number,
+                body=message_text,
+                to=f'whatsapp:{number}'
+            )
+            sent_messages.append({
+                "to": number,
+                "sid": message.sid,
+                "status": "sent"
+            })
+        except Exception as e:
+            sent_messages.append({
+                "to": number,
+                "error": str(e),
+                "status": "failed"
+            })
+
+    return sent_messages
+
 
 
 #discount for students-----------
@@ -1888,39 +1953,6 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         return queryset.distinct()
 
-    # API to submit fee more than a single month
-    # https://187gwsw1-7000.inc1.devtunnels.ms/d/fee-record/submit_single_multi_month_fees/
-    # @action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
-    # def submit_single_multi_month_fees(self, request):
-    #     student_id = request.data.get('student_id')
-    #     months = request.data.get('months', [])
-    #     year_level_fees = request.data.get('year_level_fees', [])
-    #     paid_amount = request.data.get('paid_amount')
-    #     payment_mode = request.data.get('payment_mode')
-    #     remarks = request.data.get('remarks')
-    #     received_by = request.data.get('received_by')
-
-    #     if not months or not isinstance(months, list):
-    #         return Response({"error": "Months must be a non-empty list."}, status=status.HTTP_400_BAD_REQUEST)
-
-    #     responses = []
-    #     for month in months:
-    #         serializer = self.get_serializer(data={
-    #             "student_id": student_id,
-    #             "month": month,
-    #             "year_level_fees": year_level_fees,
-    #             "paid_amount": paid_amount,
-    #             "payment_mode": payment_mode,
-    #             "remarks": f"{remarks or ''} ({month})",
-    #             "received_by": received_by
-    #         })
-    #         if serializer.is_valid():
-    #             serializer.save()
-    #             responses.append(serializer.data)
-    #         else:
-    #             responses.append({"month": month, "errors": serializer.errors})
-
-    #     return Response(responses, status=status.HTTP_200_OK)
     
     @action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
     def submit_single_multi_month_fees(self, request):
@@ -1984,6 +2016,17 @@ class FeeRecordView(viewsets.ModelViewSet):
             "remarks": remarks,
             "received_by": received_by
         }
+        message_text = (
+            f"Dear {first_record.student.user.get_full_name()},\n"
+            f"Your fee for {', '.join(months)} month has been successfully recorded.\n"
+            f"Receipt No: {receipt_number}\n"
+            f"Total Amount: ₹{total_amount:.2f}\n"
+            f"Paid Amount: ₹{paid_amount:.2f}\n"
+            f"Due Amount: ₹{total_due:.2f}\n"
+            f"Payment Mode: {payment_mode}\n"
+            f"Thank you!"
+        )
+        send_whatsapp_message(message_text)
 
         return Response(combined_response, status=status.HTTP_200_OK)
     
@@ -2075,7 +2118,8 @@ class FeeRecordView(viewsets.ModelViewSet):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     
-    
+
+
     
     # corrected amount issue as of 19June25 at 02:50 PM
     # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/student-fee-summary/?year_level=5
@@ -2236,6 +2280,472 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         return Response(defaulters_list)
     
+
+
+### --------------------- Income Distribution Dashboard API (Guardian name and student name and id added) --------------------------- ###
+### ------------------- As of 03 JUly at 12:35 --------------- ###   By daniyal
+
+@api_view(["GET"])
+def guardian_income_distribution_with_student(request):
+    # Define updated income brackets
+    brackets = {
+        "Below 1 Lakh": (0, 100000),
+        "1 – 3 Lakhs": (100001, 300000),
+        "3 – 5 Lakhs": (300001, 500000),
+        "5 – 8 Lakhs": (500001, 800000),
+        "8 – 10 Lakhs": (800001, 1000000),
+        "Above 10 Lakhs": (1000001, None),
+    }
+
+    total_guardians = Guardian.objects.exclude(annual_income__isnull=True).count()
+    results = []
+    #---------- Count and guardian filter as it is
+    for label, (min_income, max_income) in brackets.items():
+        if max_income is not None:
+            qs = Guardian.objects.filter(
+                annual_income__gte=min_income,
+                annual_income__lte=max_income
+            )
+        else:
+            qs = Guardian.objects.filter(
+                annual_income__gte=min_income,
+            )  
+        count = qs.count() 
+        guardian_names = [f"{g.user.first_name} {g.user.last_name}" for g in qs]  
+
+        student_data = [f" id:{s.studentguardian.get().student.id} {s.studentguardian.get().student.user.first_name} {s.studentguardian.get().student.user.last_name}" for s in qs]
+
+        percentage = round((count / total_guardians) * 100, 2) if total_guardians > 0 else 0.0
+
+        results.append({
+            "income_range": label,
+            "guardians":guardian_names,
+            "count": count,
+            "percentage": percentage,
+            "student info": student_data
+        })
+        
+    return Response(results, status=status.HTTP_200_OK)
+### -------------------------------------------------------------- ###    
+
+
+### --------------------- Deactivation of the users [NO access to them and data still stored] --------------------------- ###
+### ------------------- As of 24 JUly at 12:00 --------------- ###   By daniyal
+from rest_framework.decorators import permission_classes
+from django.db import transaction
+from authentication.models import UserStatusLog
+from authentication.serializers import UserSerializer
+
+@api_view(["POST"])
+@permission_classes([RoleBasedUserManagementPermission])
+def deactivate_user(request):
+    deactivate_user.api_section = "deactivate_user" 
+    try:
+        with transaction.atomic():
+            user_id = request.data.get("user_id")
+            user = User.objects.all_including_inactive().get(id=user_id)
+            if not user.is_active:
+                return Response({"error": "User already deactivated"})
+            user.is_active = False
+            user.deactivation_reason = request.data.get('reason', '')
+            user.deactivation_date = timezone.now()
+            user.reactivation_date = None
+            user.save()
+            
+            # Handle Student    (classes [clear], admission, feeRecord, document, )
+            student = getattr(user, 'student', None)
+            if student is not None:
+                student = user.student
+                student.is_active = False
+                student.save()
+                # Clear Student.classes and StudentYearLevel 
+                student.classes.clear()
+                # Clear StudentYearLevel (handle missing studenyearlevel_set)
+                try:
+                    StudentYearLevel.objects.filter(student=student).delete()
+                except AttributeError:
+                    pass  # No StudentYearLevel relationship
+
+                # Clear related Admissions
+                admissions = Admission.objects.filter(student=student)
+                for admission in admissions:
+                    admission.is_active = False
+                    admission.save()
+                # Clear related FeeRecords
+                fee_records = FeeRecord.objects.filter(student=student)
+                for fee_record in fee_records:
+                    fee_record.is_active = False
+                    fee_record.save()
+                # Clear related Documents
+                documents = Document.objects.filter(student=student)
+                for document in documents:
+                    document.is_active = False
+                    document.save()
+                # Deactivate related Addresses
+                addresses = Address.objects.filter(user=user)
+                for address in addresses:
+                    address.is_active = False
+                    address.save()
+                # Deactivate Banking Details
+                bank_details = BankingDetail.objects.filter(user=user)
+                for bank_detail in bank_details:
+                    bank_detail.is_active = False
+                    bank_detail.save()    
+
+            # Handle Guardian   (Student guardian relation [clear], address, docs)
+            guardian = getattr(user, 'guardian_relation', None)
+            if guardian is not None:
+                guardian = user.guardian_relation
+                guardian.is_active = False
+                guardian.save()
+                # Clear StudentGuardian connections
+                student_guardians = StudentGuardian.objects.filter(guardian=guardian)
+                for sg in student_guardians:
+                    sg.delete()  # Clear the relationship
+                # Deactivate related Addresses
+                addresses = Address.objects.filter(user=user)
+                for address in addresses:
+                    address.is_active = False
+                    address.save()
+                # Clear related Documents
+                documents = Document.objects.filter(guardian=guardian)
+                for document in documents:
+                    document.is_active = False
+                    document.save() 
+                
+            # Handle Teacher  (classPeriod [clear {M2M}], address, docs)
+            teacher = getattr(user, 'teacher', None)
+            if teacher is not None:
+                teacher = user.teacher
+                teacher.is_active = False
+                teacher.save()
+
+                # Clear TeacherYearLevel connections
+                teacher.year_levels.clear()
+                # Remove teacher from ClassPeriod assignments
+                class_periods = ClassPeriod.objects.filter(teacher=teacher)
+                for cp in class_periods:
+                    cp.teacher = None  # Set to None to remove assignment
+                    cp.save()
+                ClassPeriod.objects.filter(teacher=teacher).delete()
+                # Deactivate related Addresses
+                addresses = Address.objects.filter(user=user)
+                for address in addresses:
+                    address.is_active = False
+                    address.save()
+                # Clear related Documents
+                documents = Document.objects.filter(teacher=teacher)
+                for document in documents:
+                    document.is_active = False
+                    document.save()    
+                    
+
+            # Handle OfficeStaff  ([student,teacher,admission {clear M2M}, address, docs])
+            office_staff = getattr(user, 'office_staff', None)
+            if office_staff is None:
+                # Attempt to fetch OfficeStaff directly to confirm relation
+                try:
+                    office_staff = OfficeStaff.objects.get(user=user)
+                except OfficeStaff.DoesNotExist:
+                    print(f"No OfficeStaff found for user {user.id} via query")
+            else:
+                try:
+                    office_staff.is_active = False
+                    office_staff.save()
+                    # Clear ManyToMany relationships
+                    office_staff.student.clear()
+                    office_staff.teacher.clear()
+                    office_staff.admissions.clear()
+                    # Deactivate related Addresses
+                    addresses = Address.objects.filter(user=user)
+                    for address in addresses:
+                        address.is_active = False
+                        address.save()
+                    # Clear related Documents
+                    documents = Document.objects.filter(office_staff=office_staff)
+                    for document in documents:
+                        document.is_active = False
+                        document.save()
+                except Exception as e:
+                    return Response({"error": f"Failed to deactivate OfficeStaff: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Handle Director (if needed)
+            director = getattr(user, 'director', None)
+            if director is not None:
+                director = user.director
+                director.is_active = False
+                director.save()
+                # Deactivate related Addresses
+                addresses = Address.objects.filter(user=user)
+                for address in addresses:
+                    address.is_active = False
+                    address.save()
+
+            # log termination
+            UserStatusLog.objects.create(user=user, status='TERMINATED', reason=user.deactivation_reason)
+            serializer = UserSerializer(user)
+            return Response({
+                "message": f"User {user.id} has been successfully terminated.",
+                "user_id": user.id,
+                "data": serializer.data})
+    except User.DoesNotExist:
+        return Response({"error": "User not found"})
+ 
+### -------------------------------------------------------------- ###
+
+# *************** Reactivation of the User *******************************************************
+from django.core.exceptions import ObjectDoesNotExist
+
+@api_view(["POST"])
+@permission_classes([RoleBasedUserManagementPermission])
+def reactivate_user(request):
+    reactivate_user.api_section = "reactivate_user" 
+    try:
+        with transaction.atomic():
+            user_id = request.data.get("user_id")
+            user = User.objects.all_including_inactive().get(id=user_id)
+            if user.is_active:
+                return Response({"error": "User already active"})
+            user.is_active = True
+            user.deactivation_reason = None
+            user.reactivation_date = timezone.now()
+            user.save()
+            
+            # Handle Student    ([classes {make}, studentyearlevel, studentguardian] , admission, feeRecord, document, address,
+            # banking details )
+            student = getattr(user, 'student', None)
+            if student is not None:
+                student = user.student
+                student.is_active = True
+                student.save()
+
+                # retrieve related Admissions
+                admissions = Admission.objects.all_including_inactive().filter(student=student)
+                for admission in admissions:
+                    admission.is_active = True
+                    admission.save()
+                # retrieve related FeeRecords
+                fee_records = FeeRecord.objects.all_including_inactive().filter(student=student)
+                for fee_record in fee_records:
+                    fee_record.is_active = True
+                    fee_record.save()
+                # retrieve related Documents
+                documents = Document.objects.all_including_inactive().filter(student=student)
+                for document in documents:
+                    document.is_active = True
+                    document.save()
+                # retrieve related Addresses
+                addresses = Address.objects.all_including_inactive().filter(user=user)
+                for address in addresses:
+                    address.is_active = True
+                    address.save()
+                # retrieve Banking Details
+                bank_details = BankingDetail.objects.all_including_inactive().filter(user=user)
+                for bank_detail in bank_details:
+                    bank_detail.is_active = True
+                    bank_detail.save() 
+
+                
+                # Create Student.classes connection
+                class_period_ids = request.data.get("class_period_ids", [])
+                if class_period_ids:
+                    valid_class_period = ClassPeriod.objects.filter(id__in=class_period_ids)
+                    if valid_class_period:
+                        student.classes.set(valid_class_period)
+                    else:
+                        return Response({"erorr": "Invalid class period ids"})
+                    
+                # Create StudentYearLevel connection 
+                year_id = request.data.get("year_id")
+                level_id = request.data.get("level_id")
+                
+                if year_id and level_id:
+                    try:
+                        level = YearLevel.objects.get(id=level_id)
+                        year = SchoolYear.objects.get(id=year_id)
+                        StudentYearLevel.objects.update_or_create(
+                            student = student,
+                            defaults={"year": year, "level": level}
+                        )
+                    except ObjectDoesNotExist:
+                        return Response({"error":"Invalid year level id"})
+                    
+                # Create StudentGuardian connections
+                guardian_ids = request.data.get("guardian_ids", [])
+                if guardian_ids:
+                    valid_guardians = Guardian.objects.filter(id__in=guardian_ids, is_active=True)
+                    if valid_guardians.exists():
+                        guardian_type_id = request.data.get("guardian_type_id")
+                        try:
+                            guardian_type = GuardianType.objects.get(id=guardian_type_id) if guardian_type_id else GuardianType.objects.get(name="Parent")
+                            for guardian in valid_guardians:
+                                StudentGuardian.objects.update_or_create(
+                                    student=student,
+                                    guardian=guardian,
+                                    defaults={'guardian_type': guardian_type}
+                                )
+                        except ObjectDoesNotExist:
+                            return Response({"error": "Invalid or inactive GuardianType ID provided"}, status=status.HTTP_400_BAD_REQUEST)
+                    else:
+                        return Response({"error": "No valid or active Guardian IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
+                    
+
+            # Handle Guardian   (Student guardian relation [make], address, docs)
+            guardian = getattr(user, 'guardian_relation', None)
+            if guardian is not None:
+                guardian = user.guardian_relation
+                guardian.is_active = True
+                guardian.save()
+
+                # update StudentGuardian connections
+                student_ids = request.data.get("student_ids", [])
+                if student_ids:
+                    valid_students = Student.objects.filter(id__in=student_ids, is_active=True)
+                    if valid_students.exists():
+                        guardian_type_id = request.data.get("guardian_type_id")
+                        try:
+                            guardian_type = GuardianType.objects.get(id=guardian_type_id) if guardian_type_id else GuardianType.objects.get(name="Parent")  
+                            for student in valid_students:
+                                StudentGuardian.objects.update_or_create(
+                                    student=student,
+                                    guardian=guardian,
+                                    defaults={'guardian_type': guardian_type}
+                                )
+                        except ObjectDoesNotExist:
+                            return Response({"error": "Invalid or inactive GuardianType ID provided"})
+                    else:
+                        return Response({"error": "No valid or active Student IDs provided"})
+                
+                # retrieve related Addresses
+                addresses = Address.objects.all_including_inactive().filter(user=user)
+                for address in addresses:
+                    address.is_active = True
+                    address.save()
+                # retrieve related Documents
+                documents = Document.objects.all_including_inactive().filter(guardian=guardian)
+                for document in documents:
+                    document.is_active = True
+                    document.save() 
+                
+            # Handle Teacher  (classPeriod [create {M2M}], teacheryearlevel, address, docs)
+            teacher = getattr(user, 'teacher', None)
+            if teacher is not None:
+                teacher = user.teacher
+                teacher.is_active = True
+                teacher.save()
+
+                # Assign teacher from ClassPeriod assignments
+                class_period_ids = request.data.get("class_period_ids", [])
+                if class_period_ids:
+                    valid_class_periods = ClassPeriod.objects.filter(id__in=class_period_ids)
+                    if valid_class_periods.exists():
+                        for class_period in valid_class_periods:
+                            class_period.teacher = teacher
+                            class_period.save()
+                    else:
+                        return Response({"error": "No valid or active ClassPeriod IDs provided"})
+
+                # Teacher year level reassigning
+                year_level_id = request.data.get("year_level_id", [])
+                if year_level_id:
+                    valid_year_levels = YearLevel.objects.filter(id=year_level_id)
+                    if valid_year_levels.exists():
+                        teacher.year_levels.set(valid_year_levels)
+                    else:
+                        return Response({"error": "No valid or active YearLevel IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+                # retrieve related Addresses
+                addresses = Address.objects.all_including_inactive().filter(user=user)
+                for address in addresses:
+                    address.is_active = True
+                    address.save()
+                # retrieve related Documents
+                documents = Document.objects.all_including_inactive().filter(teacher=teacher)
+                for document in documents:
+                    document.is_active = True
+                    document.save()    
+                    
+
+            # Handle OfficeStaff  ([student,teacher,admisson {clear M2M}, address, docs])
+            office_staff = getattr(user, 'office_staff', None)
+            if office_staff is not None:
+                office_staff = user.office_staff
+                office_staff.is_active = True
+                office_staff.save()
+
+                # # Create ManyToMany relationships
+                #  Student connection
+                student_ids = request.data.get("student_ids", [])
+                if student_ids:
+                    valid_students = Student.objects.filter(id__in=student_ids, is_active=True)
+                    if valid_students.exists():
+                        office_staff.student.set(valid_students)
+                    else:
+                        return Response({"error": "No valid or active Student IDs provided"})
+
+                # Teacher connection
+                teacher_ids  = request.data.get("teacher_ids", [])
+                if teacher_ids:
+                    valid_teachers = Teacher.objects.filter(id__in=teacher_ids, is_active=True)
+                    if valid_teachers.exists():
+                        office_staff.teacher.set(valid_teachers)
+                    else:
+                        return Response({"error": "No valid or active Teacher IDs provided"})
+
+                # Admission connection
+                admission_ids = request.data.get("admission_ids", [])
+                if admission_ids:
+                    valid_admissions = Admission.objects.filter(id__in=admission_ids, is_active=True)
+                    if valid_admissions.exists():
+                        office_staff.admissions.set(valid_admissions)
+                    else:
+                        return Response({"error":"No valid or active Admission IDs provided"})
+                    
+
+                # retrieve related Addresses
+                addresses = Address.objects.all_including_inactive().filter(user=user)
+                for address in addresses:
+                    address.is_active = True
+                    address.save()
+                # retrieve related Documents
+                documents = Document.objects.all_including_inactive().filter(office_staff=office_staff)
+                for document in documents:
+                    document.is_active = True
+                    document.save() 
+
+            
+            # Handle Director (if needed)
+            director = getattr(user, 'director', None)
+            if director is not None:
+                director = user.director
+                director.is_active = True
+                director.save()
+                # Deactivate related Addresses
+                addresses = Address.objects.all_including_inactive().filter(user=user)
+                for address in addresses:
+                    address.is_active = True
+                    address.save()
+
+            # log termination
+            UserStatusLog.objects.create(user=user, status='ACTIVATED', reason=user.deactivation_reason)
+            serializer = UserSerializer(user)
+            return Response({
+                "message": f"User {user.id} has been successfully reactivated.",
+                "user_id": user.id,
+                "data": serializer.data})
+    except User.DoesNotExist:
+        return Response({"error": "User not found"})
+    
+### -------------------------------------------------------------- ###
+# *************** List of the Deactivated *******************************************************
+
+@api_view(["GET"])
+def list_inactive_users(request):
+    users = User.objects.all_including_inactive().filter(is_active=False)
+    serializer = UserSerializer(users, many=True)
+    return Response(serializer.data)
+
+
     
 # Added as of 30June25 at 01:46 PM
 # Fee card API for individual student
@@ -3999,7 +4509,7 @@ class ReportCardViewSet(viewsets.ModelViewSet):
         return self.retrieve(request, *args, **kwargs)
 
 
-    
+
 # ---------------------Expense 
 
 class ExpenseCategoryView(viewsets.ModelViewSet):

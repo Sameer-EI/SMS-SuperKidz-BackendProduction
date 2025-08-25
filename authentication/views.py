@@ -1,7 +1,7 @@
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
-from .models import User
+from .models import User , UserStatusLog
 from .serializers import *
 from rest_framework import status
 from django.contrib.auth import authenticate
@@ -74,15 +74,32 @@ def LoginView(request):
         serializer = LoginSerializers(data=request.data, context={'request': request})
 
         if serializer.is_valid():
-
+            # Check if user exists and is inactive
+            try:
+                user = User.objects.all_including_inactive().get(email=email)
+                if not user.is_active:
+                    return Response(
+                        {"Message": "Your account is inactive"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            except User.DoesNotExist:
+                return Response(
+                    {"Message": "User no longer exists"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # authenticating only the active users
             user = authenticate(email=email, password=password)
-
             if user is None:
                 return Response(
                     {"Message": "Invalid Credentials"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-
+            
+            #******** This wont work cuz authenticate treat the user.is_active =False as None *********
+            # if not user.is_active:
+            #     return Response({"Message": "Your account is inactive"}, status=status.HTTP_400_BAD_REQUEST)
+                
             refresh = RefreshToken.for_user(user)
             access = str(refresh.access_token)
             refresh_token = str(refresh)
@@ -144,6 +161,8 @@ def LoginView(request):
                   role_key="staff_id"
                 except OfficeStaff.DoesNotExist:
                     pass
+            # elif role_name=='Deactivated User':
+            #     return Response({"message": "Your account has been deactivated"})
 
 
             response_data = {
@@ -247,7 +266,7 @@ def ForgotPasswordView(request):
             cache.delete(email)
 
             return Response(
-                {"Message": "Forgot otp Successfull"}, status=status.HTTP_200_OK
+                {"Message": "Password changed Successfull"}, status=status.HTTP_200_OK
             )
         return Response({"Message": "Invalid OTP "}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -260,3 +279,8 @@ class ErrorLogViewSet(viewsets.ReadOnlyModelViewSet):
     # queryset = ErrorLog.objects.all().order_by('-created_at')
     serializer_class = ErrorLogSerializer
     # permission_classes = [IsAdminUser]
+
+# ************ User Status Log View*******************
+class UserStatusLogView(viewsets.ModelViewSet):
+    queryset = UserStatusLog.objects.all()
+    serializer_class = UserStatusLogSerializer

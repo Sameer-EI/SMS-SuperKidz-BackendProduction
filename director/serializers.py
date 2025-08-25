@@ -367,7 +367,7 @@ class AdmissionSerializer(serializers.ModelSerializer):
             'year_level', 'school_year',
             'admission_date', 'previous_school_name', 'previous_standard_studied',
             'tc_letter', 'emergency_contact_no', 'entire_road_distance_from_home_to_school',
-            'obtain_marks', 'total_marks', 'previous_percentage','enrollment_no'
+            'obtain_marks', 'total_marks', 'previous_percentage','enrollment_no','is_rte', 'rte_number'
         ]
         read_only_fields = [
             'admission_date',
@@ -405,6 +405,8 @@ class AdmissionSerializer(serializers.ModelSerializer):
             return None
 
     def create(self, validated_data):
+        is_rte = validated_data.pop('is_rte', False)
+        rte_number = validated_data.pop('rte_number', None)
         student_data = validated_data.pop('student')
         guardian_data = validated_data.pop('guardian')
         address_data = validated_data.pop('address_input', None)
@@ -492,6 +494,9 @@ class AdmissionSerializer(serializers.ModelSerializer):
             total_marks=validated_data.get('total_marks'),
             previous_percentage=validated_data.get('previous_percentage'),
             enrollment_no=validated_data.get('enrollment_no'),
+            is_rte=is_rte,
+            rte_number=rte_number
+
         )
 
         if guardian_type:
@@ -508,6 +513,8 @@ class AdmissionSerializer(serializers.ModelSerializer):
 
 
     def update(self, instance, validated_data):
+        instance.is_rte = validated_data.get('is_rte', instance.is_rte)
+        instance.rte_number = validated_data.get('rte_number', instance.rte_number)
         student_data = validated_data.pop('student', None)
         guardian_data = validated_data.pop('guardian', None)
         address_data = validated_data.pop('address_input', None)
@@ -1463,7 +1470,55 @@ class DocumentSerializer(serializers.ModelSerializer):
         
         # Handle file creation separately in the view
         return instance
+    
+    def to_representation(self, instance):
+        """Customize the output to show document type names instead of just IDs."""
+        representation = super().to_representation(instance)
+        document_types = instance.document_types.all()
+        
+        identities_read = representation.pop("identities")
+        
+        # it shows the which type of document user have.
+        representation['document_types_read'] = [
+            {"name": dt.name} for dt in document_types
+        ]
+        
+        student_id = representation.pop("student")
+        teacher_id = representation.pop("teacher")
+        office_staff_id = representation.pop("office_staff")
+        guardian_id = representation.pop("guardian")
 
+        
+        rep = representation
+        
+        try:
+            if student_id:
+                student = Student.objects.get(id=student_id)
+                rep["student_id"] = student.id
+                rep["student_name"] = f"{student.user.first_name} {student.user.last_name}"
+                studentyearlevel = StudentYearLevel.objects.get(student_id = student_id)
+                rep["year_level"] = studentyearlevel.level.level_name
+                
+            if teacher_id:
+                teacher = Teacher.objects.get(id = teacher_id)
+                rep["teacher_id"] = teacher.id
+                rep["teacher_name"] = f"{teacher.user.first_name} {teacher.user.last_name}"
+                
+            if guardian_id:
+                guardian = Guardian.objects.get(id = guardian_id)
+                rep["guardian_id"] = guardian.id
+                rep["guardian_name"] = f"{guardian.user.first_name} {guardian.user.last_name}"
+                
+            if office_staff_id:
+                office_staff = OfficeStaff.objects.get(id = office_staff_id)
+                rep["office_staff_id"] = office_staff.id
+                rep["office_staff_name"] = f"{office_staff.user.first_name} {office_staff.user.last_name}"
+            
+            
+        except User.DoesNotExist:
+            rep["user"] = "This user doesn't exist..!"
+        
+        return rep
 # --------------------exam module
 class ExamPaperItemSerializer(serializers.Serializer):
     subject_id = serializers.IntegerField()

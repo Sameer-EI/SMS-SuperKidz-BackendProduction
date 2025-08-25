@@ -122,3 +122,24 @@ class ExpensePermission(BasePermission):
 
     def has_object_permission(self, request, view, obj):
         return self.has_permission(request, view)
+
+    
+# RBA for termination and reactivation of the user
+class RoleBasedUserManagementPermission(BasePermission):
+    """
+    Permission class for user deactivation / reactivation
+    """
+    def has_permission(self, request, view):
+        user = request.user
+        if not user.is_authenticated:
+            return False
+
+        role_names = [role.name.lower().replace("_", " ").strip() for role in user.role.all()]
+
+        allowed_roles = ['director', 'admin', 'office staff']
+
+        for role in role_names:
+            if role in allowed_roles:
+                return True
+
+        return False
