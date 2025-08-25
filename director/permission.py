@@ -107,3 +107,18 @@ class IsDirector(BasePermission):
     """
     def has_permission(self, request, view):
         return request.user.is_authenticated and request.user.role.filter(name="Director").exists()
+    
+
+# --------------------- Expense 
+class ExpensePermission(BasePermission):
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not user.is_authenticated:
+            return False
+
+        roles = [role.name.lower() for role in user.role.all()]
+        return any(r in roles for r in ['director', 'office staff'])# Allow only director and office staff for all methods
+
+    def has_object_permission(self, request, view, obj):
+        return self.has_permission(request, view)
