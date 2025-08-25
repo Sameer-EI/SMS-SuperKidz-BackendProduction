@@ -827,14 +827,24 @@ class YearLevelFeeSerializer(serializers.ModelSerializer):
 class FeeDiscountSerializer(serializers.ModelSerializer):
     student_id = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all(),source='student')
     student_name = serializers.SerializerMethodField()
+    year_level = serializers.SerializerMethodField()
 
     class Meta:
         model = FeeDiscount
-        fields = ["id","student_id","student_name","admission_fee_discount","tuition_fee_discount","admission_fee","tuition_fee","discount_reason","is_allowed","created_at","updated_at",]
+        fields = ["id","student_id","student_name","year_level","admission_fee_discount","tuition_fee_discount","admission_fee","tuition_fee","discount_reason","is_allowed","created_at","updated_at",]
         read_only_fields = ["admission_fee","tuition_fee","created_at", "updated_at"]  
     
     def get_student_name(self, obj):
         return f"{obj.student.user.first_name} {obj.student.user.last_name}".strip()
+
+    def get_year_level(self, obj):
+        student_year_level = (
+            StudentYearLevel.objects
+            .filter(student=obj.student)
+            .order_by('-year')  # if multiple, get the latest
+            .first()
+        )
+        return student_year_level.level.level_name if student_year_level else None
 
     def validate(self, attrs):
         student = attrs.get("student")
@@ -1942,59 +1952,59 @@ class ReportCardSerializer(serializers.ModelSerializer):
         return '0'
 
 
-# class IncomeCategorySerializer(serializers.ModelSerializer):
-#     class Meta:
-#         model = IncomeCategory
-#         fields = "__all__"
+class IncomeCategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = IncomeCategory
+        fields = "__all__"
 
-# class SchoolIncomeSerializer(serializers.ModelSerializer):
-#     category_name = serializers.CharField(source="category.name", read_only=True)
-#     creator = serializers.SerializerMethodField()
+class SchoolIncomeSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source="category.name", read_only=True)
+    creator = serializers.SerializerMethodField()
                                             
-#     class Meta:
-#         model = SchoolIncome
-#         fields = [
-#             "id","category","category_name","amount","description","income_date","payment_method","attachment",
-#             "status","creator","created_at"]
-#         read_only_fields = ["created_at", "creator", "status"]
+    class Meta:
+        model = SchoolIncome
+        fields = [
+            "id","category","category_name","amount","description","income_date","payment_method","attachment",
+            "status","creator","created_at"]
+        read_only_fields = ["created_at", "creator", "status"]
 
-#     def get_creator(self, obj):
-#         if obj.created_by:
-#             return f"{obj.created_by.first_name} {obj.created_by.last_name}".strip()
-#         return None
+    def get_creator(self, obj):
+        if obj.created_by:
+            return f"{obj.created_by.first_name} {obj.created_by.last_name}".strip()
+        return None
 
-#     def total_fee(self, obj):
-#         #match school
-#         pass
+    def total_fee(self, obj):
+        #match school
+        pass
     
-#     def validate(self, data):
-#         # Ensure amount is a positive number
-#         if data.get('amount', 0) <= 0:
-#             raise serializers.ValidationError({"amount": "Amount must be a positive number."})
+    def validate(self, data):
+        # Ensure amount is a positive number
+        if data.get('amount', 0) <= 0:
+            raise serializers.ValidationError({"amount": "Amount must be a positive number."})
 
-#         # Ensure income date is not in the future
-#         if data.get('income_date') and data['income_date'] > date.today():
-#             raise serializers.ValidationError({"income_date": "Income date cannot be in the future."})
+        # Ensure income date is not in the future
+        if data.get('income_date') and data['income_date'] > date.today():
+            raise serializers.ValidationError({"income_date": "Income date cannot be in the future."})
 
-#         # one category per month
-#         category = data.get('category')
-#         income_date = data.get('income_date')
-#         if category and income_date:
-#             existing_income = SchoolIncome.objects.filter(
-#                 category=category,
-#                 income_date__year=income_date.year,
-#                 income_date__month=income_date.month
-#             ).first()
-#             if existing_income:
-#                 raise serializers.ValidationError({
-#                     "category": f"Income for category '{category.name}' already exists for {income_date.strftime('%B %Y')}."
-#                 })
+        # one category per month
+        category = data.get('category')
+        income_date = data.get('income_date')
+        if category and income_date:
+            existing_income = SchoolIncome.objects.filter(
+                category=category,
+                income_date__year=income_date.year,
+                income_date__month=income_date.month
+            ).first()
+            if existing_income:
+                raise serializers.ValidationError({
+                    "category": f"Income for category '{category.name}' already exists for {income_date.strftime('%B %Y')}."
+                })
 
-#         return data
+        return data
     
-#     def create(self, validated_data):
-#         # Set created_by automatically from request user if available
-#         request = self.context.get("request")
-#         if request and hasattr(request, "user"):
-#             validated_data["created_by"] = request.user
-#         return super().create(validated_data)
+    def create(self, validated_data):
+        # Set created_by automatically from request user if available
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            validated_data["created_by"] = request.user
+        return super().create(validated_data)

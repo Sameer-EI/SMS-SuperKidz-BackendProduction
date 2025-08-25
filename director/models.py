@@ -386,7 +386,7 @@ class FeeRecord(models.Model):
     payment_mode = models.CharField(max_length=20, choices=[('Cash', 'Cash'), ('Online', 'Online'), ('Cheque', 'Cheque')])
     is_cheque_cleared = models.BooleanField(default=False)  # Added as of 11June25 at 12:39 PM
     receipt_number = models.CharField(max_length=10, unique=True, editable=False, blank=True, auto_created=True)
-    late_fee = models.DecimalField(max_digits=8, decimal_places=2)
+    late_fee = models.DecimalField(max_digits=8, decimal_places=2, blank=True, null=True)
     payment_status = models.CharField(max_length=20, choices=[('Paid', 'Paid'), ('Unpaid', 'Unpaid')])
     remarks = models.TextField(blank=True, null=True)
     received_by = models.CharField(max_length=100, null=True,blank=True)      # modified 24June25
@@ -612,40 +612,40 @@ class PersonalSocialQualityTermWise(models.Model):
 
 # --------------------------------------------income---------------------------------------------
 
-# class IncomeCategory(models.Model): 
-#     name = models.CharField(max_length=100, unique=True)# 
+class IncomeCategory(models.Model): 
+    name = models.CharField(max_length=100, unique=True)# 
 
-#     def __str__(self): 
-#         return self.name 
+    def __str__(self): 
+        return self.name 
     
-# class SchoolIncome(models.Model): 
-#     PAYMENT_METHOD_CHOICES = [ 
-#         ('cash', 'Cash'), 
-#         ('cheque', 'Cheque'), 
-#         ('online', 'Online'),] 
-#     STATUS_CHOICES = [ 
-#         ('pending', 'Pending'), 
-#         ('confirmed', 'Confirmed'), ] 
-#     MONTH_CHOICES = [
-#         ("July", "July"), ("August", "August"), ("September", "September"),
-#         ("October", "October"), ("November", "November"), ("December", "December"),
-#         ("January", "January"), ("February", "February"), ("March", "March"),
-#         ("April", "April"), ("May", "May"), ("June", "June"),
-#     ]
-#     month = models.CharField(max_length=20, choices=MONTH_CHOICES)
-#     category = models.ForeignKey(IncomeCategory, on_delete=models.PROTECT, related_name='incomes')# 
-#     amount = models.DecimalField(max_digits=12, decimal_places=2)# 
-#     description = models.TextField(blank=True, null=True)# 
-#     income_date = models.DateField()# 
-#     school_year = models.ForeignKey(SchoolYear, on_delete=models.PROTECT,null=True, blank=True)  # Added as of 20Aug25
-#     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='cash') 
-#     attachment = models.FileField(upload_to=income_attachments, blank=True, null=True) 
-#     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending') 
-#     created_by = models.ForeignKey("authentication.User", on_delete=models.SET_NULL, null=True, blank=True, related_name='created_incomes') 
-#     created_at = models.DateTimeField(auto_now_add=True)# 
+class SchoolIncome(models.Model): 
+    PAYMENT_METHOD_CHOICES = [ 
+        ('cash', 'Cash'), 
+        ('cheque', 'Cheque'), 
+        ('online', 'Online'),] 
+    STATUS_CHOICES = [ 
+        ('pending', 'Pending'), 
+        ('confirmed', 'Confirmed'), ] 
+    MONTH_CHOICES = [
+        ("July", "July"), ("August", "August"), ("September", "September"),
+        ("October", "October"), ("November", "November"), ("December", "December"),
+        ("January", "January"), ("February", "February"), ("March", "March"),
+        ("April", "April"), ("May", "May"), ("June", "June"),
+    ]
+    month = models.CharField(max_length=20, choices=MONTH_CHOICES)
+    category = models.ForeignKey(IncomeCategory, on_delete=models.PROTECT, related_name='incomes')# 
+    amount = models.DecimalField(max_digits=12, decimal_places=2)# 
+    description = models.TextField(blank=True, null=True)# 
+    income_date = models.DateField()# 
+    school_year = models.ForeignKey(SchoolYear, on_delete=models.PROTECT,null=True, blank=True)  # Added as of 20Aug25
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='cash') 
+    attachment = models.FileField(upload_to=income_attachments, blank=True, null=True) 
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending') 
+    created_by = models.ForeignKey("authentication.User", on_delete=models.SET_NULL, null=True, blank=True, related_name='created_incomes') 
+    created_at = models.DateTimeField(auto_now_add=True)# 
     
-#     def __str__(self): 
-#         return f"{self.category.name} + ₹{self.amount} on {self.income_date}"
+    def __str__(self): 
+        return f"{self.category.name} + ₹{self.amount} on {self.income_date}"
     
-#     class Meta:
-#         unique_together = ['category', 'income_date', 'amount']
+    class Meta:
+        unique_together = ['category', 'income_date', 'amount']

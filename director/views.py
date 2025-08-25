@@ -4305,14 +4305,14 @@ class ReportCardViewSet(viewsets.ModelViewSet):
 
 
 
-# class IncomeCategoryView(viewsets.ModelViewSet):
-#     queryset = IncomeCategory.objects.all()
-#     serializer_class = IncomeCategorySerializer
-#     permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+class IncomeCategoryView(viewsets.ModelViewSet):
+    queryset = IncomeCategory.objects.all()
+    serializer_class = IncomeCategorySerializer
+    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
 
-# class SchoolIncomeViewSet(viewsets.ModelViewSet):
-#     queryset = SchoolIncome.objects.all()
-#     serializer_class = SchoolIncomeSerializer
-#     permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+class SchoolIncomeViewSet(viewsets.ModelViewSet):
+    queryset = SchoolIncome.objects.all()
+    serializer_class = SchoolIncomeSerializer
+    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
     
     

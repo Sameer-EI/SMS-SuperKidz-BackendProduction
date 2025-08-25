@@ -42,8 +42,8 @@ router.register(r'personal-social-grades', PersonalSocialGradeViewSet, basename=
 router.register(r'non-scholastic-grades', NonScholasticGradeViewSet, basename='non-scholastic')
 router.register(r'report-cards', ReportCardViewSet, basename='report-cards')
 
-# router.register(r'income-category', IncomeCategoryView, basename='income-category')
-# router.register(r'school-income', SchoolIncomeViewSet, basename='school-income')
+router.register(r'income-category', IncomeCategoryView, basename='income-category')
+router.register(r'school-income', SchoolIncomeViewSet, basename='school-income')
 
 
 urlpatterns = [
