@@ -1,7 +1,7 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
 __migrations__/
-__env__/
+
 *.py[cod]
 *$py.class
 smsenv/
@@ -11,7 +11,7 @@ smsenv/
 
 # Distribution / packaging
 .Python
-.env/
+
 build/
 develop-eggs/
 dist/

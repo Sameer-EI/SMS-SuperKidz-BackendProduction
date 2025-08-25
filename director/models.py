@@ -2,9 +2,13 @@ import random
 import string
 import uuid
 from django.db import models
+
+from authentication.models import User
+
 # from authentication.models import User
 from student.models import Student, Guardian,StudentYearLevel
-from .utils import Document_folder 
+from .utils import * 
+
 from teacher.models import Teacher 
 from django.utils.timezone import now
 from student.models import Student, Guardian, StudentYearLevel
@@ -61,7 +65,13 @@ class City(models.Model):
         verbose_name_plural = "Cities"
         db_table = "City"
 
-
+class AddressManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
+    
+    def all_including_inactive(self):
+        return super().get_queryset()
+    
 class Address(models.Model):
     user = models.ForeignKey("authentication.User", on_delete=models.DO_NOTHING)
     house_no = models.IntegerField(null=True, blank=True)
@@ -76,6 +86,9 @@ class Address(models.Model):
     state = models.ForeignKey(State, on_delete=models.DO_NOTHING)
     city = models.ForeignKey(City, on_delete=models.DO_NOTHING)
     address_line = models.CharField(max_length=250,null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    objects = AddressManager()
 
     def __str__(self):
         return f"{self.user} - {self.address_line}"
@@ -84,12 +97,22 @@ class Address(models.Model):
         verbose_name = "Address"
         verbose_name_plural = "Addresses"
         db_table = "Address"
+        indexes = [models.Index(fields=['is_active'])]
 
-
+class DirectorManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
+    
+    def all_including_inactive(self):
+        return super().get_queryset()
+    
 class Director(models.Model):
     user = models.OneToOneField("authentication.User", on_delete=models.SET_NULL,null=True)
     phone_no = models.CharField(max_length=250, null=True, blank=True)
     gender = models.CharField(max_length=50,null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    objects = DirectorManager()
 
     def __str__(self):
         return str(self.user)
@@ -98,14 +121,24 @@ class Director(models.Model):
         verbose_name = "Director"
         verbose_name_plural = "Directors"
         db_table = "Director"
+        indexes = [models.Index(fields=['is_active'])]
 
-
+class BankingDetailsManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
+    
+    def all_including_inactive(self):
+        return super().get_queryset()
+    
 class BankingDetail(models.Model):
     account_no = models.BigIntegerField( )
     # account_no = models.BigIntegerField(primary_key=True, unique=True)
     ifsc_code = models.CharField(max_length=225)
     holder_name = models.CharField(max_length=255)
     user = models.OneToOneField("authentication.User", on_delete=models.DO_NOTHING)
+    is_active = models.BooleanField(default=True)
+
+    objects = BankingDetailsManager()
 
     # def __str__(self):
     #     return str(self.account_no)
@@ -117,6 +150,7 @@ class BankingDetail(models.Model):
         verbose_name = "Banking Detail"
         verbose_name_plural = "Banking Details"
         db_table = "BankingDetail"
+        indexes = [models.Index(fields=['is_active'])]
 
 
 class SchoolYear(models.Model):
@@ -221,7 +255,9 @@ class ClassRoom(models.Model):
 
 class ClassPeriod(models.Model):
     subject = models.ForeignKey(Subject, on_delete=models.DO_NOTHING)
-    teacher = models.ForeignKey("teacher.Teacher", on_delete=models.DO_NOTHING)
+
+    year_level = models.ForeignKey("YearLevel", on_delete=models.DO_NOTHING)
+    teacher = models.ForeignKey("teacher.Teacher", on_delete=models.DO_NOTHING ,related_name="assigned_periods")
     term = models.ForeignKey(Term, on_delete=models.DO_NOTHING)
     start_time = models.ForeignKey(
         Period, on_delete=models.DO_NOTHING, related_name="start_time"
@@ -244,9 +280,12 @@ class ClassPeriod(models.Model):
 
 
 
-
-
-
+class AdmissionManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
+    
+    def all_including_inactive(self):
+        return super().get_queryset()
 
 class Admission(models.Model):
     enrollment_no = models.CharField( max_length=20,blank=True, null=True)
@@ -267,13 +306,10 @@ class Admission(models.Model):
     obtain_marks = models.FloatField()
     total_marks = models.FloatField()
     previous_percentage = models.FloatField(blank=True, null=True)  # Allow null/blank since auto-calculated
+    is_active = models.BooleanField(default=True)
 
-    # def save(self, *args, **kwargs):
-    #     if self.total_marks > 0:
-    #         self.previous_percentage = (self.obtain_marks / self.total_marks) * 100
-    #     else:
-    #         self.previous_percentage = 0  
-    #     super().save(*args, **kwargs)
+    objects = AdmissionManager()
+
     def save(self, *args, **kwargs):
         if not self.enrollment_no:
             current_year = now().year
@@ -300,6 +336,9 @@ class Admission(models.Model):
     def __str__(self):
      return f"Admission of {self.student} (Guardian: {self.guardian}) - YearLevel: {self.year_level if self.year_level else 'None'}"
     
+    class Meta:
+        db_table = "Admission"
+        indexes = [models.Index(fields=['is_active'])]
 
 
 
@@ -351,6 +390,29 @@ class YearLevelFee(models.Model):
         verbose_name_plural = "Year Level Fees"
         db_table = "YearLevelFee"
 
+
+class FeeRecordManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
+    
+    def all_including_inactive(self):
+        return super().get_queryset()
+    
+
+#discounts to students
+class FeeDiscount(models.Model):
+    student = models.OneToOneField("student.Student", on_delete=models.CASCADE,related_name="discount_info")
+    admission_fee_discount = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
+    tuition_fee_discount = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
+    discount_reason = models.CharField(max_length=255, blank=True, null=True)
+    is_allowed = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Discount for {self.student} - Admission fee: {self.admission_fee_discount}, Tuition fee: {self.tuition_fee_discount}"
+ 
+
 class FeeRecord(models.Model):
     student = models.ForeignKey("student.Student", on_delete=models.CASCADE)
     MONTH_CHOICES = [
@@ -364,6 +426,7 @@ class FeeRecord(models.Model):
     total_amount = models.DecimalField(max_digits=8, decimal_places=2)
     paid_amount = models.DecimalField(max_digits=8, decimal_places=2)
     due_amount = models.DecimalField(max_digits=8, decimal_places=2)
+    discounted_amount = models.ForeignKey(FeeDiscount, on_delete=models.SET_NULL, null=True, blank=True)
     payment_date = models.DateField(auto_now_add=True)
     payment_mode = models.CharField(max_length=20, choices=[('Cash', 'Cash'), ('Online', 'Online'), ('Cheque', 'Cheque')])
     is_cheque_cleared = models.BooleanField(default=False)  # Added as of 11June25 at 12:39 PM
@@ -375,6 +438,9 @@ class FeeRecord(models.Model):
     razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)
     razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
     razorpay_signature_id = models.CharField(max_length=255, blank=True, null=True)
+    is_active = models.BooleanField(default=True)  
+
+    objects = FeeRecordManager()
 
     def __str__(self):
         return f"{self.student.user.get_full_name()} - {self.month}"
@@ -394,15 +460,19 @@ class FeeRecord(models.Model):
         verbose_name = "Fee Record"
         verbose_name_plural = "Fee Records"
         db_table = "FeeRecord"
+        indexes = [models.Index(fields=['is_active'])]
 
-
-
-
-
-
-
+class OfficeStaffManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
+    
+    def all_including_inactive(self):
+        return super().get_queryset()
 
 class OfficeStaff(models.Model):
+    user = models.OneToOneField("authentication.User", on_delete=models.SET_NULL, null=True, related_name="office_staff")
+    phone_no = models.CharField(max_length=20)
+    gender = models.CharField(max_length=20)
     user = models.OneToOneField("authentication.User", on_delete=models.SET_NULL, null=True)
     phone_no = models.CharField(max_length=20,null=True, blank=True)
     gender = models.CharField(max_length=20,null=True, blank=True)
@@ -411,6 +481,9 @@ class OfficeStaff(models.Model):
     student = models.ManyToManyField("student.Student", blank=True, related_name="managed_by_staff")
     teacher = models.ManyToManyField("teacher.Teacher", blank=True, related_name="managed_by_staff")
     admissions = models.ManyToManyField(Admission, blank=True, related_name="handled_by_staff")
+    is_active = models.BooleanField(default=True)
+
+    objects = OfficeStaffManager()
 
     def __str__(self):
         return f"{self.user.first_name} {self.user.last_name} ({self.department})"
@@ -419,6 +492,7 @@ class OfficeStaff(models.Model):
         verbose_name = "Office Staff"
         verbose_name_plural = "Office Staff"
         db_table = "OfficeStaff"
+        indexes = [models.Index(fields=['is_active'])]
         
         
 
@@ -433,7 +507,12 @@ class DocumentType(models.Model):
         db_table = "DocumentType"
         
         
-        
+class DocumentManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
+    
+    def all_including_inactive(self):
+        return super().get_queryset()        
 
 class Document(models.Model):
     document_types = models.ManyToManyField(DocumentType)
@@ -443,15 +522,19 @@ class Document(models.Model):
     teacher = models.ForeignKey("teacher.Teacher", on_delete=models.SET_NULL, null=True, blank=True)
     guardian = models.ForeignKey("student.Guardian", on_delete=models.SET_NULL, null=True, blank=True)
     office_staff = models.ForeignKey(OfficeStaff, on_delete=models.SET_NULL, null=True, blank=True)
-
     uploaded_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)  
 
+    objects = DocumentManager()
+        
     def __str__(self):
         entity = self.student or self.teacher or self.guardian or self.office_staff
-        return f"{self.document_types.name} - {entity}"
+        doc_types = ", ".join([dt.name for dt in self.document_types.all()]) if self.document_types.exists() else "NoType"
+        return f"{doc_types} - {entity}"
 
     class Meta:
         db_table = "Document"
+        indexes = [models.Index(fields=['is_active'])]
         
 class File(models.Model):
     file = models.FileField(upload_to=Document_folder) 
@@ -464,3 +547,132 @@ class File(models.Model):
 
     class Meta:
         db_table = "File"
+
+    
+
+# -----------------------Exam module
+
+
+class ExamType(models.Model):
+    name = models.CharField(max_length=100, unique=True)#
+
+    def __str__(self):
+        return self.name
+
+
+class ExamPaper(models.Model):
+    exam_type = models.ForeignKey(ExamType,on_delete=models.CASCADE)#
+    term = models.ForeignKey(Term, on_delete=models.CASCADE)
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE)#
+    year_level = models.ForeignKey(YearLevel,on_delete=models.CASCADE)
+    total_marks = models.DecimalField(max_digits=5, decimal_places=2)#
+    paper_code = models.CharField(max_length=7,unique=True)#
+    teacher = models.ForeignKey(Teacher, on_delete=models.SET_NULL, null=True)#
+    uploaded_file = models.FileField(upload_to=ExamPaper_folder, blank=True, null=True)#
+
+    class Meta:
+        unique_together = ['exam_type', 'subject', 'year_level']
+    
+
+    def __str__(self):
+        return f"{self.year_level} - {self.subject.subject_name} ({self.total_marks})"
+
+
+class ExamSchedule(models.Model):
+    class_name = models.ForeignKey(YearLevel,on_delete=models.CASCADE)
+    term = models.ForeignKey(Term, on_delete=models.CASCADE)
+    exam_type = models.ForeignKey(ExamType,on_delete=models.CASCADE)
+    subject = models.ForeignKey(Subject,on_delete=models.CASCADE)
+    exam_date = models.DateField()
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+
+    
+    def __str__(self):
+        return f"{self.exam_date}"
+
+
+class StudentMarks(models.Model):
+    exam_type = models.ForeignKey(ExamType,on_delete=models.CASCADE)#FA1
+    subject = models.ForeignKey(Subject,on_delete=models.CASCADE)
+    term = models.ForeignKey(Term,on_delete=models.CASCADE)#school year
+    student = models.ForeignKey(StudentYearLevel,on_delete=models.CASCADE)#student aor class name
+    teacher = models.ForeignKey(Teacher,on_delete=models.CASCADE)#teacher name
+    marks_obtained = models.DecimalField(max_digits=5, decimal_places=2)
+    
+    class Meta:
+        unique_together = ['student', 'exam_type', 'term','subject']
+
+    def __str__(self):
+        return f"{self.student} - {self.exam_type.name} - {self.marks_obtained}"
+
+
+
+
+
+"""------------------------------------------RESULT----------(code to push)--------------------------------"""
+class ReportCard(models.Model):
+    # student = models.ForeignKey(Student, on_delete=models.CASCADE)#student
+    # standard = models.ForeignKey(StudentYearLevel,on_delete=models.CASCADE,related_name="reportcards_as_standard")#as class is a reserved keyword i used 'standard' instead of 'class'
+    # academic_year = models.ForeignKey(StudentYearLevel, on_delete=models.CASCADE,related_name="reportcards_as_acadmic_year")
+    
+    student_level = models.ForeignKey(StudentYearLevel, on_delete=models.CASCADE, null=True, blank=True)
+    total_marks = models.IntegerField()    #fetch from sa1+sa2 of all subj
+    max_marks = models.IntegerField()      #subj->len*100
+    percentage = models.FloatField()
+    grade = models.CharField(max_length=50)
+    division = models.CharField(max_length=50)
+    rank = models.IntegerField(null=True, blank=True)  
+    attendance = models.CharField(max_length=10, null=True, blank=True)
+    teacher_remark = models.TextField()
+    promoted_to_class = models.ForeignKey(StudentYearLevel, on_delete=models.CASCADE, null=True, blank=True, related_name="reportcards_as_promotion")
+    supplementary_in = models.CharField(max_length=100, null=True, blank=True)
+    school_reopen_date = models.DateField()
+
+    # class Meta:
+    #     unique_together = ('student_level','promoted_to_class')
+
+    def __str__(self):
+        student = self.student_level.student.user
+        return f"{student.first_name} {student.last_name} - {self.student_level.year.year_name} - {self.student_level.level.level_name}"
+    
+
+class SubjectScore(models.Model):
+    report_card = models.ForeignKey(ReportCard, on_delete=models.CASCADE, related_name='subject_scores')
+    marks_obtained = models.ForeignKey(StudentMarks, on_delete=models.CASCADE, null=True, blank=True, related_name='subject_scores')
+    def __str__(self):
+        return f"{self.marks_obtained} -{self.marks_obtained.subject.subject_name}- {self.report_card.student_level.year.year_name} - {self.report_card.student_level.level.level_name}"
+    
+class ReportCardDocument(models.Model):
+    report_card = models.ForeignKey(ReportCard, on_delete=models.CASCADE, related_name='documents')
+    documents = models.ForeignKey(Document, on_delete=models.CASCADE,null=True, blank=True, related_name='report_card_documents')
+
+class NonScholasticGradeTermWise(models.Model):
+    non_scholastic_subject = models.ForeignKey(Subject, on_delete=models.CASCADE,null=True, blank=True ,related_name='term_grades')
+    report_card = models.ForeignKey(ReportCard, on_delete=models.CASCADE, null=True, blank=True,related_name='non_scholastic_grades')
+    term = models.ForeignKey("Term", on_delete=models.CASCADE)
+    grade = models.CharField(max_length=5)
+    class Meta:
+        unique_together = ('report_card','non_scholastic_subject','term','grade')
+    def __str__(self):
+        return f"{self.non_scholastic_subject.subject_name} - {self.term.term_number} - {self.report_card.student_level.student.user.first_name}"
+
+
+class PersonalSocialQuality(models.Model):
+    quality_name = models.CharField(max_length=100)
+    def __str__(self):
+        return self.quality_name
+
+
+class PersonalSocialQualityTermWise(models.Model):
+    personal_quality = models.ForeignKey(PersonalSocialQuality, on_delete=models.CASCADE, related_name='term_grades')
+    report_card = models.ForeignKey(ReportCard, on_delete=models.CASCADE,null=True, blank=True, related_name='personal_qualities')
+    term = models.ForeignKey("Term", on_delete=models.CASCADE)
+    grade = models.CharField(max_length=5)
+
+    class Meta:
+        unique_together = ('report_card', 'personal_quality', 'term', 'grade')
+    
+    def __str__(self):
+        return f"{self.personal_quality.quality_name} - {self.term.term_number} - {self.report_card.student_level.student.user.first_name}-{self.report_card.student_level.year.year_name} - {self.report_card.student_level.level.level_name}"
+

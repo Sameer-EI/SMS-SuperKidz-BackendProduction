@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
+from logging import config
 import os
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -107,9 +108,10 @@ WSGI_APPLICATION = "core.wsgi.application"
 #     }
 # }
 from decouple import config
+
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.mysql',
+        'ENGINE': 'django.db.backends.mysql',  # Official Django MySQL backend
         'NAME': config('DB_NAME'),
         'USER': config('DB_USER'),
         'PASSWORD': config('DB_PASSWORD'),
@@ -117,7 +119,6 @@ DATABASES = {
         'PORT': config('DB_PORT'),
     }
 }
-
 
 
 

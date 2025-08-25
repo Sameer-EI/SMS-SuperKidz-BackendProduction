@@ -6,6 +6,13 @@ from decimal import Decimal
 
 # Create your models here.
 
+# adding is active in the model and default is true for active students
+class StudentManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
+    
+    def all_including_inactive(self):
+        return super().get_queryset()
 
 class Student(models.Model):
     user = models.OneToOneField(User, on_delete=models.SET_NULL, null=True)
@@ -14,6 +21,7 @@ class Student(models.Model):
     date_of_birth = models.DateField(null=True, blank=True)
     gender = models.CharField(max_length=50,null=True, blank=True)
     # enrolment_date = models.DateField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
     religion = models.CharField(max_length=50,null=True, blank=True)
     category = models.CharField(
     max_length=10,
@@ -40,6 +48,8 @@ class Student(models.Model):
         "director.classPeriod", blank=False, related_name="Student"
     )
 
+    objects = StudentManager()
+
     def __str__(self):
         return f"{self.user.first_name} {self.user.last_name} "
 
@@ -47,7 +57,15 @@ class Student(models.Model):
         verbose_name = "Student"
         verbose_name_plural = "Students"
         db_table = "Student"
+        indexes = [models.Index(fields=['is_active'])]
 
+
+class GuardianManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
+    
+    def all_including_inactive(self):
+        return super().get_queryset()
 
 
 class Guardian(models.Model):
@@ -72,6 +90,9 @@ class Guardian(models.Model):
     qualification = models.CharField(max_length=300,null=True, blank=True)
     occupation = models.CharField(max_length=300,null=True, blank=True)
     designation = models.CharField(max_length=300,null=True, blank=True)
+    is_active = models.BooleanField(default=True)  # Added is_active field
+
+    objects = GuardianManager()
 
     def __str__(self):
         return f"{self.user.first_name} {self.user.last_name}" if self.user else "No User"
@@ -80,6 +101,7 @@ class Guardian(models.Model):
         verbose_name = "Guardian"
         verbose_name_plural = "Guardians"
         db_table = "Guardian"
+        indexes = [models.Index(fields=['is_active'])]
 
 
 class GuardianType(models.Model):
@@ -99,7 +121,7 @@ class GuardianType(models.Model):
 
 class StudentGuardian(models.Model):
     student = models.ForeignKey(Student, on_delete=models.DO_NOTHING)
-    guardian = models.ForeignKey(Guardian, on_delete=models.DO_NOTHING)
+    guardian = models.ForeignKey(Guardian, on_delete=models.DO_NOTHING,related_name="studentguardian")
     guardian_type = models.ForeignKey(GuardianType, on_delete=models.DO_NOTHING)
 
     def __str__(self):

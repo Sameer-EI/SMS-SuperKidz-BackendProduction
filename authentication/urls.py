@@ -5,10 +5,11 @@ from .views import UserView
 
 
 from rest_framework.routers import DefaultRouter
-from .views import  ErrorLogViewSet
+from .views import  ErrorLogViewSet, UserStatusLogView
 
 router = DefaultRouter()
 router.register(r'error-logs', ErrorLogViewSet, basename='error-logs')
+router.register(r'user-logs', UserStatusLogView, basename='userstatus-log')
 
 
 
