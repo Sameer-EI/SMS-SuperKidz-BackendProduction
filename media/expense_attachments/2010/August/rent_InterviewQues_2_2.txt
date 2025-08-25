@@ -1,0 +1,21 @@
+------------------------------------- Interview Questions ------------------------------------- 
+
+1. Write a program to display whether a number is positive or negative or is zero.
+
+2. Write a program to display odd numbers upto 20.
+
+3. Write a program to check whether a user is eligible to vote or not.
+
+4. Write a program to print first 10 natural numbers.
+
+5. Write a program to print the squares of numbers from 1 to 20.
+
+6. Write a program to calculate factorial of a given number.
+
+7. Write a program to display mutiplication table for a given integer number.
+
+8. Write a program to display length of any string.
+
+9. Write a program to check if the given number is even or not.
+
+10. Write a program to take 3 integer numbers and display the largest number.

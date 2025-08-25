@@ -1916,7 +1916,7 @@ class FeeRecordView(viewsets.ModelViewSet):
     serializer_class = FeeRecordSerializer
     queryset = FeeRecord.objects.all()
     filter_backends = [SearchFilter]
-
+    permission_classes = [IsAuthenticated]
     # Enables search using ?search=something
     search_fields = [
         'remarks',
@@ -2885,9 +2885,11 @@ def list_inactive_users(request):
         else:
             return Response({"detail": "Permission denied."}, status=403)
 
-        serializer = FeeRecordSerializer(queryset, many=True)
-        return Response(serializer.data)
+        # serializer = FeeRecordSerializer(queryset, many=True)
+        # return Response(serializer.data)
 
+        serializer = FeeRecordSerializer(queryset, many=True, context={"request": request})
+        return Response(serializer.data)
 
 
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="overall_unpaid_fees")
@@ -4508,3 +4510,308 @@ class ReportCardViewSet(viewsets.ModelViewSet):
 
 
 
+# ---------------------Expense 
+
+class ExpenseCategoryView(viewsets.ModelViewSet):
+    queryset = ExpenseCategory.objects.all()
+    serializer_class = ExpenseCategorySerializer
+    permission_classes = [IsAuthenticated, ExpensePermission]
+
+    @action(detail=False, methods=["get"], url_path="get_category")
+    def get_categories(self, request):
+        categories = self.get_queryset()
+        serializer = self.get_serializer(categories, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["post"], url_path="create_category")
+    def create_category(self, request):
+        name = request.data.get("name")
+        if not name:
+            return Response({"error": "Name is required."}, status=400)
+
+        category, created = ExpenseCategory.objects.get_or_create(name=name)
+        serializer = self.get_serializer(category)
+        message = "Category created successfully." if created else "Category already exists."
+        return Response({"message": message, "data": serializer.data}, status=201 if created else 200)
+    
+
+    @action(detail=False, methods=["put"], url_path="update_category")
+    def update_category(self, request):
+        try:
+            exam_type = ExpenseCategory.objects.get(id=request.data.get("id"))
+        except ExpenseCategory.DoesNotExist:
+            return Response({"error": "ExpenseCategory not found"}, status=404)
+
+        serializer = self.get_serializer(exam_type, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({"message": "category updated successfully", "data": serializer.data})
+        return Response(serializer.errors, status=400)
+
+    @action(detail=False, methods=["delete"], url_path="delete_category")
+    def delete_category(self, request):
+        try:
+            exam_type = ExpenseCategory.objects.get(id=request.data.get("id"))
+            exam_type.delete()
+            return Response({"message": "category deleted successfully."})
+        except ExpenseCategory.DoesNotExist:
+            return Response({"error": "category not found"}, status=404)
+
+
+def get_current_school_year():
+    today = date.today()
+    return SchoolYear.objects.filter(
+        start_date__lte=today,
+        end_date__gte=today
+    ).first()
+
+class SchoolExpenseView(viewsets.ModelViewSet):
+    queryset = SchoolExpense.objects.all()
+    serializer_class = SchoolExpenseSerializer
+    permission_classes = [IsAuthenticated, ExpensePermission]
+
+    # def get_queryset(self):
+    #     current_year = get_current_school_year()
+    #     if current_year:
+    #         return SchoolExpense.objects.filter(school_year=current_year)
+    #     return SchoolExpense.objects.none()
+
+    def get_queryset(self):
+        queryset = SchoolExpense.objects.all()
+
+        school_year_id = self.request.query_params.get("school_year")
+        if school_year_id:
+            queryset = queryset.filter(school_year_id=school_year_id)
+        else:
+            current_year = get_current_school_year()
+            if current_year:
+                queryset = queryset.filter(school_year=current_year)
+
+        category_id = self.request.query_params.get("category")
+        if category_id:
+            queryset = queryset.filter(category_id=category_id)
+
+        return queryset
+
+
+
+    def list(self, request):
+        current_year = get_current_school_year()
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+        # return Response({
+        #     "school_year": current_year.year_name if current_year else None,
+        #     "data": serializer.data
+        # })
+
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        roles = [role.name.lower() for role in request.user.role.all()]
+
+        approved_by = None
+        status_value = "pending"
+
+        if "director" in roles:
+            approved_by = request.user
+            status_value = "approved"
+
+        elif "office staff" in roles:
+            approved_by = None
+            status_value = "pending"
+
+        expense = SchoolExpense.objects.create(
+            category=serializer.validated_data.get("category"),
+            school_year=serializer.validated_data.get("school_year"),
+            amount=serializer.validated_data.get("amount"),
+            description=serializer.validated_data.get("description"),
+            expense_date=serializer.validated_data.get("expense_date"),
+            payment_method=serializer.validated_data.get("payment_method"),
+            created_by=request.user,
+            approved_by=approved_by,
+            status=status_value,
+        )
+
+        return Response({
+            "message": "Expense created successfully",
+            "data": SchoolExpenseSerializer(expense).data
+        })
+
+
+    # ===============================
+    # def update(self, request, *args, **kwargs):
+    #     partial = kwargs.pop('partial', False)
+    #     instance = self.get_object()
+    #     serializer = self.get_serializer(instance, data=request.data, partial=partial)
+    #     serializer.is_valid(raise_exception=True)
+
+    #     roles = [role.name.lower() for role in request.user.role.all()]
+
+    #     if "status" in serializer.validated_data:
+    #         if "director" not in roles:
+    #             return Response(
+    #                 {"error": "Only Director can update expense status."},
+    #                 status=status.HTTP_403_FORBIDDEN
+    #             )
+    #         else:
+    #             instance.status = serializer.validated_data["status"]
+    #             instance.approved_by = request.user  
+
+    #     serializer.validated_data.pop("status", None)  
+
+    #     self.perform_update(serializer)
+
+    #     return Response({
+    #         "message": "Expense updated successfully",
+    #         "data": self.get_serializer(instance).data
+    #     })
+    # ========================
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+
+        roles = [role.name.lower() for role in request.user.role.all()]
+
+        if "status" in serializer.validated_data:
+            if "director" not in roles:
+                return Response(
+                    {"error": "Only Director can update expense status."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            else:
+                instance.status = serializer.validated_data["status"]
+                instance.approved_by = request.user   
+
+        serializer.validated_data.pop("approved_by", None)
+
+        self.perform_update(serializer)
+
+        return Response({
+            "message": "Expense updated successfully",
+            "data": self.get_serializer(instance).data
+        })
+
+
+    def destroy(self, request):
+        instance = self.get_object()
+        instance.delete()
+        return Response(
+            {"message": "Expense deleted successfully"},
+            status=status.HTTP_200_OK
+        )
+    
+
+
+class EmployeeView(viewsets.ModelViewSet):
+    queryset = Employee.objects.all()
+    serializer_class = EmployeeSerializer
+    permission_classes = [IsAuthenticated,ExpensePermission]
+
+    @action(detail=False, methods=["get"], url_path="get_emp")
+    def get_emp(self, request):
+        emp = self.get_queryset()
+        serializer = self.get_serializer(emp, many=True)
+        return Response(serializer.data)
+
+    # @action(detail=False, methods=["post"], url_path="create_emp")
+    # def create_emp(self, request):
+    #     user = request.data.get("user")
+    #     if not user:
+    #         return Response({"error": "user is required."}, status=400)
+
+    #     category, created = Employee.objects.get_or_create(user=user)
+    #     serializer = self.get_serializer(category)
+    #     message = "Employee salary created successfully." if created else "Employee salary already exists."
+    #     return Response({"message": message, "data": serializer.data}, status=201 if created else 200)
+    
+
+    @action(detail=False, methods=["post"], url_path="create_emp")
+    def create_emp(self, request):
+        user_id = request.data.get("user")
+        if not user_id:
+            return Response({"error": "user is required."}, status=400)
+
+        employee, created = Employee.objects.get_or_create(
+            user_id=user_id,
+            defaults={
+                "joining_date": request.data.get("joining_date"),
+                "base_salary": request.data.get("base_salary"),
+            }
+        )
+        serializer = self.get_serializer(employee)
+        message = "Employee created successfully." if created else "Employee already exists."
+        return Response({"message": message, "data": serializer.data}, status=201 if created else 200)
+
+
+    @action(detail=False, methods=["put"], url_path="update_emp")
+    # def update_emp(self, request):
+    #     try:
+    #         employee = Employee.objects.get(id=request.data.get("id"))
+    #     except Employee.DoesNotExist:
+    #         return Response({"error": "Employee not found"}, status=404)
+
+    #     serializer = self.get_serializer(employee, data=request.data, partial=True)
+    #     if serializer.is_valid():
+    #         serializer.save()
+    #         return Response({"message": "Employee updated successfully", "data": serializer.data})
+    #     return Response(serializer.errors, status=400)
+
+
+    def update_emp(self, request):
+        user_id = request.data.get("user")
+        joining_date = request.data.get("joining_date")
+
+        if not user_id or not joining_date:
+            return Response({"error": "user and joining_date are required."}, status=400)
+
+        try:
+            employee = Employee.objects.get(user_id=user_id, joining_date=joining_date)
+        except Employee.DoesNotExist:
+            return Response({"error": "Employee not found with this user and joining_date"}, status=404)
+
+        serializer = self.get_serializer(employee, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({"message": "Employee updated successfully", "data": serializer.data})
+        return Response(serializer.errors, status=400)
+
+
+    @action(detail=False, methods=["delete"], url_path="delete_emp")
+    def delete_emp(self, request):
+        try:
+            employee = Employee.objects.get(id=request.data.get("id"))
+            employee.delete()
+            return Response({"message": "Employee deleted successfully."})
+        except Employee.DoesNotExist:
+            return Response({"error": "Employee not found"}, status=404)
+
+
+class EmployeeSalaryView(viewsets.ModelViewSet):
+    queryset = EmployeeSalary.objects.all()
+    serializer_class = EmployeeSalarySerializer
+    permission_classes = [IsAuthenticated,ExpensePermission]
+
+    def get_queryset(self):
+        user = self.request.user
+
+        if hasattr(user, "employee"):
+            return EmployeeSalary.objects.filter(user=user.employee)
+        return EmployeeSalary.objects.all()
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        if instance.status == "paid":
+            instance.paid_by = self.request.user
+            instance.save()
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        if instance.status == "paid":
+            instance.paid_by = self.request.user
+            instance.save()
