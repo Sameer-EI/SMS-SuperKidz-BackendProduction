@@ -1903,7 +1903,6 @@ def send_whatsapp_message(message_text):
     return sent_messages
 
 
-
 #discount for students-----------
 class FeeDiscountView(viewsets.ModelViewSet):
     queryset = FeeDiscount.objects.all()
@@ -1916,6 +1915,7 @@ class FeeRecordView(viewsets.ModelViewSet):
     serializer_class = FeeRecordSerializer
     queryset = FeeRecord.objects.all()
     filter_backends = [SearchFilter]
+    permission_classes = [IsAuthenticated]
 
     # Enables search using ?search=something
     search_fields = [

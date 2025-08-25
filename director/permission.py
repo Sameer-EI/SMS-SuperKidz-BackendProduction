@@ -69,7 +69,7 @@ class RoleBasedExamPermission(BasePermission):
 
 
 
-class RoleBasedPermission(BasePermission):
+class RoleBasedPermission(BasePermission):  # role based result permission
     """
     For report card and related views, allow access based on user roles.
     """
