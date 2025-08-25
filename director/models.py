@@ -386,7 +386,7 @@ class FeeRecord(models.Model):
     payment_mode = models.CharField(max_length=20, choices=[('Cash', 'Cash'), ('Online', 'Online'), ('Cheque', 'Cheque')])
     is_cheque_cleared = models.BooleanField(default=False)  # Added as of 11June25 at 12:39 PM
     receipt_number = models.CharField(max_length=10, unique=True, editable=False, blank=True, auto_created=True)
-    late_fee = models.DecimalField(max_digits=8, decimal_places=2)
+    late_fee = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True, default=0)
     payment_status = models.CharField(max_length=20, choices=[('Paid', 'Paid'), ('Unpaid', 'Unpaid')])
     remarks = models.TextField(blank=True, null=True)
     received_by = models.CharField(max_length=100, null=True,blank=True)      # modified 24June25
