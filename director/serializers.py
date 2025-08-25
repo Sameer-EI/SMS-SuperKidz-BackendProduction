@@ -17,6 +17,8 @@ from django.utils import timezone
 from decimal import Decimal
 from collections import defaultdict
 from django.db.models import Max
+from decimal import Decimal
+from django.db.models import Sum
 
 
 
@@ -1868,3 +1870,171 @@ class ReportCardSerializer(serializers.ModelSerializer):
         if obj.promoted_to_class:
             return str(obj.promoted_to_class.level.level_name)
         return '0'
+
+
+# --------------------- Expense 
+class ExpenseCategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExpenseCategory
+        fields = "__all__"
+
+class SchoolExpenseSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source='category.name', read_only=True)
+    approved_by_name = serializers.SerializerMethodField()
+    created_by_name = serializers.SerializerMethodField()
+    school_year_name = serializers.SerializerMethodField()   
+    # school_year_name = serializers.CharField(source="school_year.year_name", read_only=True)
+
+
+    class Meta:
+        model = SchoolExpense
+        fields = [
+            "id","category","category_name","amount","description","expense_date",
+            "payment_method","attachment","status","created_at","created_by",
+            "created_by_name","approved_by","approved_by_name","school_year","school_year_name"
+        ]
+        read_only_fields = ["created_at", "created_by"]
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return f"{obj.created_by.first_name} {obj.created_by.last_name}".strip()
+        return None
+    
+    def get_approved_by_name(self, obj):
+        if obj.approved_by:
+            return f"{obj.approved_by.first_name} {obj.approved_by.last_name}".strip()
+        return None
+    
+    def get_school_year_name(self, obj):
+        return obj.school_year.year_name if obj.school_year else None
+
+
+    def validate(self, attrs):
+        # category = attrs.get("category")
+        # school_year = attrs.get("school_year")
+        # amount = attrs.get("amount")
+
+        category = attrs.get("category") or (self.instance.category if self.instance else None)
+        school_year = attrs.get("school_year") or (self.instance.school_year if self.instance else None)
+        expense_date = attrs.get("expense_date") or (self.instance.expense_date if self.instance else None)
+
+        if category and school_year:
+            if category and category.name.lower() in ['electricity bill','water bill','wi-fi bill','renovation bill','rent']:
+                # Monthly expense check same month year
+                existing = SchoolExpense.objects.filter(
+                    category=category,
+                    school_year=school_year,
+                    expense_date__year=expense_date.year,
+                    expense_date__month=expense_date.month
+                )
+            else:
+                existing = SchoolExpense.objects.filter(
+                    category=category,
+                    school_year=school_year
+                )
+
+            if self.instance:
+                existing = existing.exclude(id=self.instance.id)
+
+            if existing.exists():
+                raise serializers.ValidationError(
+                    {"non_field_errors": "This expense record already exists for the selected category and period."}
+                )
+
+        if category and category.name.lower() == "salary":
+            total_salary = (
+                EmployeeSalary.objects.filter(school_year=school_year)
+                .aggregate(total=Sum("net_amount"))["total"] or 0
+            )
+
+            attrs["amount"] = total_salary  
+
+        if attrs.get('amount', 0) <= 0:
+            raise serializers.ValidationError({"amount": "Amount must be a positive number."})
+
+        if attrs.get('expense_date') and attrs['expense_date'] > date.today():
+            raise serializers.ValidationError({"expense_date": "expense_date cannot be in the future."})
+        
+
+
+        return attrs
+
+
+
+
+class EmployeeSerializer(serializers.ModelSerializer):
+    role = serializers.CharField(source='user.role', read_only=True)
+    # role = RoleSerializer(source='user.role', read_only=True)
+    name = serializers.CharField(source="user.get_full_name", read_only=True)
+
+
+    class Meta:
+        model = Employee
+        # fields = "__all__"
+        fields = ["id", "user", "name", "role", "joining_date", "base_salary"]
+
+        
+    def validate(self, data):
+        if data.get('base_salary', 0) <= 0:
+            raise serializers.ValidationError({"base_salary": "Amount must be a positive number."})
+        return data
+
+
+
+class EmployeeSalarySerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source="user.user.get_full_name", read_only=True)
+    role = serializers.CharField(source="user.user.role", read_only=True)  
+    paid_by_name = serializers.CharField(source="paid_by.get_full_name", read_only=True)
+    school_year_name = serializers.SerializerMethodField()   
+
+    class Meta:
+        model = EmployeeSalary
+        fields = ["id", "user","employee_name", "role","gross_amount", "deductions", "net_amount",
+                  "month", "school_year", "school_year_name","payment_date", "payment_method",
+                  "paid_by", "paid_by_name","remarks", "status", "created_at"]
+        extra_kwargs = {
+            "net_amount": {"read_only": True},   
+            "paid_by": {"read_only": True}    
+        }
+
+    def get_school_year_name(self, obj):   
+        return obj.school_year.year_name if obj.school_year else None
+
+
+
+    def validate(self, data):
+        user = data.get("user")
+        month = data.get("month")
+        school_year = data.get("school_year")
+
+        if data.get('payment_date') and data['payment_date'] > date.today():
+            raise serializers.ValidationError({"payment_date": "payment_date cannot be in the future."})
+
+        if EmployeeSalary.objects.filter(user=user, month=month, school_year=school_year).exists():
+            raise serializers.ValidationError("Salary record for this employee for this month already exists.")
+
+        deductions = data.get("deductions") or 0
+        if "user" in data:
+            data["gross_amount"] = getattr(user, "base_salary", 0)
+        data["net_amount"] = data["gross_amount"] - deductions
+        return data
+
+
+
+    def create(self, validated_data):
+        instance = super().create(validated_data)
+        if instance.status == "paid":
+            instance.paid_by = self.context["request"].user
+            instance.save()
+        return instance
+
+    def update(self, instance, validated_data):
+        instance = super().update(instance, validated_data)
+        if instance.status == "paid":
+            instance.paid_by = self.context["request"].user
+            instance.save()
+        return instance
+
+
+
+
