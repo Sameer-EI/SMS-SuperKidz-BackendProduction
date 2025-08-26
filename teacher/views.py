@@ -16,7 +16,7 @@ from django.db.models import Prefetch
 from rest_framework.permissions import AllowAny, IsAuthenticated,BasePermission
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from permission import RoleBasedPermission
+# from permission import RoleBasedPermission
 
 
 
@@ -230,12 +230,12 @@ from rest_framework import viewsets, status
 from rest_framework.response import Response
 from .models import TeacherYearLevel
 from .serializers import TeacherYearLevelSerializer
-from permission import RoleBasedPermission
+from director.permission import RoleBasedPermissionteacheryearlevel
 
 class TeacherYearLevelView(viewsets.ModelViewSet):
     serializer_class = TeacherYearLevelSerializer
     queryset = TeacherYearLevel.objects.all()
-    permission_classes = [RoleBasedPermission]
+    permission_classes = [ RoleBasedPermissionteacheryearlevel]
 
     def get_queryset(self):
         # Permission class ke filter_queryset() ka use karo
