@@ -329,7 +329,7 @@ class StudentYearLevelView(viewsets.ModelViewSet):
 # Added as of 18jul25 at 03:04 PM
 
 class StudentGuardianView(viewsets.ModelViewSet):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     serializer_class = StudentSerializer  # We only want to show Student info
 
     def get_queryset(self):

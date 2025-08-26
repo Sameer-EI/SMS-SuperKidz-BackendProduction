@@ -1910,11 +1910,18 @@ class FeeDiscountView(viewsets.ModelViewSet):
     serializer_class = FeeDiscountSerializer
     permission_classes = [IsAuthenticated,IsDirector]
 
+
+from director.permission import FeeRecordPermission
+from rest_framework.filters import SearchFilter  # (agar already import nahi hai)
+from django.db.models import Q  # (agar already import nahi hai)
+
+
 # Fee Record View
 # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/
 class FeeRecordView(viewsets.ModelViewSet):
     serializer_class = FeeRecordSerializer
     queryset = FeeRecord.objects.all()
+    permission_classes = [FeeRecordPermission]
     filter_backends = [SearchFilter]
     permission_classes = [IsAuthenticated]
     # Enables search using ?search=something
@@ -1928,30 +1935,48 @@ class FeeRecordView(viewsets.ModelViewSet):
     
     # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/?year_level=6
     def get_queryset(self):
-        queryset = super().get_queryset()
-        request = self.request
+        user = self.request.user
+        qs = super().get_queryset()
 
+        #  Role-based visibility
+        if hasattr(user, "director") or hasattr(user, "officestaff") or user.is_staff or user.is_superuser:
+            pass  # full access
+        elif hasattr(user, "teacher"):
+            # only teacher's assigned YearLevels
+            teacher_year_levels = user.teacher.teacheryearlevel_set.values_list("year_level_id", flat=True)
+            qs = qs.filter(student__student_year_levels__level_id__in=teacher_year_levels)
+        elif hasattr(user, "student"):
+            # only own records
+            qs = qs.filter(student=user.student)
+        elif hasattr(user, "guardian_relation"):
+            children_ids = user.guardian_relation.studentguardian.values_list("student_id", flat=True)
+            qs = qs.filter(student_id__in=children_ids)
+        else:
+            qs = qs.none()
+
+        # Keep your existing filters
+        request = self.request
         year_level_id = request.query_params.get('year_level')
         if year_level_id:
-            queryset = queryset.filter(year_level_fees__year_level__id=year_level_id)
-
+            qs = qs.filter(year_level_fees__year_level__id=year_level_id)
+    
         search = request.query_params.get('search')
         if search:
             search = search.strip()
-            search_parts = search.split(" ")
-
-            if len(search_parts) > 1:
-                queryset = queryset.filter(
-                    Q(student__user__first_name__icontains=search_parts[0]) &
-                    Q(student__user__last_name__icontains=' '.join(search_parts[1:]))
+            parts = search.split(" ")
+            if len(parts) > 1:
+                qs = qs.filter(
+                    Q(student__user__first_name__icontains=parts[0]) &
+                    Q(student__user__last_name__icontains=' '.join(parts[1:]))
                 )
             else:
-                queryset = queryset.filter(
+                qs = qs.filter(
                     Q(student__user__first_name__icontains=search) |
                     Q(student__user__last_name__icontains=search)
                 )
+    
+        return qs.distinct()
 
-        return queryset.distinct()
 
     
     @action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
