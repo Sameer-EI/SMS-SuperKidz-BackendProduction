@@ -648,4 +648,5 @@ class SchoolIncome(models.Model):
         return f"{self.category.name} + ₹{self.amount} on {self.income_date}"
     
     class Meta:
-        unique_together = ['category', 'income_date', 'amount']
+        unique_together = ['category', 'month', 'school_year']
+        

@@ -42,7 +42,7 @@ admin.site.register(
         PersonalSocialQualityTermWise,
         # ExpenseCategory,
         # SchoolExpense,
-        # IncomeCategory,
-        # SchoolIncome
+        IncomeCategory,
+        SchoolIncome
     ]
 )
