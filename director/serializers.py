@@ -100,13 +100,13 @@ class CountrySerializer(serializers.ModelSerializer):
 
 
 class subjectSerializer(serializers.ModelSerializer):
-    department = serializers.SerializerMethodField()
+    department_name = serializers.SerializerMethodField()  # repalced department to department_name because of SerializerMethodField (Read Only Field).
 
     class Meta:
         model = Subject
-        fields = ['id', 'subject_name', 'department'] 
+        fields = ['id', 'subject_name', 'department', 'department_name'] 
 
-    def get_department(self, obj):
+    def get_department_name(self, obj):
         return obj.department.department_name if obj.department else None
 
 
