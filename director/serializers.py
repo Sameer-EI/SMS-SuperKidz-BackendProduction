@@ -45,7 +45,14 @@ class ClassRoomTypeSerializer(serializers.ModelSerializer):
         fields = "__all__"
         
  
-    
+
+
+class ClassRoomSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ClassRoom
+        fields = ['id', 'room_type', 'room_name', 'capacity']
+        read_only_fields = ['id']
+
 
 
 class BankingDetailsSerializer(serializers.ModelSerializer):

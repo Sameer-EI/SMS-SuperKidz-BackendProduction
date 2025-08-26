@@ -1,0 +1,22 @@
+# Core
+django>=5.0
+djangorestframework
+
+# Auth & JWT
+djangorestframework-simplejwt
+
+# Utilities
+django-cors-headers
+django-filter
+
+# Media & Images
+pillow
+
+# Payments
+razorpay
+
+# Database (agar PostgreSQL use karte ho)
+psycopg2-binary
+
+# Optional: for environment variables
+python-decouple
