@@ -2063,8 +2063,7 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         return Response(grouped_fees)
 
-
-    
+  
     @action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
     def submit_single_multi_month_fees(self, request):
         student_id = request.data.get('student_id')
@@ -2142,7 +2141,6 @@ class FeeRecordView(viewsets.ModelViewSet):
         return Response(combined_response, status=status.HTTP_200_OK)
     
     
-
     ### Razorpay custom views
     # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/initiate-payment/
     ### using custom view 
@@ -2228,9 +2226,6 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
-    
-
-
     
     # corrected amount issue as of 19June25 at 02:50 PM
     # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/student-fee-summary/?year_level=5
@@ -2346,8 +2341,6 @@ class FeeRecordView(viewsets.ModelViewSet):
     
     
     # retrieving students who dont have fee record at all
-    
-
     @action(detail=False, methods=['get'], url_path="defaulters")
     def defaulters(self, request):
         # Last payment date for each student
@@ -2394,7 +2387,7 @@ class FeeRecordView(viewsets.ModelViewSet):
                 })
 
         return Response(defaulters_list)
-    
+
     # Added as of 30June25 at 01:46 PM
     # Fee card API for individual student
     # https://187gwsw1-7000.inc1.devtunnels.ms/d/fee-record/student-fee-card/?student_id=12
@@ -2462,7 +2455,6 @@ class FeeRecordView(viewsets.ModelViewSet):
             })
 
         return Response(result, status=status.HTTP_200_OK)
-
 
 
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated],url_path="student_unpaid_fees")
@@ -2623,6 +2615,7 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         return Response(unpaid_fee_records, status=status.HTTP_200_OK)
 
+
     @action(detail=False, methods=["get"], url_path="highest_dues_students")
     def highest_dues_students(self, request):
         user = request.user
@@ -2721,8 +2714,8 @@ class FeeRecordView(viewsets.ModelViewSet):
                 "remarks": record.remarks,
                 "received_by": record.received_by,
             })
-        return Response(data)
-
+        return Response(data)    
+    
 
 
 ### --------------------- Income Distribution Dashboard API (Guardian name and student name and id added) --------------------------- ###
