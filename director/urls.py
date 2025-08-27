@@ -44,6 +44,10 @@ router.register(r'report-cards', ReportCardViewSet, basename='report-cards')
 
 router.register(r'income-category', IncomeCategoryView, basename='income-category')
 router.register(r'school-income', SchoolIncomeViewSet, basename='school-income')
+router.register(r'Expense-Category', ExpenseCategoryView)
+router.register(r'School-Expense', SchoolExpenseView)
+router.register(r'Employee',EmployeeView,basename=Employee)
+router.register(r'Employee-salary',EmployeeSalaryView)
 
 
 urlpatterns = [
@@ -73,8 +77,13 @@ urlpatterns = [
     # As of 25June25 at 12:35
     path('student-category-dashboard/', student_category, name='student-category'),
     path('income-distribution-dashboard/', guardian_income_distribution, name='guardian-income-distribution'), 
+    path('income-distribution-dashboard-student/', guardian_income_distribution_with_student, name='guardian-income-distribution-student'), 
     path("fee-dashboard/", fee_dashboard, name="fee-dashboard-summary"),    # complete dashboard
-    
+    # Termination process api below
+    path("deactivate-user/", deactivate_user, name="deactivate-user"),
+    path("reactivate-user/", reactivate_user, name="reactivate-user"),
+    path("inactive-user/", list_inactive_users, name="inactive-user"),
+
 ]
 
 

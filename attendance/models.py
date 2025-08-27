@@ -36,3 +36,17 @@ class StudentAttendance(models.Model):
     
     class Meta:
         unique_together = ('student', 'marked_at')
+        
+class SchoolHoliday(models.Model):
+    title = models.CharField(max_length=100)
+    date = models.DateField()
+    description = models.TextField(blank=True, null=True)
+    
+class SchoolEvent(models.Model):
+    title = models.CharField(max_length=100)
+    start_date = models.DateField()
+    end_date = models.DateField()
+    description = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.title} ({self.start_date} to {self.end_date})"
