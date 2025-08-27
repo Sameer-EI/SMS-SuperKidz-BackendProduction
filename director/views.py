@@ -2306,6 +2306,335 @@ class FeeRecordView(viewsets.ModelViewSet):
         return Response(defaulters_list)
     
 
+# Added as of 30June25 at 01:46 PM
+# Fee card API for individual student
+    # https://187gwsw1-7000.inc1.devtunnels.ms/d/fee-record/student-fee-card/?student_id=12
+    
+    @action(detail=False, methods=["get"], url_path="student-fee-card")
+    def student_fee_card(self, request):
+        student_id = request.query_params.get("student_id")
+        if not student_id:
+            return Response({"error": "student_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            student = Student.objects.get(id=student_id)
+        except Student.DoesNotExist:
+            return Response({"error": "Student not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Get year level
+        student_year_level = student.student_year_levels.first()
+        year_level_name = student_year_level.level.level_name if student_year_level and student_year_level.level else "N/A"
+
+        # Fetch all fee records
+        fee_qs = FeeRecord.objects.filter(student=student).prefetch_related("year_level_fees__fee_type")
+
+        # Group data by month
+        monthly_data = defaultdict(list)
+        for fee in fee_qs:
+            monthly_data[fee.month].append(fee)
+
+        result = {
+            "student_id": student.id,
+            "student_name": f"{student.user.first_name} {student.user.last_name}",
+            "year_level": year_level_name,
+            "monthly_summary": []
+        }
+
+        for month, fees in monthly_data.items():
+            total_amount = sum((f.total_amount or 0) + (f.late_fee or 0) for f in fees)
+            paid_amount = sum(f.paid_amount or 0 for f in fees)
+            due_amount = max(Decimal("0.00"), total_amount - paid_amount)
+
+            # Type-wise summary
+            type_summary = defaultdict(lambda: {"amount": Decimal("0.00"), "paid": Decimal("0.00")})
+
+            for f in fees:
+                for ylf in f.year_level_fees.all():
+                    fee_type = ylf.fee_type.name if ylf.fee_type else "Unknown"
+                    amount = ylf.amount or 0
+                    share_ratio = amount / f.total_amount if f.total_amount else 0
+
+                    # Split late fee and paid_amount proportionally among all year_level_fees
+                    type_summary[fee_type]["amount"] += amount
+                    type_summary[fee_type]["paid"] += (f.paid_amount or 0) * share_ratio
+
+            result["monthly_summary"].append({
+                "month": month,
+                "total_amount": float(total_amount),
+                # "paid_amount": float(paid_amount),
+                "due_amount": float(due_amount),
+                "fee_type": [
+                    {
+                        "type": ft,
+                        "amount": float(val["amount"]),
+                        # "paid": round(float(val["paid"]), 2)
+                    } for ft, val in type_summary.items()
+                ]
+            })
+
+        return Response(result, status=status.HTTP_200_OK)
+
+
+
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated],url_path="student_unpaid_fees")
+    def student_unpaid_fees(self, request):
+        user = request.user
+        roles = [role.name.lower() for role in user.role.all()]
+        student_id = request.query_params.get("student_id")
+
+        if "director" in roles or "office staff" in roles:
+            if student_id:
+                queryset = FeeRecord.objects.filter(payment_status="Unpaid", student_id=student_id)
+            else:
+                queryset = FeeRecord.objects.filter(payment_status="Unpaid")
+
+
+        elif "teacher" in roles:
+            teacher_instance = get_object_or_404(Teacher, user=user)
+
+            assigned_class_ids = TeacherYearLevel.objects.filter(
+                teacher=teacher_instance
+            ).values_list("year_level_id", flat=True)
+
+            if student_id:
+                try:
+                    student_yl = StudentYearLevel.objects.select_related("student", "level").get(id=student_id)
+                except StudentYearLevel.DoesNotExist:
+                    return Response({"detail": "Student not found."}, status=404)
+
+                if student_yl.level.id not in assigned_class_ids:
+                    return Response({"detail": "You are not allowed to view this student's data."}, status=403)
+
+                queryset = FeeRecord.objects.filter(
+                    payment_status="Unpaid",
+                    student=student_yl.student
+                )
+
+            else:
+                student_ids = StudentYearLevel.objects.filter(
+                    level_id__in=assigned_class_ids
+                ).values_list("student_id", flat=True)
+
+                queryset = FeeRecord.objects.filter(
+                    payment_status="Unpaid",
+                    student_id__in=student_ids
+                )
+
+
+        elif "student" in roles:
+            if "student_id" in request.query_params:
+                return Response({"detail": "You are not allowed to provide student_id."}, status=400)
+
+            student = get_object_or_404(Student, user=user)
+            queryset = FeeRecord.objects.filter(
+                payment_status="Unpaid",
+                student=student
+            )
+
+
+        elif "guardian" in roles:
+            if "student_id" in request.query_params:
+                return Response({"detail": "You are not allowed to provide student_id."}, status=400)
+            guardian = get_object_or_404(Guardian, user=user)
+            student_ids = StudentGuardian.objects.filter(guardian=guardian).values_list("student_id", flat=True)
+            queryset = FeeRecord.objects.filter(
+                payment_status="Unpaid", student_id__in=student_ids
+            )
+
+        else:
+            return Response({"detail": "Permission denied."}, status=403)
+
+        # serializer = FeeRecordSerializer(queryset, many=True)
+        # return Response(serializer.data)
+
+        serializer = FeeRecordSerializer(queryset, many=True, context={"request": request})
+        return Response(serializer.data)
+
+
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="overall_unpaid_fees")
+    def overall_unpaid_fees(self, request):
+        user = request.user
+        roles = [role.name.lower() for role in user.role.all()]
+
+        if not any(role in roles for role in ["director", "teacher", "office staff"]):
+            return Response({"detail": "You do not have permission to access this data."}, status=status.HTTP_403_FORBIDDEN)
+
+        class_id = request.query_params.get("class_id", "").strip()
+        month = request.query_params.get("month", "").strip()
+
+        unpaid_fee_records = []
+
+        student_levels = StudentYearLevel.objects.all().select_related("student", "level")
+
+        if "teacher" in roles:
+            try:
+                teacher = Teacher.objects.get(user=user)
+                teacher_classes = TeacherYearLevel.objects.filter(teacher=teacher).values_list("year_level_id", flat=True)
+            except Teacher.DoesNotExist:
+                return Response({"detail": "Teacher not found."}, status=status.HTTP_404_NOT_FOUND)
+            except TeacherYearLevel.DoesNotExist:
+                return Response({"detail": "Assigned class for teacher not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            student_levels = student_levels.filter(level_id__in=teacher_classes)
+
+        if class_id:
+            student_levels = student_levels.filter(level_id=class_id)
+
+        for student_level in student_levels:
+            student = student_level.student
+
+            fee_records = FeeRecord.objects.filter(
+                student=student,
+                payment_status="unpaid"
+            ).prefetch_related(
+                "year_level_fees__year_level",
+                "year_level_fees__fee_type"
+            )
+
+            if month:
+                fee_records = fee_records.filter(month__iexact=month)
+
+            for record in fee_records:
+                grouped_fees = {}
+                for ylf in record.year_level_fees.all():
+                    level_name = ylf.year_level.level_name
+                    if level_name not in grouped_fees:
+                        grouped_fees[level_name] = []
+                    grouped_fees[level_name].append({
+                        "id": ylf.id,
+                        "fee_type": ylf.fee_type.name,
+                        "amount": str(ylf.amount)
+                    })
+
+                grouped_fees_list = [
+                    {"year_level": level, "fees": fees}
+                    for level, fees in grouped_fees.items()
+                ]
+
+                unpaid_fee_records.append({
+                    "id": record.id,
+                    "student": {
+                        "id": student.id,
+                        "name": str(student)
+                    },
+                    "month": record.month,
+                    "year_level_fees_grouped": grouped_fees_list,
+                    "total_amount": str(record.total_amount),
+                    "paid_amount": str(record.paid_amount),
+                    "due_amount": str(record.due_amount),
+                    "payment_date": record.payment_date,
+                    "payment_mode": record.payment_mode,
+                    "is_cheque_cleared": record.is_cheque_cleared,
+                    "receipt_number": record.receipt_number,
+                    "late_fee": str(record.late_fee),
+                    "payment_status": record.payment_status,
+                    "remarks": record.remarks,
+                    "received_by": record.received_by,
+                })
+
+        return Response(unpaid_fee_records, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], url_path="highest_dues_students")
+    def highest_dues_students(self, request):
+        user = request.user
+        roles = [role.name.lower() for role in user.role.all()]
+
+        if not any(role in roles for role in ["director", "teacher", "office staff"]):
+            return Response({"detail": "You do not have permission to access this data."})
+
+        class_id = request.query_params.get("class_id")
+        month = request.query_params.get("month")
+        min_due = request.query_params.get("min_due_amount")
+        max_due = request.query_params.get("max_due_amount")
+        # top = request.query_params.get("top")
+
+        queryset = FeeRecord.objects.filter(payment_status="unpaid")
+        print("queryset : ",queryset)
+        class_id = request.query_params.get("class_id")
+        if class_id:
+            class_id = class_id.strip()  
+            student_ids = StudentYearLevel.objects.filter(level_id=class_id).values_list("student_id", flat=True)
+            print("student_ids:", list(student_ids))  
+            queryset = queryset.filter(student_id__in=student_ids)
+        if month:
+            queryset = queryset.filter(month=month)
+
+        if min_due:
+            try:
+                queryset = queryset.filter(due_amount__gte=float(min_due))
+            except ValueError:
+                return Response({"detail": "min_due_amount must be a number."})
+
+        if max_due:
+            try:
+                queryset = queryset.filter(due_amount__gte=float(max_due))
+            except ValueError:
+                return Response({"detail": "max_due_amount must be a number."})
+
+        queryset = queryset.order_by("due_amount")
+
+        # if top:
+        #     try:
+        #         top = int(top)
+        #         queryset = queryset[:top]
+        #     except ValueError:
+        #         return Response({"detail": "top must be an integer."})
+
+        # data = []
+        # for record in queryset:
+        #     for ylf in record.year_level_fees.all():
+        #         data.append({
+        #             "student_id": record.student.id,
+        #             "student_name": str(record.student),
+        #             "class_name": ylf.year_level.level_name,  
+        #             "month": record.month,
+        #             "due_amount": str(record.due_amount),
+        #             "total_amount": str(record.total_amount),
+        #             "paid_amount": str(record.paid_amount),
+        #         })
+        # return Response(data, status=status.HTTP_200_OK)
+
+        data = []
+        for record in queryset:
+            grouped_fees = {}
+            for ylf in record.year_level_fees.all():
+                level_name = ylf.year_level.level_name
+                if level_name not in grouped_fees:
+                    grouped_fees[level_name] = []
+                grouped_fees[level_name].append({
+                    "id": ylf.id,
+                    "fee_type": ylf.fee_type.name,
+                    "amount": str(ylf.amount)
+                })
+
+            grouped_fees_list = [
+                {"year_level": level, "fees": fees}
+                for level, fees in grouped_fees.items()
+            ]
+
+            data.append({
+                "id": record.id,
+                "student": {
+                    "id": record.student.id,
+                    "name": str(record.student)
+                },
+                "month": record.month,
+                "year_level_fees_grouped": grouped_fees_list,
+                "total_amount": str(record.total_amount),
+                "paid_amount": str(record.paid_amount),
+                "due_amount": str(record.due_amount),
+                "payment_date": record.payment_date,
+                "payment_mode": record.payment_mode,
+                "is_cheque_cleared": record.is_cheque_cleared,
+                "receipt_number": record.receipt_number,
+                "late_fee": str(record.late_fee),
+                "payment_status": record.payment_status,
+                "remarks": record.remarks,
+                "received_by": record.received_by,
+            })
+        return Response(data)    
+    
+
 
 ### --------------------- Income Distribution Dashboard API (Guardian name and student name and id added) --------------------------- ###
 ### ------------------- As of 03 JUly at 12:35 --------------- ###   By daniyal
@@ -2770,335 +3099,6 @@ def list_inactive_users(request):
     serializer = UserSerializer(users, many=True)
     return Response(serializer.data)
 
-
-    
-# Added as of 30June25 at 01:46 PM
-# Fee card API for individual student
-    # https://187gwsw1-7000.inc1.devtunnels.ms/d/fee-record/student-fee-card/?student_id=12
-    
-    @action(detail=False, methods=["get"], url_path="student-fee-card")
-    def student_fee_card(self, request):
-        student_id = request.query_params.get("student_id")
-        if not student_id:
-            return Response({"error": "student_id is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            student = Student.objects.get(id=student_id)
-        except Student.DoesNotExist:
-            return Response({"error": "Student not found"}, status=status.HTTP_404_NOT_FOUND)
-
-        # Get year level
-        student_year_level = student.student_year_levels.first()
-        year_level_name = student_year_level.level.level_name if student_year_level and student_year_level.level else "N/A"
-
-        # Fetch all fee records
-        fee_qs = FeeRecord.objects.filter(student=student).prefetch_related("year_level_fees__fee_type")
-
-        # Group data by month
-        monthly_data = defaultdict(list)
-        for fee in fee_qs:
-            monthly_data[fee.month].append(fee)
-
-        result = {
-            "student_id": student.id,
-            "student_name": f"{student.user.first_name} {student.user.last_name}",
-            "year_level": year_level_name,
-            "monthly_summary": []
-        }
-
-        for month, fees in monthly_data.items():
-            total_amount = sum((f.total_amount or 0) + (f.late_fee or 0) for f in fees)
-            paid_amount = sum(f.paid_amount or 0 for f in fees)
-            due_amount = max(Decimal("0.00"), total_amount - paid_amount)
-
-            # Type-wise summary
-            type_summary = defaultdict(lambda: {"amount": Decimal("0.00"), "paid": Decimal("0.00")})
-
-            for f in fees:
-                for ylf in f.year_level_fees.all():
-                    fee_type = ylf.fee_type.name if ylf.fee_type else "Unknown"
-                    amount = ylf.amount or 0
-                    share_ratio = amount / f.total_amount if f.total_amount else 0
-
-                    # Split late fee and paid_amount proportionally among all year_level_fees
-                    type_summary[fee_type]["amount"] += amount
-                    type_summary[fee_type]["paid"] += (f.paid_amount or 0) * share_ratio
-
-            result["monthly_summary"].append({
-                "month": month,
-                "total_amount": float(total_amount),
-                # "paid_amount": float(paid_amount),
-                "due_amount": float(due_amount),
-                "fee_type": [
-                    {
-                        "type": ft,
-                        "amount": float(val["amount"]),
-                        # "paid": round(float(val["paid"]), 2)
-                    } for ft, val in type_summary.items()
-                ]
-            })
-
-        return Response(result, status=status.HTTP_200_OK)
-
-
-
-    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated],url_path="student_unpaid_fees")
-    def student_unpaid_fees(self, request):
-        user = request.user
-        roles = [role.name.lower() for role in user.role.all()]
-        student_id = request.query_params.get("student_id")
-
-        if "director" in roles or "office staff" in roles:
-            if student_id:
-                queryset = FeeRecord.objects.filter(payment_status="Unpaid", student_id=student_id)
-            else:
-                queryset = FeeRecord.objects.filter(payment_status="Unpaid")
-
-
-        elif "teacher" in roles:
-            teacher_instance = get_object_or_404(Teacher, user=user)
-
-            assigned_class_ids = TeacherYearLevel.objects.filter(
-                teacher=teacher_instance
-            ).values_list("year_level_id", flat=True)
-
-            if student_id:
-                try:
-                    student_yl = StudentYearLevel.objects.select_related("student", "level").get(id=student_id)
-                except StudentYearLevel.DoesNotExist:
-                    return Response({"detail": "Student not found."}, status=404)
-
-                if student_yl.level.id not in assigned_class_ids:
-                    return Response({"detail": "You are not allowed to view this student's data."}, status=403)
-
-                queryset = FeeRecord.objects.filter(
-                    payment_status="Unpaid",
-                    student=student_yl.student
-                )
-
-            else:
-                student_ids = StudentYearLevel.objects.filter(
-                    level_id__in=assigned_class_ids
-                ).values_list("student_id", flat=True)
-
-                queryset = FeeRecord.objects.filter(
-                    payment_status="Unpaid",
-                    student_id__in=student_ids
-                )
-
-
-        elif "student" in roles:
-            if "student_id" in request.query_params:
-                return Response({"detail": "You are not allowed to provide student_id."}, status=400)
-
-            student = get_object_or_404(Student, user=user)
-            queryset = FeeRecord.objects.filter(
-                payment_status="Unpaid",
-                student=student
-            )
-
-
-        elif "guardian" in roles:
-            if "student_id" in request.query_params:
-                return Response({"detail": "You are not allowed to provide student_id."}, status=400)
-            guardian = get_object_or_404(Guardian, user=user)
-            student_ids = StudentGuardian.objects.filter(guardian=guardian).values_list("student_id", flat=True)
-            queryset = FeeRecord.objects.filter(
-                payment_status="Unpaid", student_id__in=student_ids
-            )
-
-        else:
-            return Response({"detail": "Permission denied."}, status=403)
-
-        # serializer = FeeRecordSerializer(queryset, many=True)
-        # return Response(serializer.data)
-
-        serializer = FeeRecordSerializer(queryset, many=True, context={"request": request})
-        return Response(serializer.data)
-
-
-    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="overall_unpaid_fees")
-    def overall_unpaid_fees(self, request):
-        user = request.user
-        roles = [role.name.lower() for role in user.role.all()]
-
-        if not any(role in roles for role in ["director", "teacher", "office staff"]):
-            return Response({"detail": "You do not have permission to access this data."}, status=status.HTTP_403_FORBIDDEN)
-
-        class_id = request.query_params.get("class_id", "").strip()
-        month = request.query_params.get("month", "").strip()
-
-        unpaid_fee_records = []
-
-        student_levels = StudentYearLevel.objects.all().select_related("student", "level")
-
-        if "teacher" in roles:
-            try:
-                teacher = Teacher.objects.get(user=user)
-                teacher_classes = TeacherYearLevel.objects.filter(teacher=teacher).values_list("year_level_id", flat=True)
-            except Teacher.DoesNotExist:
-                return Response({"detail": "Teacher not found."}, status=status.HTTP_404_NOT_FOUND)
-            except TeacherYearLevel.DoesNotExist:
-                return Response({"detail": "Assigned class for teacher not found."}, status=status.HTTP_404_NOT_FOUND)
-
-            student_levels = student_levels.filter(level_id__in=teacher_classes)
-
-        if class_id:
-            student_levels = student_levels.filter(level_id=class_id)
-
-        for student_level in student_levels:
-            student = student_level.student
-
-            fee_records = FeeRecord.objects.filter(
-                student=student,
-                payment_status="unpaid"
-            ).prefetch_related(
-                "year_level_fees__year_level",
-                "year_level_fees__fee_type"
-            )
-
-            if month:
-                fee_records = fee_records.filter(month__iexact=month)
-
-            for record in fee_records:
-                grouped_fees = {}
-                for ylf in record.year_level_fees.all():
-                    level_name = ylf.year_level.level_name
-                    if level_name not in grouped_fees:
-                        grouped_fees[level_name] = []
-                    grouped_fees[level_name].append({
-                        "id": ylf.id,
-                        "fee_type": ylf.fee_type.name,
-                        "amount": str(ylf.amount)
-                    })
-
-                grouped_fees_list = [
-                    {"year_level": level, "fees": fees}
-                    for level, fees in grouped_fees.items()
-                ]
-
-                unpaid_fee_records.append({
-                    "id": record.id,
-                    "student": {
-                        "id": student.id,
-                        "name": str(student)
-                    },
-                    "month": record.month,
-                    "year_level_fees_grouped": grouped_fees_list,
-                    "total_amount": str(record.total_amount),
-                    "paid_amount": str(record.paid_amount),
-                    "due_amount": str(record.due_amount),
-                    "payment_date": record.payment_date,
-                    "payment_mode": record.payment_mode,
-                    "is_cheque_cleared": record.is_cheque_cleared,
-                    "receipt_number": record.receipt_number,
-                    "late_fee": str(record.late_fee),
-                    "payment_status": record.payment_status,
-                    "remarks": record.remarks,
-                    "received_by": record.received_by,
-                })
-
-        return Response(unpaid_fee_records, status=status.HTTP_200_OK)
-
-    @action(detail=False, methods=["get"], url_path="highest_dues_students")
-    def highest_dues_students(self, request):
-        user = request.user
-        roles = [role.name.lower() for role in user.role.all()]
-
-        if not any(role in roles for role in ["director", "teacher", "office staff"]):
-            return Response({"detail": "You do not have permission to access this data."})
-
-        class_id = request.query_params.get("class_id")
-        month = request.query_params.get("month")
-        min_due = request.query_params.get("min_due_amount")
-        max_due = request.query_params.get("max_due_amount")
-        # top = request.query_params.get("top")
-
-        queryset = FeeRecord.objects.filter(payment_status="unpaid")
-        print("queryset : ",queryset)
-        class_id = request.query_params.get("class_id")
-        if class_id:
-            class_id = class_id.strip()  
-            student_ids = StudentYearLevel.objects.filter(level_id=class_id).values_list("student_id", flat=True)
-            print("student_ids:", list(student_ids))  
-            queryset = queryset.filter(student_id__in=student_ids)
-        if month:
-            queryset = queryset.filter(month=month)
-
-        if min_due:
-            try:
-                queryset = queryset.filter(due_amount__gte=float(min_due))
-            except ValueError:
-                return Response({"detail": "min_due_amount must be a number."})
-
-        if max_due:
-            try:
-                queryset = queryset.filter(due_amount__gte=float(max_due))
-            except ValueError:
-                return Response({"detail": "max_due_amount must be a number."})
-
-        queryset = queryset.order_by("due_amount")
-
-        # if top:
-        #     try:
-        #         top = int(top)
-        #         queryset = queryset[:top]
-        #     except ValueError:
-        #         return Response({"detail": "top must be an integer."})
-
-        # data = []
-        # for record in queryset:
-        #     for ylf in record.year_level_fees.all():
-        #         data.append({
-        #             "student_id": record.student.id,
-        #             "student_name": str(record.student),
-        #             "class_name": ylf.year_level.level_name,  
-        #             "month": record.month,
-        #             "due_amount": str(record.due_amount),
-        #             "total_amount": str(record.total_amount),
-        #             "paid_amount": str(record.paid_amount),
-        #         })
-        # return Response(data, status=status.HTTP_200_OK)
-
-        data = []
-        for record in queryset:
-            grouped_fees = {}
-            for ylf in record.year_level_fees.all():
-                level_name = ylf.year_level.level_name
-                if level_name not in grouped_fees:
-                    grouped_fees[level_name] = []
-                grouped_fees[level_name].append({
-                    "id": ylf.id,
-                    "fee_type": ylf.fee_type.name,
-                    "amount": str(ylf.amount)
-                })
-
-            grouped_fees_list = [
-                {"year_level": level, "fees": fees}
-                for level, fees in grouped_fees.items()
-            ]
-
-            data.append({
-                "id": record.id,
-                "student": {
-                    "id": record.student.id,
-                    "name": str(record.student)
-                },
-                "month": record.month,
-                "year_level_fees_grouped": grouped_fees_list,
-                "total_amount": str(record.total_amount),
-                "paid_amount": str(record.paid_amount),
-                "due_amount": str(record.due_amount),
-                "payment_date": record.payment_date,
-                "payment_mode": record.payment_mode,
-                "is_cheque_cleared": record.is_cheque_cleared,
-                "receipt_number": record.receipt_number,
-                "late_fee": str(record.late_fee),
-                "payment_status": record.payment_status,
-                "remarks": record.remarks,
-                "received_by": record.received_by,
-            })
-        return Response(data)
 
 #--------------------- Exam Module 
 
