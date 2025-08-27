@@ -1,3 +1,4 @@
+from urllib import request
 from django.shortcuts import render
 
 # Create your views here.
@@ -16,7 +17,7 @@ from django.db.models import Prefetch
 from rest_framework.permissions import AllowAny, IsAuthenticated,BasePermission
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from permission import RoleBasedPermission
+# from permission import RoleBasedPermission
 
 
 
@@ -101,27 +102,46 @@ class TeacherView(viewsets.ModelViewSet):
                     {"error": f"Teacher is already assigned {subject.subject_name} in a period."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-
             for period in periods:
-                # Assign only one period for each subject per teacher
-                if not ClassPeriod.objects.filter(teacher=teacher, subject=subject).exists():
-                    # Assign the teacher to the subject and period
-                    cp = ClassPeriod.objects.create(
-                        teacher=teacher,
-                        subject=subject,
-                        year_level=yearlevel,
-                        term=Term.objects.first(),  
-                        start_time=period,  # Assign Period instance to start_time
-                        end_time=period,  # Assign Period instance to end_time
-                        classroom=ClassRoom.objects.first(),  # Using the first available classroom
-                        name=f"{subject.subject_name} - {period.name}"
+                #  New validation: Prevent teacher from being assigned two different subjects in the same period
+                period_conflict = ClassPeriod.objects.filter(
+                    teacher=teacher,
+                    start_time=period,
+                    end_time=period
+                ).exists()
+
+                if period_conflict:
+                    return Response(
+                        {"error": f"Teacher is already assigned another subject in period {period.name} ({period.start_period_time} - {period.end_period_time})."},
+                        status=status.HTTP_400_BAD_REQUEST
                     )
-                    assigned.append({
-                        "subject": subject.subject_name,
-                        "period": period.name,
-                        "time": f"{period.start_period_time} - {period.end_period_time}"
-                    })
-                    break  # Assign only one period per subject for the teacher
+
+        if period_conflict:
+            return Response(
+                {"error": f"Teacher is already assigned another subject in period {period.name} ({period.start_period_time} - {period.end_period_time})."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        for period in periods:
+            # Assign only one period for each subject per teacher
+            if not ClassPeriod.objects.filter(teacher=teacher, subject=subject).exists():
+                # Assign the teacher to the subject and period
+                cp = ClassPeriod.objects.create(
+                    teacher=teacher,
+                    subject=subject,
+                     year_level=yearlevel,
+                    term=Term.objects.first(),  
+                    start_time=period,  # Assign Period instance to start_time
+                    end_time=period,  # Assign Period instance to end_time
+                    classroom=ClassRoom.objects.first(),  # Using the first available classroom
+                    name=f"{subject.subject_name} - {period.name}"
+                )
+                assigned.append({
+                    "subject": subject.subject_name,
+                    "period": period.name,
+                    "time": f"{period.start_period_time} - {period.end_period_time}"
+                })
+                break  # Assign only one period per subject for the teacher
 
         # Link teacher to year level
         TeacherYearLevel.objects.get_or_create(teacher=teacher, yearlevel_id=yearlevel)
@@ -134,8 +154,7 @@ class TeacherView(viewsets.ModelViewSet):
             "assigned_subjects_periods": assigned
         }, status=status.HTTP_200_OK)
 
-
-
+    
 
    
     @action(detail=False, methods=['get'], url_path='all-teacher-assignments')
@@ -148,7 +167,7 @@ class TeacherView(viewsets.ModelViewSet):
                 'assigned_periods',
                 queryset=ClassPeriod.objects.select_related(
                     'subject', 'start_time', 'end_time'
-                ).order_by('start_time__start_period_time')  # 👈 sort by start_time
+                ).order_by('start_time__start_period_time')  
             )
         ).select_related('user')
 
@@ -232,12 +251,12 @@ from rest_framework import viewsets, status
 from rest_framework.response import Response
 from .models import TeacherYearLevel
 from .serializers import TeacherYearLevelSerializer
-from permission import RoleBasedPermission
+from director.permission import RoleBasedPermissionteacheryearlevel
 
 class TeacherYearLevelView(viewsets.ModelViewSet):
     serializer_class = TeacherYearLevelSerializer
     queryset = TeacherYearLevel.objects.all()
-    permission_classes = [RoleBasedPermission]
+    permission_classes = [ RoleBasedPermissionteacheryearlevel]
 
     def get_queryset(self):
         # Permission class ke filter_queryset() ka use karo
