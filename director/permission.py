@@ -350,3 +350,10 @@ class FeeRecordPermission(BasePermission):
 
 
 
+class IsDirectororOfficeStaff(BasePermission):
+    """
+    Allows access only to users with the 'office_staff'and'director' role.
+    """
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and request.user.role.filter(name="director").exists() or request.user.role.filter(name="office_staff").exists()
+    

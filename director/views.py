@@ -70,7 +70,7 @@ def generate_receipt_number():
                 return code
 # ---------------------------------------------------------------------------------------------------------------------------------------------         
 
-                                                    #    Document fetch dashboard
+#    Document fetch dashboard
 
 @api_view(["GET"])
 def document_fetch_dashboard(request):
@@ -1864,7 +1864,7 @@ class YearLevelFeeView(viewsets.ModelViewSet):
     
     
 
-from twilio.rest import Client
+from twilio.rest import Client 
 
 def send_whatsapp_message(message_text):
     account_sid = 'AC75f0880296f2c1377b2ca30442bbd3e1'
@@ -1901,8 +1901,6 @@ def send_whatsapp_message(message_text):
             })
 
     return sent_messages
-
-
 
 #discount for students-----------
 class FeeDiscountView(viewsets.ModelViewSet):
@@ -1956,6 +1954,19 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         # Keep your existing filters
         request = self.request
+        
+        month = request.query_params.get('month')
+        if month:
+            qs = qs.filter(month=month)
+
+        school_year = request.query_params.get('school_year')
+        if school_year:
+            qs = qs.filter(school_year__year__year_name = school_year)
+
+        student_id = request.query_params.get('student_id')
+        if student_id:
+            qs = qs.filter(student_id=student_id)
+
         year_level_id = request.query_params.get('year_level')
         if year_level_id:
             qs = qs.filter(year_level_fees__year_level__id=year_level_id)
@@ -1977,8 +1988,82 @@ class FeeRecordView(viewsets.ModelViewSet):
     
         return qs.distinct()
 
+    @action(detail=False, methods=["get"], url_path="fee-preview")
+    def preview(self, request):
+        student_id = request.query_params.get("student_id")
+        month = request.query_params.get("month")
 
-    
+        if not student_id or not month:
+            return Response({"detail": "student_id and month are required"}, status=400)
+
+        try:
+            student = Student.objects.get(id=student_id)
+        except Student.DoesNotExist:
+            return Response({"detail": "Student not found"}, status=404)
+
+        # Latest active year level
+        student_year_level = (
+            StudentYearLevel.objects
+            .filter(student=student)
+            .order_by("-year")
+            .first()
+        )
+        if not student_year_level:
+            return Response({"detail": "No year level found for this student."}, status=404)
+
+        # All year-level fees
+        year_level_fees = YearLevelFee.objects.filter(year_level=student_year_level.level)
+
+        # Paid fee records for this student & school year
+        paid_fees = FeeRecord.objects.filter(
+            student=student,
+            school_year__year=student_year_level.year
+        )
+
+        # Admission fees → only once per year
+        admission_paid_fee_ids = paid_fees.filter(
+            year_level_fees__fee_type__name__iexact="admission fee"
+        ).values_list("year_level_fees", flat=True)
+
+        # Monthly fees → must match same month
+        monthly_paid_fee_ids = paid_fees.exclude(
+            year_level_fees__fee_type__name__iexact="admission fee"
+        ).filter(
+            month=month
+        ).values_list("year_level_fees", flat=True)
+
+        # Serialize fees
+        serializer = YearLevelFeeSerializer(year_level_fees, many=True, context={"student": student})
+        grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
+
+        today = date.today()
+
+        # Add status/late fee
+        for group in grouped_fees:
+            for fee in group["fees"]:
+                fee_id = fee["id"]
+                fee_type = fee["fee_type"].lower()
+
+                # Default to Pending
+                fee["status"] = "Pending"
+
+                if fee_type == "admission fee" and fee_id in admission_paid_fee_ids:
+                    fee["status"] = "Already Paid"
+                    fee.pop("amount", None)
+                    fee.pop("final_amount", None)
+
+                elif fee_type != "admission fee" and fee_id in monthly_paid_fee_ids:
+                    fee["status"] = "Already Paid"
+                    fee.pop("amount", None)
+                    fee.pop("final_amount", None)
+
+                # Tuition fee late fee after 15th
+                elif fee_type == "tuition fee" and today.day > 15:
+                    fee["late_fee"] = 25
+
+        return Response(grouped_fees)
+
+  
     @action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
     def submit_single_multi_month_fees(self, request):
         student_id = request.data.get('student_id')
@@ -2056,7 +2141,6 @@ class FeeRecordView(viewsets.ModelViewSet):
         return Response(combined_response, status=status.HTTP_200_OK)
     
     
-
     ### Razorpay custom views
     # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/initiate-payment/
     ### using custom view 
@@ -2143,9 +2227,6 @@ class FeeRecordView(viewsets.ModelViewSet):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     
-
-
-    
     # corrected amount issue as of 19June25 at 02:50 PM
     # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/student-fee-summary/?year_level=5
     @action(detail=False, methods=["get"], url_path="student-fee-summary")
@@ -2205,14 +2286,15 @@ class FeeRecordView(viewsets.ModelViewSet):
         month = request.query_params.get("month", "").strip()
         year_level = request.query_params.get("year_level", "").strip()
         search = request.query_params.get("search", "").strip()
+        school_year = request.query_params.get("school_year", "").strip()
 
         qs = self.get_queryset()
         filters = Q()
 
         if month:
             filters &= Q(month__iexact=month)
-
-
+        if school_year:    
+            filters &= Q(school_year__year__year_name__iexact=school_year)
         if year_level.isdigit():
             filters &= Q(student__student_year_levels__level__id=year_level)
         elif search:
@@ -2222,10 +2304,12 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         if not qs.exists():
             return Response({"detail": "No records found."}, status=status.HTTP_404_NOT_FOUND)
+        
 
         summary = (
             qs.values(
                 "month",
+                "school_year__year__year_name",
                 "student__user__first_name",
                 "student__user__last_name",
                 "student__student_year_levels__level__level_name"
@@ -2236,14 +2320,15 @@ class FeeRecordView(viewsets.ModelViewSet):
                 late_fee=Coalesce(Sum("late_fee", output_field=FloatField()), Value(0.0))
             )
         )
-
+        print(summary)
         formatted_summary = []
         for item in summary:
             total = item["total_amount"] + item["late_fee"]
             due = max(0, total - item["paid_amount"])
-
+            
             formatted_summary.append({
                 "month": item["month"],
+                "school_year": item["school_year__year__year_name"] or "N/A",
                 "student_name": f"{item['student__user__first_name']} {item['student__user__last_name']}",
                 "year_level": item["student__student_year_levels__level__level_name"],
                 "total_amount": float(total),
@@ -2256,8 +2341,6 @@ class FeeRecordView(viewsets.ModelViewSet):
     
     
     # retrieving students who dont have fee record at all
-    
-
     @action(detail=False, methods=['get'], url_path="defaulters")
     def defaulters(self, request):
         # Last payment date for each student
@@ -2304,10 +2387,9 @@ class FeeRecordView(viewsets.ModelViewSet):
                 })
 
         return Response(defaulters_list)
-    
 
-# Added as of 30June25 at 01:46 PM
-# Fee card API for individual student
+    # Added as of 30June25 at 01:46 PM
+    # Fee card API for individual student
     # https://187gwsw1-7000.inc1.devtunnels.ms/d/fee-record/student-fee-card/?student_id=12
     
     @action(detail=False, methods=["get"], url_path="student-fee-card")
@@ -2373,7 +2455,6 @@ class FeeRecordView(viewsets.ModelViewSet):
             })
 
         return Response(result, status=status.HTTP_200_OK)
-
 
 
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated],url_path="student_unpaid_fees")
@@ -2533,6 +2614,7 @@ class FeeRecordView(viewsets.ModelViewSet):
                 })
 
         return Response(unpaid_fee_records, status=status.HTTP_200_OK)
+
 
     @action(detail=False, methods=["get"], url_path="highest_dues_students")
     def highest_dues_students(self, request):
@@ -3750,6 +3832,11 @@ class StudentMarksView(viewsets.ModelViewSet):
 from rest_framework.exceptions import PermissionDenied
 from collections import defaultdict
 
+class PersonalSocialQualityView(viewsets.ModelViewSet):
+    queryset = PersonalSocialQuality.objects.all()
+    serializer_class = PersonalSocialQualitySerializer
+    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+
 class PersonalSocialGradeViewSet(viewsets.ModelViewSet):
     queryset = PersonalSocialQualityTermWise.objects.all()
     serializer_class = PersonalSocialGradeSerializer
@@ -4840,3 +4927,44 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
         if instance.status == "paid":
             instance.paid_by = self.request.user
             instance.save()
+
+
+class IncomeCategoryView(viewsets.ModelViewSet):
+    queryset = IncomeCategory.objects.all()
+    serializer_class = IncomeCategorySerializer
+    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+
+class SchoolIncomeViewSet(viewsets.ModelViewSet):
+    queryset = SchoolIncome.objects.all()
+    serializer_class = SchoolIncomeSerializer
+    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+    
+    def get_queryset(self):
+        qs = super().get_queryset()
+        request = self.request
+        today = date.today()
+        # the current school year
+        current_school_year = SchoolYear.objects.filter(
+            Q(start_date__lte=today), Q(end_date__gte=today)
+        ).first()
+
+
+        # Get school_year param
+        school_year_id = request.query_params.get("school_year")
+
+        if school_year_id:
+            qs = qs.filter(school_year_id=school_year_id) 
+        elif current_school_year:
+            qs = qs.filter(school_year=current_school_year)
+            
+        # apply optional filters
+        category_id = request.query_params.get("category")
+        if category_id:
+            qs = qs.filter(category_id=category_id)
+
+        month = request.query_params.get("month")
+        if month:
+            qs = qs.filter(month=month)
+
+       
+        return qs
