@@ -774,7 +774,7 @@ class SchoolIncome(models.Model):
     amount = models.DecimalField(max_digits=12, decimal_places=2)# 
     description = models.TextField(blank=True, null=True)# 
     income_date = models.DateField()# 
-    school_year = models.ForeignKey(SchoolYear, on_delete=models.PROTECT,null=True, blank=True)  # Added as of 20Aug25
+    school_year = models.ForeignKey(SchoolYear, on_delete=models.PROTECT)  # Added as of 20Aug25
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='cash') 
     attachment = models.FileField(upload_to=income_attachments, blank=True, null=True) 
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending') 

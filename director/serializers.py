@@ -2214,12 +2214,14 @@ class SchoolIncomeSerializer(serializers.ModelSerializer):
 
         # Ensure one category per month per school_year
         if category and month and school_year:
-            exists = SchoolIncome.objects.filter(
+            qs = SchoolIncome.objects.filter(
                 category=category,
                 month=month,
                 school_year=school_year
-            ).exists()
-            if exists:
+            )
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
                 raise serializers.ValidationError({
                     "category": f"Income for '{category.name}' already exists for {month} ({school_year})."
                 })
@@ -2247,3 +2249,26 @@ class SchoolIncomeSerializer(serializers.ModelSerializer):
             validated_data["amount"] = total
 
         return super().create(validated_data)
+        
+    def update(self, instance, validated_data):
+        allowed_fields = [
+            "amount",
+            "description",
+            "income_date",
+            "payment_method",
+            "attachment",
+            "status",
+        ]
+
+        # block updates for restricted fields (category, school_year, created_by etc.)
+        for field in list(validated_data.keys()):
+            if field not in allowed_fields:
+                validated_data.pop(field)
+
+        # special rule: "Monthly Fees" → amount cannot be updated
+        category = instance.category
+        if category and category.name == "Monthly Fees":
+            validated_data.pop("amount", None)
+
+        return super().update(instance, validated_data)
+    
