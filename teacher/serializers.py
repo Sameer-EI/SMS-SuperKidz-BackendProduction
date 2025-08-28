@@ -1,11 +1,11 @@
 from rest_framework import serializers
-from . models import Teacher, TeacherYearLevel
+from . models import SubstituteAssignment, Teacher, TeacherYearLevel , TeacherAttendance ,SubstituteAssignment
 from authentication . models import User
 from director . models import Role
 from django.db import IntegrityError
 from django.core.exceptions import MultipleObjectsReturned
-from director.models import YearLevel 
-from director.serializers import ClassPeriodSerializer
+from director.models import YearLevel , Subject
+from director.serializers import ClassPeriodSerializer , subjectSerializer, YearLevelSerializer
 
 
 
@@ -117,11 +117,7 @@ class TeacherSerializer(serializers.ModelSerializer):
 
 
 # ******************TeacherYearLevelSerializer***********************************
-# class TeacherYearLevelSerializer(serializers.ModelSerializer):
-#     class Meta:
-#         model =TeacherYearLevel
-#         fields ="__all__"
-        
+
 
 from rest_framework import serializers
 from .models import TeacherYearLevel
@@ -152,6 +148,89 @@ class TeacherYearLevelSerializer(serializers.ModelSerializer):
                 'year_level': f"'{year_level}' is already assigned to another teacher."
             })
         return data
+    
 
 
+
+from django.utils import timezone
+
+class SubstituteAssignmentSerializer(serializers.ModelSerializer):
+    absent_teacher_name = serializers.SerializerMethodField()
+    substitute_teacher_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = SubstituteAssignment
+        fields = [
+            'id', 'period', 'date', 'absent_teacher', 'substitute_teacher',
+            'year_level', 'absent_teacher_name', 'substitute_teacher_name'
+        ]
+        extra_kwargs = {
+            "date": {"required": False}  # <- date ko optional banaya
+        }
+
+    def get_absent_teacher_name(self, obj):
+        return f"{obj.absent_teacher.user.first_name} {obj.absent_teacher.user.last_name}"
+    
+    def get_substitute_teacher_name(self, obj):
+        return f"{obj.substitute_teacher.user.first_name} {obj.substitute_teacher.user.last_name}"
+
+    def validate(self, attrs):
+        absent_teacher = attrs.get("absent_teacher")
+        substitute_teacher = attrs.get("substitute_teacher")
+        period = attrs.get("period")
+        year_level = attrs.get("year_level")
+        date = attrs.get("date")
+
+        # ✅ agar date missing ho to today set karo
+        if not date:
+            date = timezone.now().date()
+            attrs["date"] = date  
+
+        instance_id = self.instance.id if self.instance else None
+
+        duplicate_qs = SubstituteAssignment.objects.filter(
+            absent_teacher=absent_teacher,
+            period=period,
+            date=date,
+            year_level=year_level
+        )
+        if instance_id:
+            duplicate_qs = duplicate_qs.exclude(id=instance_id)
+
+        if duplicate_qs.exists():
+            raise serializers.ValidationError(
+                {"errors": [
+                    f"❌ Duplicate not allowed: "
+                    f"Absent Teacher '{absent_teacher.user.first_name} {absent_teacher.user.last_name}' "
+                    f"already assigned on {period} ({date}) for Year {year_level} "
+                    f"with Substitute '{duplicate_qs.first().substitute_teacher.user.first_name} {duplicate_qs.first().substitute_teacher.user.last_name}'"
+                ]}
+            )
+
+        return attrs
+
+
+# [
+    # {
+    #     "absent_teacher": 1,
+    #     "substitute_teacher": 6,
+    #     "year_level": 15,
+    #     "period": "Period 1",
+    #     "date": "2025-08-18"
+    # },
+#     {
+#         "absent_teacher": 1,
+#         "substitute_teacher": 7,
+#         "year_level": 15,
+#         "period": "Period 2",
+#         "date": "2025-08-18"
+#     },
+#     {
+#         "absent_teacher": 2,
+#         "substitute_teacher": 8,
+#         "year_level": 15,
+#         "period": "Period 1",
+#         "date": "2025-08-18"
+#     }
+# ]
 
