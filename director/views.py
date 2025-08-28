@@ -1687,6 +1687,17 @@ class AdmissionView(viewsets.ModelViewSet):
     ]
     # parser_classes=[MultiPartParser,FormParser]
     
+
+    # rte
+    @action(detail=False, methods=["get"], url_path="rte-students")
+    def rte_students(self, request):
+        queryset = self.queryset.filter(is_rte=True)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+  
+    
+    
+    
     # ***************OfficeStaffView**************
     
 class OfficeStaffView(viewsets.ModelViewSet):
