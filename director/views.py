@@ -338,7 +338,7 @@ def Director_Dashboard_Summary(request):
 @api_view(["GET"])
 def teacher_dashboard(request, id):
     try:
-        teacher = Teacher.objects.get(id=id)
+        teacher = Teacher.objects.get(user_id=id)
         teacher_name = f"{teacher.user.first_name} {teacher.user.last_name}"
 
        
@@ -382,7 +382,7 @@ def guardian_dashboard(request, id=None):
         return Response({"error": "Guardian ID is required"}, status=400)
 
     try:
-        guardian = Guardian.objects.get(id=id)  # Corrected line
+        guardian = Guardian.objects.get(user_id=id)  # Corrected line
     except Guardian.DoesNotExist:
         return Response({"error": "Guardian not found"}, status=404)
 
@@ -466,7 +466,7 @@ def student_dashboard(request, id=None):
         return Response({"error": "Student ID is required"}, status=400)
 
     try:
-        student = Student.objects.get(id=id)
+        student = Student.objects.get(user_id=id)
     except Student.DoesNotExist:
         return Response({"error": "Student not found"}, status=404)
 
