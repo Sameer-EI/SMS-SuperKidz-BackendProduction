@@ -1985,50 +1985,6 @@ class FeeRecordView(viewsets.ModelViewSet):
                     Q(student__user__first_name__icontains=search) |
                     Q(student__user__last_name__icontains=search)
                 )
-<<<<<<< HEAD
-
-        return queryset.distinct()
-    @action(detail=False, methods=['post'], url_path='notification_for_dues_students')
-    def send_due_fee_notifications(self, request):
-        due_students = (
-            FeeRecord.objects
-            .filter(due_amount__gt=0) 
-            .select_related("student__user")
-            .values(
-                'student_id',
-                'student__user__first_name',
-                'student__user__last_name',
-                'due_amount'
-            )
-            .distinct()
-        )
-
-        if not due_students.exists():
-            return Response({"status": "success", "message": "No students have due fees."})
-
-        all_status = []
-        for student in due_students:
-            student_name = f"{student['student__user__first_name']} {student['student__user__last_name']}"
-            due_amt = student['due_amount']
-            
-            message_body = (
-                f"Dear {student_name},\n\n"
-                f"Your school fees of ₹{due_amt} are pending. Kindly clear your dues at the earliest to avoid late charges.\n\n"
-                "Thank you."
-            )
-            status = send_whatsapp_message(message_body)
-            all_status.append({
-                "student": student_name,
-                "due_amount": str(due_amt),
-                "status": status
-            })
-
-        return Response({
-            "status": "completed",
-            "total_students": len(due_students),
-            "message_status": all_status
-        })    
-=======
     
         return qs.distinct()
 
@@ -2108,7 +2064,6 @@ class FeeRecordView(viewsets.ModelViewSet):
         return Response(grouped_fees)
 
   
->>>>>>> origin/main
     @action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
     def submit_single_multi_month_fees(self, request):
         student_id = request.data.get('student_id')
