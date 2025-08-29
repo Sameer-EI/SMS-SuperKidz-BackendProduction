@@ -70,7 +70,7 @@ def generate_receipt_number():
                 return code
 # ---------------------------------------------------------------------------------------------------------------------------------------------         
 
-                                                    #    Document fetch dashboard
+#    Document fetch dashboard
 
 @api_view(["GET"])
 def document_fetch_dashboard(request):
@@ -338,7 +338,7 @@ def Director_Dashboard_Summary(request):
 @api_view(["GET"])
 def teacher_dashboard(request, id):
     try:
-        teacher = Teacher.objects.get(user_id=id)
+        teacher = Teacher.objects.get(id=id)
         teacher_name = f"{teacher.user.first_name} {teacher.user.last_name}"
 
        
@@ -382,7 +382,7 @@ def guardian_dashboard(request, id=None):
         return Response({"error": "Guardian ID is required"}, status=400)
 
     try:
-        guardian = Guardian.objects.get(user__id=id)  # Corrected line
+        guardian = Guardian.objects.get(id=id)  # Corrected line
     except Guardian.DoesNotExist:
         return Response({"error": "Guardian not found"}, status=404)
 
@@ -459,13 +459,14 @@ def guardian_dashboard(request, id=None):
 #         "children": children_data
 #     })
 
+
 @api_view(["GET"])
 def student_dashboard(request, id=None):
     if not id:
         return Response({"error": "Student ID is required"}, status=400)
 
     try:
-        student = Student.objects.get(user__id=id)
+        student = Student.objects.get(id=id)
     except Student.DoesNotExist:
         return Response({"error": "Student not found"}, status=404)
 
@@ -1573,9 +1574,32 @@ class TermView(viewsets.ModelViewSet):
     serializer_class = TermSerializer
 
 
+from django_filters.rest_framework import DjangoFilterBackend  
+from .filters import AdmissionFilter
 class AdmissionView(viewsets.ModelViewSet):
     queryset = Admission.objects.all()
     serializer_class = AdmissionSerializer
+
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = AdmissionFilter
+
+    search_fields = [
+        "student__user__first_name",
+        "student__user__last_name",
+        "student__user__email",
+        "guardian__user__first_name",
+        "guardian__user__last_name",
+        "tc_letter",
+        "enrollment_no",
+        "previous_school_name",
+    ]
+
+    ordering_fields = [
+        "admission_date",
+        "year_level__level_name",
+        "student__user__first_name",
+        "previous_percentage",
+    ]
     # parser_classes=[MultiPartParser,FormParser]
     
     # ***************OfficeStaffView**************
@@ -1837,7 +1861,46 @@ class YearLevelFeeView(viewsets.ModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
         return Response(grouped_fees[0] if grouped_fees else {})
+    
+    
 
+from twilio.rest import Client 
+
+def send_whatsapp_message(message_text):
+    account_sid = 'AC75f0880296f2c1377b2ca30442bbd3e1'
+    auth_token = '01dfff8731923c8e91e47b469f533fd5'
+    twilio_whatsapp_number = 'whatsapp:+14155238886'
+    
+    phone_numbers = [
+        '+918109145639',
+        '+918847418400',
+        '+918102637122'
+    ]
+
+    client = Client(account_sid, auth_token)
+
+    sent_messages = []
+    print('\n\n\n',sent_messages)
+    for number in phone_numbers:
+        try:
+            message = client.messages.create(
+                from_=twilio_whatsapp_number,
+                body=message_text,
+                to=f'whatsapp:{number}'
+            )
+            sent_messages.append({
+                "to": number,
+                "sid": message.sid,
+                "status": "sent"
+            })
+        except Exception as e:
+            sent_messages.append({
+                "to": number,
+                "error": str(e),
+                "status": "failed"
+            })
+
+    return sent_messages
 
 #discount for students-----------
 class FeeDiscountView(viewsets.ModelViewSet):
@@ -1845,14 +1908,20 @@ class FeeDiscountView(viewsets.ModelViewSet):
     serializer_class = FeeDiscountSerializer
     permission_classes = [IsAuthenticated,IsDirector]
 
+
+from director.permission import FeeRecordPermission
+from rest_framework.filters import SearchFilter  # (agar already import nahi hai)
+from django.db.models import Q  # (agar already import nahi hai)
+
+
 # Fee Record View
 # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/
 class FeeRecordView(viewsets.ModelViewSet):
     serializer_class = FeeRecordSerializer
     queryset = FeeRecord.objects.all()
-    permission_classes = [IsAuthenticated]
+    permission_classes = [FeeRecordPermission]
     filter_backends = [SearchFilter]
-    # authentication_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     # Enables search using ?search=something
     search_fields = [
         'remarks',
@@ -1864,43 +1933,60 @@ class FeeRecordView(viewsets.ModelViewSet):
     
     # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/?year_level=6
     def get_queryset(self):
-        queryset = super().get_queryset()
+        user = self.request.user
+        qs = super().get_queryset()
+
+        #  Role-based visibility
+        if hasattr(user, "director") or hasattr(user, "officestaff") or user.is_staff or user.is_superuser:
+            pass  # full access
+        elif hasattr(user, "teacher"):
+            # only teacher's assigned YearLevels
+            teacher_year_levels = user.teacher.teacheryearlevel_set.values_list("year_level_id", flat=True)
+            qs = qs.filter(student__student_year_levels__level_id__in=teacher_year_levels)
+        elif hasattr(user, "student"):
+            # only own records
+            qs = qs.filter(student=user.student)
+        elif hasattr(user, "guardian_relation"):
+            children_ids = user.guardian_relation.studentguardian.values_list("student_id", flat=True)
+            qs = qs.filter(student_id__in=children_ids)
+        else:
+            qs = qs.none()
+
+        # Keep your existing filters
         request = self.request
         
-
         month = request.query_params.get('month')
         if month:
-            queryset = queryset.filter(month=month)
+            qs = qs.filter(month=month)
 
         school_year = request.query_params.get('school_year')
         if school_year:
-            queryset = queryset.filter(school_year__year__year_name = school_year)
+            qs = qs.filter(school_year__year__year_name = school_year)
 
         student_id = request.query_params.get('student_id')
         if student_id:
-            queryset = queryset.filter(student_id=student_id)
+            qs = qs.filter(student_id=student_id)
 
         year_level_id = request.query_params.get('year_level')
         if year_level_id:
-            queryset = queryset.filter(year_level_fees__year_level__id=year_level_id)
-
+            qs = qs.filter(year_level_fees__year_level__id=year_level_id)
+    
         search = request.query_params.get('search')
         if search:
             search = search.strip()
-            search_parts = search.split(" ")
-
-            if len(search_parts) > 1:
-                queryset = queryset.filter(
-                    Q(student__user__first_name__icontains=search_parts[0]) &
-                    Q(student__user__last_name__icontains=' '.join(search_parts[1:]))
+            parts = search.split(" ")
+            if len(parts) > 1:
+                qs = qs.filter(
+                    Q(student__user__first_name__icontains=parts[0]) &
+                    Q(student__user__last_name__icontains=' '.join(parts[1:]))
                 )
             else:
-                queryset = queryset.filter(
+                qs = qs.filter(
                     Q(student__user__first_name__icontains=search) |
                     Q(student__user__last_name__icontains=search)
                 )
-
-        return queryset.distinct()
+    
+        return qs.distinct()
 
     # removed commented or unnecessary code from line 1906 - 2266
         # commented as of 26Aug25 at 04:34 PM
@@ -2069,11 +2155,21 @@ class FeeRecordView(viewsets.ModelViewSet):
             "remarks": remarks,
             "received_by": received_by
         }
+        message_text = (
+            f"Dear {first_record.student.user.get_full_name()},\n"
+            f"Your fee for {', '.join(months)} month has been successfully recorded.\n"
+            f"Receipt No: {receipt_number}\n"
+            f"Total Amount: ₹{total_amount:.2f}\n"
+            f"Paid Amount: ₹{paid_amount:.2f}\n"
+            f"Due Amount: ₹{total_due:.2f}\n"
+            f"Payment Mode: {payment_mode}\n"
+            f"Thank you!"
+        )
+        send_whatsapp_message(message_text)
 
         return Response(combined_response, status=status.HTTP_200_OK)
     
     
-
     ### Razorpay custom views
     # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/initiate-payment/
     ### using custom view 
@@ -2158,8 +2254,6 @@ class FeeRecordView(viewsets.ModelViewSet):
             }, status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-    
     
     
     # corrected amount issue as of 19June25 at 02:50 PM
@@ -2276,8 +2370,6 @@ class FeeRecordView(viewsets.ModelViewSet):
     
     
     # retrieving students who dont have fee record at all
-    
-
     @action(detail=False, methods=['get'], url_path="defaulters")
     def defaulters(self, request):
         # Last payment date for each student
@@ -2324,10 +2416,9 @@ class FeeRecordView(viewsets.ModelViewSet):
                 })
 
         return Response(defaulters_list)
-    
-    
-# Added as of 30June25 at 01:46 PM
-# Fee card API for individual student
+
+    # Added as of 30June25 at 01:46 PM
+    # Fee card API for individual student
     # https://187gwsw1-7000.inc1.devtunnels.ms/d/fee-record/student-fee-card/?student_id=12
     
     @action(detail=False, methods=["get"], url_path="student-fee-card")
@@ -2393,7 +2484,6 @@ class FeeRecordView(viewsets.ModelViewSet):
             })
 
         return Response(result, status=status.HTTP_200_OK)
-
 
 
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated],url_path="student_unpaid_fees")
@@ -2464,9 +2554,11 @@ class FeeRecordView(viewsets.ModelViewSet):
         else:
             return Response({"detail": "Permission denied."}, status=403)
 
-        serializer = FeeRecordSerializer(queryset, many=True)
-        return Response(serializer.data)
+        # serializer = FeeRecordSerializer(queryset, many=True)
+        # return Response(serializer.data)
 
+        serializer = FeeRecordSerializer(queryset, many=True, context={"request": request})
+        return Response(serializer.data)
 
 
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="overall_unpaid_fees")
@@ -2551,6 +2643,7 @@ class FeeRecordView(viewsets.ModelViewSet):
                 })
 
         return Response(unpaid_fee_records, status=status.HTTP_200_OK)
+
 
     @action(detail=False, methods=["get"], url_path="highest_dues_students")
     def highest_dues_students(self, request):
@@ -2650,7 +2743,473 @@ class FeeRecordView(viewsets.ModelViewSet):
                 "remarks": record.remarks,
                 "received_by": record.received_by,
             })
-        return Response(data)
+        return Response(data)    
+    
+
+
+### --------------------- Income Distribution Dashboard API (Guardian name and student name and id added) --------------------------- ###
+### ------------------- As of 03 JUly at 12:35 --------------- ###   By daniyal
+
+@api_view(["GET"])
+def guardian_income_distribution_with_student(request):
+    # Define updated income brackets
+    brackets = {
+        "Below 1 Lakh": (0, 100000),
+        "1 – 3 Lakhs": (100001, 300000),
+        "3 – 5 Lakhs": (300001, 500000),
+        "5 – 8 Lakhs": (500001, 800000),
+        "8 – 10 Lakhs": (800001, 1000000),
+        "Above 10 Lakhs": (1000001, None),
+    }
+
+    total_guardians = Guardian.objects.exclude(annual_income__isnull=True).count()
+    results = []
+    #---------- Count and guardian filter as it is
+    for label, (min_income, max_income) in brackets.items():
+        if max_income is not None:
+            qs = Guardian.objects.filter(
+                annual_income__gte=min_income,
+                annual_income__lte=max_income
+            )
+        else:
+            qs = Guardian.objects.filter(
+                annual_income__gte=min_income,
+            )  
+        count = qs.count() 
+        guardian_names = [f"{g.user.first_name} {g.user.last_name}" for g in qs]  
+
+        student_data = [f" id:{s.studentguardian.get().student.id} {s.studentguardian.get().student.user.first_name} {s.studentguardian.get().student.user.last_name}" for s in qs]
+
+        percentage = round((count / total_guardians) * 100, 2) if total_guardians > 0 else 0.0
+
+        results.append({
+            "income_range": label,
+            "guardians":guardian_names,
+            "count": count,
+            "percentage": percentage,
+            "student info": student_data
+        })
+        
+    return Response(results, status=status.HTTP_200_OK)
+### -------------------------------------------------------------- ###    
+
+
+### --------------------- Deactivation of the users [NO access to them and data still stored] --------------------------- ###
+### ------------------- As of 24 JUly at 12:00 --------------- ###   By daniyal
+from rest_framework.decorators import permission_classes
+from django.db import transaction
+from authentication.models import UserStatusLog
+from authentication.serializers import UserSerializer
+
+@api_view(["POST"])
+@permission_classes([RoleBasedUserManagementPermission])
+def deactivate_user(request):
+    deactivate_user.api_section = "deactivate_user" 
+    try:
+        with transaction.atomic():
+            user_id = request.data.get("user_id")
+            user = User.objects.all_including_inactive().get(id=user_id)
+            if not user.is_active:
+                return Response({"error": "User already deactivated"})
+            user.is_active = False
+            user.deactivation_reason = request.data.get('reason', '')
+            user.deactivation_date = timezone.now()
+            user.reactivation_date = None
+            user.save()
+            
+            # Handle Student    (classes [clear], admission, feeRecord, document, )
+            student = getattr(user, 'student', None)
+            if student is not None:
+                student = user.student
+                student.is_active = False
+                student.save()
+                # Clear Student.classes and StudentYearLevel 
+                student.classes.clear()
+                # Clear StudentYearLevel (handle missing studenyearlevel_set)
+                try:
+                    StudentYearLevel.objects.filter(student=student).delete()
+                except AttributeError:
+                    pass  # No StudentYearLevel relationship
+
+                # Clear related Admissions
+                admissions = Admission.objects.filter(student=student)
+                for admission in admissions:
+                    admission.is_active = False
+                    admission.save()
+                # Clear related FeeRecords
+                fee_records = FeeRecord.objects.filter(student=student)
+                for fee_record in fee_records:
+                    fee_record.is_active = False
+                    fee_record.save()
+                # Clear related Documents
+                documents = Document.objects.filter(student=student)
+                for document in documents:
+                    document.is_active = False
+                    document.save()
+                # Deactivate related Addresses
+                addresses = Address.objects.filter(user=user)
+                for address in addresses:
+                    address.is_active = False
+                    address.save()
+                # Deactivate Banking Details
+                bank_details = BankingDetail.objects.filter(user=user)
+                for bank_detail in bank_details:
+                    bank_detail.is_active = False
+                    bank_detail.save()    
+
+            # Handle Guardian   (Student guardian relation [clear], address, docs)
+            guardian = getattr(user, 'guardian_relation', None)
+            if guardian is not None:
+                guardian = user.guardian_relation
+                guardian.is_active = False
+                guardian.save()
+                # Clear StudentGuardian connections
+                student_guardians = StudentGuardian.objects.filter(guardian=guardian)
+                for sg in student_guardians:
+                    sg.delete()  # Clear the relationship
+                # Deactivate related Addresses
+                addresses = Address.objects.filter(user=user)
+                for address in addresses:
+                    address.is_active = False
+                    address.save()
+                # Clear related Documents
+                documents = Document.objects.filter(guardian=guardian)
+                for document in documents:
+                    document.is_active = False
+                    document.save() 
+                
+            # Handle Teacher  (classPeriod [clear {M2M}], address, docs)
+            teacher = getattr(user, 'teacher', None)
+            if teacher is not None:
+                teacher = user.teacher
+                teacher.is_active = False
+                teacher.save()
+
+                # Clear TeacherYearLevel connections
+                teacher.year_levels.clear()
+                # Remove teacher from ClassPeriod assignments
+                class_periods = ClassPeriod.objects.filter(teacher=teacher)
+                for cp in class_periods:
+                    cp.teacher = None  # Set to None to remove assignment
+                    cp.save()
+                ClassPeriod.objects.filter(teacher=teacher).delete()
+                # Deactivate related Addresses
+                addresses = Address.objects.filter(user=user)
+                for address in addresses:
+                    address.is_active = False
+                    address.save()
+                # Clear related Documents
+                documents = Document.objects.filter(teacher=teacher)
+                for document in documents:
+                    document.is_active = False
+                    document.save()    
+                    
+
+            # Handle OfficeStaff  ([student,teacher,admission {clear M2M}, address, docs])
+            office_staff = getattr(user, 'office_staff', None)
+            if office_staff is None:
+                # Attempt to fetch OfficeStaff directly to confirm relation
+                try:
+                    office_staff = OfficeStaff.objects.get(user=user)
+                except OfficeStaff.DoesNotExist:
+                    print(f"No OfficeStaff found for user {user.id} via query")
+            else:
+                try:
+                    office_staff.is_active = False
+                    office_staff.save()
+                    # Clear ManyToMany relationships
+                    office_staff.student.clear()
+                    office_staff.teacher.clear()
+                    office_staff.admissions.clear()
+                    # Deactivate related Addresses
+                    addresses = Address.objects.filter(user=user)
+                    for address in addresses:
+                        address.is_active = False
+                        address.save()
+                    # Clear related Documents
+                    documents = Document.objects.filter(office_staff=office_staff)
+                    for document in documents:
+                        document.is_active = False
+                        document.save()
+                except Exception as e:
+                    return Response({"error": f"Failed to deactivate OfficeStaff: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Handle Director (if needed)
+            director = getattr(user, 'director', None)
+            if director is not None:
+                director = user.director
+                director.is_active = False
+                director.save()
+                # Deactivate related Addresses
+                addresses = Address.objects.filter(user=user)
+                for address in addresses:
+                    address.is_active = False
+                    address.save()
+
+            # log termination
+            UserStatusLog.objects.create(user=user, status='TERMINATED', reason=user.deactivation_reason)
+            serializer = UserSerializer(user)
+            return Response({
+                "message": f"User {user.id} has been successfully terminated.",
+                "user_id": user.id,
+                "data": serializer.data})
+    except User.DoesNotExist:
+        return Response({"error": "User not found"})
+ 
+### -------------------------------------------------------------- ###
+
+# *************** Reactivation of the User *******************************************************
+from django.core.exceptions import ObjectDoesNotExist
+
+@api_view(["POST"])
+@permission_classes([RoleBasedUserManagementPermission])
+def reactivate_user(request):
+    reactivate_user.api_section = "reactivate_user" 
+    try:
+        with transaction.atomic():
+            user_id = request.data.get("user_id")
+            user = User.objects.all_including_inactive().get(id=user_id)
+            if user.is_active:
+                return Response({"error": "User already active"})
+            user.is_active = True
+            user.deactivation_reason = None
+            user.reactivation_date = timezone.now()
+            user.save()
+            
+            # Handle Student    ([classes {make}, studentyearlevel, studentguardian] , admission, feeRecord, document, address,
+            # banking details )
+            student = getattr(user, 'student', None)
+            if student is not None:
+                student = user.student
+                student.is_active = True
+                student.save()
+
+                # retrieve related Admissions
+                admissions = Admission.objects.all_including_inactive().filter(student=student)
+                for admission in admissions:
+                    admission.is_active = True
+                    admission.save()
+                # retrieve related FeeRecords
+                fee_records = FeeRecord.objects.all_including_inactive().filter(student=student)
+                for fee_record in fee_records:
+                    fee_record.is_active = True
+                    fee_record.save()
+                # retrieve related Documents
+                documents = Document.objects.all_including_inactive().filter(student=student)
+                for document in documents:
+                    document.is_active = True
+                    document.save()
+                # retrieve related Addresses
+                addresses = Address.objects.all_including_inactive().filter(user=user)
+                for address in addresses:
+                    address.is_active = True
+                    address.save()
+                # retrieve Banking Details
+                bank_details = BankingDetail.objects.all_including_inactive().filter(user=user)
+                for bank_detail in bank_details:
+                    bank_detail.is_active = True
+                    bank_detail.save() 
+
+                
+                # Create Student.classes connection
+                class_period_ids = request.data.get("class_period_ids", [])
+                if class_period_ids:
+                    valid_class_period = ClassPeriod.objects.filter(id__in=class_period_ids)
+                    if valid_class_period:
+                        student.classes.set(valid_class_period)
+                    else:
+                        return Response({"erorr": "Invalid class period ids"})
+                    
+                # Create StudentYearLevel connection 
+                year_id = request.data.get("year_id")
+                level_id = request.data.get("level_id")
+                
+                if year_id and level_id:
+                    try:
+                        level = YearLevel.objects.get(id=level_id)
+                        year = SchoolYear.objects.get(id=year_id)
+                        StudentYearLevel.objects.update_or_create(
+                            student = student,
+                            defaults={"year": year, "level": level}
+                        )
+                    except ObjectDoesNotExist:
+                        return Response({"error":"Invalid year level id"})
+                    
+                # Create StudentGuardian connections
+                guardian_ids = request.data.get("guardian_ids", [])
+                if guardian_ids:
+                    valid_guardians = Guardian.objects.filter(id__in=guardian_ids, is_active=True)
+                    if valid_guardians.exists():
+                        guardian_type_id = request.data.get("guardian_type_id")
+                        try:
+                            guardian_type = GuardianType.objects.get(id=guardian_type_id) if guardian_type_id else GuardianType.objects.get(name="Parent")
+                            for guardian in valid_guardians:
+                                StudentGuardian.objects.update_or_create(
+                                    student=student,
+                                    guardian=guardian,
+                                    defaults={'guardian_type': guardian_type}
+                                )
+                        except ObjectDoesNotExist:
+                            return Response({"error": "Invalid or inactive GuardianType ID provided"}, status=status.HTTP_400_BAD_REQUEST)
+                    else:
+                        return Response({"error": "No valid or active Guardian IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
+                    
+
+            # Handle Guardian   (Student guardian relation [make], address, docs)
+            guardian = getattr(user, 'guardian_relation', None)
+            if guardian is not None:
+                guardian = user.guardian_relation
+                guardian.is_active = True
+                guardian.save()
+
+                # update StudentGuardian connections
+                student_ids = request.data.get("student_ids", [])
+                if student_ids:
+                    valid_students = Student.objects.filter(id__in=student_ids, is_active=True)
+                    if valid_students.exists():
+                        guardian_type_id = request.data.get("guardian_type_id")
+                        try:
+                            guardian_type = GuardianType.objects.get(id=guardian_type_id) if guardian_type_id else GuardianType.objects.get(name="Parent")  
+                            for student in valid_students:
+                                StudentGuardian.objects.update_or_create(
+                                    student=student,
+                                    guardian=guardian,
+                                    defaults={'guardian_type': guardian_type}
+                                )
+                        except ObjectDoesNotExist:
+                            return Response({"error": "Invalid or inactive GuardianType ID provided"})
+                    else:
+                        return Response({"error": "No valid or active Student IDs provided"})
+                
+                # retrieve related Addresses
+                addresses = Address.objects.all_including_inactive().filter(user=user)
+                for address in addresses:
+                    address.is_active = True
+                    address.save()
+                # retrieve related Documents
+                documents = Document.objects.all_including_inactive().filter(guardian=guardian)
+                for document in documents:
+                    document.is_active = True
+                    document.save() 
+                
+            # Handle Teacher  (classPeriod [create {M2M}], teacheryearlevel, address, docs)
+            teacher = getattr(user, 'teacher', None)
+            if teacher is not None:
+                teacher = user.teacher
+                teacher.is_active = True
+                teacher.save()
+
+                # Assign teacher from ClassPeriod assignments
+                class_period_ids = request.data.get("class_period_ids", [])
+                if class_period_ids:
+                    valid_class_periods = ClassPeriod.objects.filter(id__in=class_period_ids)
+                    if valid_class_periods.exists():
+                        for class_period in valid_class_periods:
+                            class_period.teacher = teacher
+                            class_period.save()
+                    else:
+                        return Response({"error": "No valid or active ClassPeriod IDs provided"})
+
+                # Teacher year level reassigning
+                year_level_id = request.data.get("year_level_id", [])
+                if year_level_id:
+                    valid_year_levels = YearLevel.objects.filter(id=year_level_id)
+                    if valid_year_levels.exists():
+                        teacher.year_levels.set(valid_year_levels)
+                    else:
+                        return Response({"error": "No valid or active YearLevel IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+                # retrieve related Addresses
+                addresses = Address.objects.all_including_inactive().filter(user=user)
+                for address in addresses:
+                    address.is_active = True
+                    address.save()
+                # retrieve related Documents
+                documents = Document.objects.all_including_inactive().filter(teacher=teacher)
+                for document in documents:
+                    document.is_active = True
+                    document.save()    
+                    
+
+            # Handle OfficeStaff  ([student,teacher,admisson {clear M2M}, address, docs])
+            office_staff = getattr(user, 'office_staff', None)
+            if office_staff is not None:
+                office_staff = user.office_staff
+                office_staff.is_active = True
+                office_staff.save()
+
+                # # Create ManyToMany relationships
+                #  Student connection
+                student_ids = request.data.get("student_ids", [])
+                if student_ids:
+                    valid_students = Student.objects.filter(id__in=student_ids, is_active=True)
+                    if valid_students.exists():
+                        office_staff.student.set(valid_students)
+                    else:
+                        return Response({"error": "No valid or active Student IDs provided"})
+
+                # Teacher connection
+                teacher_ids  = request.data.get("teacher_ids", [])
+                if teacher_ids:
+                    valid_teachers = Teacher.objects.filter(id__in=teacher_ids, is_active=True)
+                    if valid_teachers.exists():
+                        office_staff.teacher.set(valid_teachers)
+                    else:
+                        return Response({"error": "No valid or active Teacher IDs provided"})
+
+                # Admission connection
+                admission_ids = request.data.get("admission_ids", [])
+                if admission_ids:
+                    valid_admissions = Admission.objects.filter(id__in=admission_ids, is_active=True)
+                    if valid_admissions.exists():
+                        office_staff.admissions.set(valid_admissions)
+                    else:
+                        return Response({"error":"No valid or active Admission IDs provided"})
+                    
+
+                # retrieve related Addresses
+                addresses = Address.objects.all_including_inactive().filter(user=user)
+                for address in addresses:
+                    address.is_active = True
+                    address.save()
+                # retrieve related Documents
+                documents = Document.objects.all_including_inactive().filter(office_staff=office_staff)
+                for document in documents:
+                    document.is_active = True
+                    document.save() 
+
+            
+            # Handle Director (if needed)
+            director = getattr(user, 'director', None)
+            if director is not None:
+                director = user.director
+                director.is_active = True
+                director.save()
+                # Deactivate related Addresses
+                addresses = Address.objects.all_including_inactive().filter(user=user)
+                for address in addresses:
+                    address.is_active = True
+                    address.save()
+
+            # log termination
+            UserStatusLog.objects.create(user=user, status='ACTIVATED', reason=user.deactivation_reason)
+            serializer = UserSerializer(user)
+            return Response({
+                "message": f"User {user.id} has been successfully reactivated.",
+                "user_id": user.id,
+                "data": serializer.data})
+    except User.DoesNotExist:
+        return Response({"error": "User not found"})
+    
+### -------------------------------------------------------------- ###
+# *************** List of the Deactivated *******************************************************
+
+@api_view(["GET"])
+def list_inactive_users(request):
+    users = User.objects.all_including_inactive().filter(is_active=False)
+    serializer = UserSerializer(users, many=True)
+    return Response(serializer.data)
+
 
 #--------------------- Exam Module 
 
@@ -4092,14 +4651,349 @@ class ReportCardViewSet(viewsets.ModelViewSet):
 
 
 
-# class IncomeCategoryView(viewsets.ModelViewSet):
-#     queryset = IncomeCategory.objects.all()
-#     serializer_class = IncomeCategorySerializer
-#     permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+# ---------------------Expense 
 
-# class SchoolIncomeViewSet(viewsets.ModelViewSet):
-#     queryset = SchoolIncome.objects.all()
-#     serializer_class = SchoolIncomeSerializer
-#     permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+class ExpenseCategoryView(viewsets.ModelViewSet):
+    queryset = ExpenseCategory.objects.all()
+    serializer_class = ExpenseCategorySerializer
+    permission_classes = [IsAuthenticated, ExpensePermission]
+
+    @action(detail=False, methods=["get"], url_path="get_category")
+    def get_categories(self, request):
+        categories = self.get_queryset()
+        serializer = self.get_serializer(categories, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["post"], url_path="create_category")
+    def create_category(self, request):
+        name = request.data.get("name")
+        if not name:
+            return Response({"error": "Name is required."}, status=400)
+
+        category, created = ExpenseCategory.objects.get_or_create(name=name)
+        serializer = self.get_serializer(category)
+        message = "Category created successfully." if created else "Category already exists."
+        return Response({"message": message, "data": serializer.data}, status=201 if created else 200)
     
+
+    @action(detail=False, methods=["put"], url_path="update_category")
+    def update_category(self, request):
+        try:
+            exam_type = ExpenseCategory.objects.get(id=request.data.get("id"))
+        except ExpenseCategory.DoesNotExist:
+            return Response({"error": "ExpenseCategory not found"}, status=404)
+
+        serializer = self.get_serializer(exam_type, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({"message": "category updated successfully", "data": serializer.data})
+        return Response(serializer.errors, status=400)
+
+    @action(detail=False, methods=["delete"], url_path="delete_category")
+    def delete_category(self, request):
+        try:
+            exam_type = ExpenseCategory.objects.get(id=request.data.get("id"))
+            exam_type.delete()
+            return Response({"message": "category deleted successfully."})
+        except ExpenseCategory.DoesNotExist:
+            return Response({"error": "category not found"}, status=404)
+
+
+def get_current_school_year():
+    today = date.today()
+    return SchoolYear.objects.filter(
+        start_date__lte=today,
+        end_date__gte=today
+    ).first()
+
+class SchoolExpenseView(viewsets.ModelViewSet):
+    queryset = SchoolExpense.objects.all()
+    serializer_class = SchoolExpenseSerializer
+    permission_classes = [IsAuthenticated, ExpensePermission]
+
+    # def get_queryset(self):
+    #     current_year = get_current_school_year()
+    #     if current_year:
+    #         return SchoolExpense.objects.filter(school_year=current_year)
+    #     return SchoolExpense.objects.none()
+
+    def get_queryset(self):
+        queryset = SchoolExpense.objects.all()
+
+        school_year_id = self.request.query_params.get("school_year")
+        if school_year_id:
+            queryset = queryset.filter(school_year_id=school_year_id)
+        else:
+            current_year = get_current_school_year()
+            if current_year:
+                queryset = queryset.filter(school_year=current_year)
+
+        category_id = self.request.query_params.get("category")
+        if category_id:
+            queryset = queryset.filter(category_id=category_id)
+
+        return queryset
+
+
+
+    def list(self, request):
+        current_year = get_current_school_year()
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+        # return Response({
+        #     "school_year": current_year.year_name if current_year else None,
+        #     "data": serializer.data
+        # })
+
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        roles = [role.name.lower() for role in request.user.role.all()]
+
+        approved_by = None
+        status_value = "pending"
+
+        if "director" in roles:
+            approved_by = request.user
+            status_value = "approved"
+
+        elif "office staff" in roles:
+            approved_by = None
+            status_value = "pending"
+
+        expense = SchoolExpense.objects.create(
+            category=serializer.validated_data.get("category"),
+            school_year=serializer.validated_data.get("school_year"),
+            amount=serializer.validated_data.get("amount"),
+            description=serializer.validated_data.get("description"),
+            expense_date=serializer.validated_data.get("expense_date"),
+            payment_method=serializer.validated_data.get("payment_method"),
+            created_by=request.user,
+            approved_by=approved_by,
+            status=status_value,
+        )
+
+        return Response({
+            "message": "Expense created successfully",
+            "data": SchoolExpenseSerializer(expense).data
+        })
+
+
+    # ===============================
+    # def update(self, request, *args, **kwargs):
+    #     partial = kwargs.pop('partial', False)
+    #     instance = self.get_object()
+    #     serializer = self.get_serializer(instance, data=request.data, partial=partial)
+    #     serializer.is_valid(raise_exception=True)
+
+    #     roles = [role.name.lower() for role in request.user.role.all()]
+
+    #     if "status" in serializer.validated_data:
+    #         if "director" not in roles:
+    #             return Response(
+    #                 {"error": "Only Director can update expense status."},
+    #                 status=status.HTTP_403_FORBIDDEN
+    #             )
+    #         else:
+    #             instance.status = serializer.validated_data["status"]
+    #             instance.approved_by = request.user  
+
+    #     serializer.validated_data.pop("status", None)  
+
+    #     self.perform_update(serializer)
+
+    #     return Response({
+    #         "message": "Expense updated successfully",
+    #         "data": self.get_serializer(instance).data
+    #     })
+    # ========================
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+
+        roles = [role.name.lower() for role in request.user.role.all()]
+
+        if "status" in serializer.validated_data:
+            if "director" not in roles:
+                return Response(
+                    {"error": "Only Director can update expense status."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            else:
+                instance.status = serializer.validated_data["status"]
+                instance.approved_by = request.user   
+
+        serializer.validated_data.pop("approved_by", None)
+
+        self.perform_update(serializer)
+
+        return Response({
+            "message": "Expense updated successfully",
+            "data": self.get_serializer(instance).data
+        })
+
+
+    def destroy(self, request):
+        instance = self.get_object()
+        instance.delete()
+        return Response(
+            {"message": "Expense deleted successfully"},
+            status=status.HTTP_200_OK
+        )
     
+
+
+class EmployeeView(viewsets.ModelViewSet):
+    queryset = Employee.objects.all()
+    serializer_class = EmployeeSerializer
+    permission_classes = [IsAuthenticated,ExpensePermission]
+
+    @action(detail=False, methods=["get"], url_path="get_emp")
+    def get_emp(self, request):
+        emp = self.get_queryset()
+        serializer = self.get_serializer(emp, many=True)
+        return Response(serializer.data)
+
+    # @action(detail=False, methods=["post"], url_path="create_emp")
+    # def create_emp(self, request):
+    #     user = request.data.get("user")
+    #     if not user:
+    #         return Response({"error": "user is required."}, status=400)
+
+    #     category, created = Employee.objects.get_or_create(user=user)
+    #     serializer = self.get_serializer(category)
+    #     message = "Employee salary created successfully." if created else "Employee salary already exists."
+    #     return Response({"message": message, "data": serializer.data}, status=201 if created else 200)
+    
+
+    @action(detail=False, methods=["post"], url_path="create_emp")
+    def create_emp(self, request):
+        user_id = request.data.get("user")
+        if not user_id:
+            return Response({"error": "user is required."}, status=400)
+
+        employee, created = Employee.objects.get_or_create(
+            user_id=user_id,
+            defaults={
+                "joining_date": request.data.get("joining_date"),
+                "base_salary": request.data.get("base_salary"),
+            }
+        )
+        serializer = self.get_serializer(employee)
+        message = "Employee created successfully." if created else "Employee already exists."
+        return Response({"message": message, "data": serializer.data}, status=201 if created else 200)
+
+
+    @action(detail=False, methods=["put"], url_path="update_emp")
+    # def update_emp(self, request):
+    #     try:
+    #         employee = Employee.objects.get(id=request.data.get("id"))
+    #     except Employee.DoesNotExist:
+    #         return Response({"error": "Employee not found"}, status=404)
+
+    #     serializer = self.get_serializer(employee, data=request.data, partial=True)
+    #     if serializer.is_valid():
+    #         serializer.save()
+    #         return Response({"message": "Employee updated successfully", "data": serializer.data})
+    #     return Response(serializer.errors, status=400)
+
+
+    def update_emp(self, request):
+        user_id = request.data.get("user")
+        joining_date = request.data.get("joining_date")
+
+        if not user_id or not joining_date:
+            return Response({"error": "user and joining_date are required."}, status=400)
+
+        try:
+            employee = Employee.objects.get(user_id=user_id, joining_date=joining_date)
+        except Employee.DoesNotExist:
+            return Response({"error": "Employee not found with this user and joining_date"}, status=404)
+
+        serializer = self.get_serializer(employee, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({"message": "Employee updated successfully", "data": serializer.data})
+        return Response(serializer.errors, status=400)
+
+
+    @action(detail=False, methods=["delete"], url_path="delete_emp")
+    def delete_emp(self, request):
+        try:
+            employee = Employee.objects.get(id=request.data.get("id"))
+            employee.delete()
+            return Response({"message": "Employee deleted successfully."})
+        except Employee.DoesNotExist:
+            return Response({"error": "Employee not found"}, status=404)
+
+
+class EmployeeSalaryView(viewsets.ModelViewSet):
+    queryset = EmployeeSalary.objects.all()
+    serializer_class = EmployeeSalarySerializer
+    permission_classes = [IsAuthenticated,ExpensePermission]
+
+    def get_queryset(self):
+        user = self.request.user
+
+        if hasattr(user, "employee"):
+            return EmployeeSalary.objects.filter(user=user.employee)
+        return EmployeeSalary.objects.all()
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        if instance.status == "paid":
+            instance.paid_by = self.request.user
+            instance.save()
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        if instance.status == "paid":
+            instance.paid_by = self.request.user
+            instance.save()
+
+
+class IncomeCategoryView(viewsets.ModelViewSet):
+    queryset = IncomeCategory.objects.all()
+    serializer_class = IncomeCategorySerializer
+    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+
+class SchoolIncomeViewSet(viewsets.ModelViewSet):
+    queryset = SchoolIncome.objects.all()
+    serializer_class = SchoolIncomeSerializer
+    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+    
+    def get_queryset(self):
+        qs = super().get_queryset()
+        request = self.request
+        today = date.today()
+        # the current school year
+        current_school_year = SchoolYear.objects.filter(
+            Q(start_date__lte=today), Q(end_date__gte=today)
+        ).first()
+
+
+        # Get school_year param
+        school_year_id = request.query_params.get("school_year")
+
+        if school_year_id:
+            qs = qs.filter(school_year_id=school_year_id) 
+        elif current_school_year:
+            qs = qs.filter(school_year=current_school_year)
+            
+        # apply optional filters
+        category_id = request.query_params.get("category")
+        if category_id:
+            qs = qs.filter(category_id=category_id)
+
+        month = request.query_params.get("month")
+        if month:
+            qs = qs.filter(month=month)
+
+       
+        return qs

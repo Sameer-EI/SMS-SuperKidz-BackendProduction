@@ -42,8 +42,12 @@ router.register(r'personal-social-grades', PersonalSocialGradeViewSet, basename=
 router.register(r'non-scholastic-grades', NonScholasticGradeViewSet, basename='non-scholastic')
 router.register(r'report-cards', ReportCardViewSet, basename='report-cards')
 
-# router.register(r'income-category', IncomeCategoryView, basename='income-category')
-# router.register(r'school-income', SchoolIncomeViewSet, basename='school-income')
+router.register(r'income-category', IncomeCategoryView, basename='income-category')
+router.register(r'school-income', SchoolIncomeViewSet, basename='school-income')
+router.register(r'Expense-Category', ExpenseCategoryView)
+router.register(r'School-Expense', SchoolExpenseView)
+router.register(r'Employee',EmployeeView,basename=Employee)
+router.register(r'Employee-salary',EmployeeSalaryView)
 
 
 urlpatterns = [
@@ -63,7 +67,6 @@ urlpatterns = [
     path("student_dashboard/<int:id>/", student_dashboard),
     path('office-staff-dashboard/', office_staff_dashboard),
     path("director/fee-summary/", director_fee_summary),
-    path('income_filter/', guardian_income_distribution),
     path('livelihood_filter/', livelihood_distribution),
     path('periods/', assigned_periods),
     path("fetch_upload_doc/",document_fetch_dashboard),
@@ -73,8 +76,13 @@ urlpatterns = [
     # As of 25June25 at 12:35
     path('student-category-dashboard/', student_category, name='student-category'),
     path('income-distribution-dashboard/', guardian_income_distribution, name='guardian-income-distribution'), 
+    # path('income-distribution-dashboard-student/', guardian_income_distribution_with_student, name='guardian-income-distribution-student'), 
     path("fee-dashboard/", fee_dashboard, name="fee-dashboard-summary"),    # complete dashboard
-    
+    # Termination process api below
+    path("deactivate-user/", deactivate_user, name="deactivate-user"),
+    path("reactivate-user/", reactivate_user, name="reactivate-user"),
+    path("inactive-user/", list_inactive_users, name="inactive-user"),
+
 ]
 
 

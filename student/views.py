@@ -23,6 +23,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated,AllowAny
 
 
+
 @api_view(["GET", "POST", "PUT", "DELETE"])
 def GuardianTypeView(request, pk=None):
     if request.method == "GET":
@@ -131,13 +132,35 @@ def GuardianTypeView(request, pk=None):
 
 
 # 
-    
-    
+from django_filters.rest_framework import DjangoFilterBackend  
+from .filters import StudentFilter
 class StudentView(ModelViewSet):
     queryset = Student.objects.all()
+    # queryset = Student.objects.filter(is_active=True)
     serializer_class = StudentSerializer
-    filter_backends = [filters.SearchFilter]
-    search_fields = ['user__email', 'user__first_name', 'enrolment_date']
+    
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = StudentFilter
+
+    search_fields = [
+        'user__email', 
+        'user__first_name'
+        "student__first_name",
+        "student__last_name",
+        "guardian__first_name",
+        "guardian__last_name",
+        "tc_letter",
+        "enrollment_no",
+        "previous_school_name",
+    ]
+
+    ordering_fields = [
+    "user__first_name",          
+    "height",
+    "weight",
+    "date_of_birth",
+    "scholar_number",
+]
     
     def get_permissions(self):
         """Public access for list/retrieve; JWT required for others."""
@@ -306,7 +329,7 @@ class StudentYearLevelView(viewsets.ModelViewSet):
 # Added as of 18jul25 at 03:04 PM
 
 class StudentGuardianView(viewsets.ModelViewSet):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     serializer_class = StudentSerializer  # We only want to show Student info
 
     def get_queryset(self):
@@ -317,4 +340,6 @@ class StudentGuardianView(viewsets.ModelViewSet):
             guardian=guardian
         ).values_list('student_id', flat=True)
 
-        return Student.objects.filter(id__in=student_ids)            
+        return Student.objects.filter(id__in=student_ids)   
+    
+    

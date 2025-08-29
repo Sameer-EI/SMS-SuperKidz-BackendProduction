@@ -17,6 +17,8 @@ from django.utils import timezone
 from decimal import Decimal
 from collections import defaultdict
 from django.db.models import Max
+from decimal import Decimal
+from django.db.models import Sum
 
 
 
@@ -98,13 +100,13 @@ class CountrySerializer(serializers.ModelSerializer):
 
 
 class subjectSerializer(serializers.ModelSerializer):
-    department = serializers.SerializerMethodField()
+    department_name = serializers.SerializerMethodField()  # repalced department to department_name because of SerializerMethodField (Read Only Field).
 
     class Meta:
         model = Subject
-        fields = ['id', 'subject_name', 'department'] 
+        fields = ['id', 'subject_name', 'department', 'department_name'] 
 
-    def get_department(self, obj):
+    def get_department_name(self, obj):
         return obj.department.department_name if obj.department else None
 
 
@@ -365,7 +367,7 @@ class AdmissionSerializer(serializers.ModelSerializer):
             'year_level', 'school_year',
             'admission_date', 'previous_school_name', 'previous_standard_studied',
             'tc_letter', 'emergency_contact_no', 'entire_road_distance_from_home_to_school',
-            'obtain_marks', 'total_marks', 'previous_percentage','enrollment_no'
+            'obtain_marks', 'total_marks', 'previous_percentage','enrollment_no','is_rte', 'rte_number'
         ]
         read_only_fields = [
             'admission_date',
@@ -403,6 +405,8 @@ class AdmissionSerializer(serializers.ModelSerializer):
             return None
 
     def create(self, validated_data):
+        is_rte = validated_data.pop('is_rte', False)
+        rte_number = validated_data.pop('rte_number', None)
         student_data = validated_data.pop('student')
         guardian_data = validated_data.pop('guardian')
         address_data = validated_data.pop('address_input', None)
@@ -490,6 +494,9 @@ class AdmissionSerializer(serializers.ModelSerializer):
             total_marks=validated_data.get('total_marks'),
             previous_percentage=validated_data.get('previous_percentage'),
             enrollment_no=validated_data.get('enrollment_no'),
+            is_rte=is_rte,
+            rte_number=rte_number
+
         )
 
         if guardian_type:
@@ -506,6 +513,8 @@ class AdmissionSerializer(serializers.ModelSerializer):
 
 
     def update(self, instance, validated_data):
+        instance.is_rte = validated_data.get('is_rte', instance.is_rte)
+        instance.rte_number = validated_data.get('rte_number', instance.rte_number)
         student_data = validated_data.pop('student', None)
         guardian_data = validated_data.pop('guardian', None)
         address_data = validated_data.pop('address_input', None)
@@ -1817,7 +1826,55 @@ class DocumentSerializer(serializers.ModelSerializer):
         
         # Handle file creation separately in the view
         return instance
+    
+    def to_representation(self, instance):
+        """Customize the output to show document type names instead of just IDs."""
+        representation = super().to_representation(instance)
+        document_types = instance.document_types.all()
+        
+        identities_read = representation.pop("identities")
+        
+        # it shows the which type of document user have.
+        representation['document_types_read'] = [
+            {"name": dt.name} for dt in document_types
+        ]
+        
+        student_id = representation.pop("student")
+        teacher_id = representation.pop("teacher")
+        office_staff_id = representation.pop("office_staff")
+        guardian_id = representation.pop("guardian")
 
+        
+        rep = representation
+        
+        try:
+            if student_id:
+                student = Student.objects.get(id=student_id)
+                rep["student_id"] = student.id
+                rep["student_name"] = f"{student.user.first_name} {student.user.last_name}"
+                studentyearlevel = StudentYearLevel.objects.get(student_id = student_id)
+                rep["year_level"] = studentyearlevel.level.level_name
+                
+            if teacher_id:
+                teacher = Teacher.objects.get(id = teacher_id)
+                rep["teacher_id"] = teacher.id
+                rep["teacher_name"] = f"{teacher.user.first_name} {teacher.user.last_name}"
+                
+            if guardian_id:
+                guardian = Guardian.objects.get(id = guardian_id)
+                rep["guardian_id"] = guardian.id
+                rep["guardian_name"] = f"{guardian.user.first_name} {guardian.user.last_name}"
+                
+            if office_staff_id:
+                office_staff = OfficeStaff.objects.get(id = office_staff_id)
+                rep["office_staff_id"] = office_staff.id
+                rep["office_staff_name"] = f"{office_staff.user.first_name} {office_staff.user.last_name}"
+            
+            
+        except User.DoesNotExist:
+            rep["user"] = "This user doesn't exist..!"
+        
+        return rep
 # --------------------exam module
 class ExamPaperItemSerializer(serializers.Serializer):
     subject_id = serializers.IntegerField()
@@ -2148,59 +2205,266 @@ class ReportCardSerializer(serializers.ModelSerializer):
         return '0'
 
 
-# class IncomeCategorySerializer(serializers.ModelSerializer):
-#     class Meta:
-#         model = IncomeCategory
-#         fields = "__all__"
+# --------------------- Expense 
+class ExpenseCategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExpenseCategory
+        fields = "__all__"
 
-# class SchoolIncomeSerializer(serializers.ModelSerializer):
-#     category_name = serializers.CharField(source="category.name", read_only=True)
-#     creator = serializers.SerializerMethodField()
-                                            
-#     class Meta:
-#         model = SchoolIncome
-#         fields = [
-#             "id","category","category_name","amount","description","income_date","payment_method","attachment",
-#             "status","creator","created_at"]
-#         read_only_fields = ["created_at", "creator", "status"]
+class SchoolExpenseSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source='category.name', read_only=True)
+    approved_by_name = serializers.SerializerMethodField()
+    created_by_name = serializers.SerializerMethodField()
+    school_year_name = serializers.SerializerMethodField()   
+    # school_year_name = serializers.CharField(source="school_year.year_name", read_only=True)
 
-#     def get_creator(self, obj):
-#         if obj.created_by:
-#             return f"{obj.created_by.first_name} {obj.created_by.last_name}".strip()
-#         return None
 
-#     def total_fee(self, obj):
-#         #match school
-#         pass
+    class Meta:
+        model = SchoolExpense
+        fields = [
+            "id","category","category_name","amount","description","expense_date",
+            "payment_method","attachment","status","created_at","created_by",
+            "created_by_name","approved_by","approved_by_name","school_year","school_year_name"
+        ]
+        read_only_fields = ["created_at", "created_by"]
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return f"{obj.created_by.first_name} {obj.created_by.last_name}".strip()
+        return None
     
-#     def validate(self, data):
-#         # Ensure amount is a positive number
-#         if data.get('amount', 0) <= 0:
-#             raise serializers.ValidationError({"amount": "Amount must be a positive number."})
-
-#         # Ensure income date is not in the future
-#         if data.get('income_date') and data['income_date'] > date.today():
-#             raise serializers.ValidationError({"income_date": "Income date cannot be in the future."})
-
-#         # one category per month
-#         category = data.get('category')
-#         income_date = data.get('income_date')
-#         if category and income_date:
-#             existing_income = SchoolIncome.objects.filter(
-#                 category=category,
-#                 income_date__year=income_date.year,
-#                 income_date__month=income_date.month
-#             ).first()
-#             if existing_income:
-#                 raise serializers.ValidationError({
-#                     "category": f"Income for category '{category.name}' already exists for {income_date.strftime('%B %Y')}."
-#                 })
-
-#         return data
+    def get_approved_by_name(self, obj):
+        if obj.approved_by:
+            return f"{obj.approved_by.first_name} {obj.approved_by.last_name}".strip()
+        return None
     
-#     def create(self, validated_data):
-#         # Set created_by automatically from request user if available
-#         request = self.context.get("request")
-#         if request and hasattr(request, "user"):
-#             validated_data["created_by"] = request.user
-#         return super().create(validated_data)
+    def get_school_year_name(self, obj):
+        return obj.school_year.year_name if obj.school_year else None
+
+
+    def validate(self, attrs):
+        # category = attrs.get("category")
+        # school_year = attrs.get("school_year")
+        # amount = attrs.get("amount")
+
+        category = attrs.get("category") or (self.instance.category if self.instance else None)
+        school_year = attrs.get("school_year") or (self.instance.school_year if self.instance else None)
+        expense_date = attrs.get("expense_date") or (self.instance.expense_date if self.instance else None)
+
+        if category and school_year:
+            if category and category.name.lower() in ['electricity bill','water bill','wi-fi bill','renovation bill','rent']:
+                # Monthly expense check same month year
+                existing = SchoolExpense.objects.filter(
+                    category=category,
+                    school_year=school_year,
+                    expense_date__year=expense_date.year,
+                    expense_date__month=expense_date.month
+                )
+            else:
+                existing = SchoolExpense.objects.filter(
+                    category=category,
+                    school_year=school_year
+                )
+
+            if self.instance:
+                existing = existing.exclude(id=self.instance.id)
+
+            if existing.exists():
+                raise serializers.ValidationError(
+                    {"non_field_errors": "This expense record already exists for the selected category and period."}
+                )
+
+        if category and category.name.lower() == "salary":
+            total_salary = (
+                EmployeeSalary.objects.filter(school_year=school_year)
+                .aggregate(total=Sum("net_amount"))["total"] or 0
+            )
+
+            attrs["amount"] = total_salary  
+
+        if attrs.get('amount', 0) <= 0:
+            raise serializers.ValidationError({"amount": "Amount must be a positive number."})
+
+        if attrs.get('expense_date') and attrs['expense_date'] > date.today():
+            raise serializers.ValidationError({"expense_date": "expense_date cannot be in the future."})
+        
+
+
+        return attrs
+
+
+
+
+class EmployeeSerializer(serializers.ModelSerializer):
+    role = serializers.CharField(source='user.role', read_only=True)
+    # role = RoleSerializer(source='user.role', read_only=True)
+    name = serializers.CharField(source="user.get_full_name", read_only=True)
+
+
+    class Meta:
+        model = Employee
+        # fields = "__all__"
+        fields = ["id", "user", "name", "role", "joining_date", "base_salary"]
+
+        
+    def validate(self, data):
+        if data.get('base_salary', 0) <= 0:
+            raise serializers.ValidationError({"base_salary": "Amount must be a positive number."})
+        return data
+
+
+
+class EmployeeSalarySerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source="user.user.get_full_name", read_only=True)
+    role = serializers.CharField(source="user.user.role", read_only=True)  
+    paid_by_name = serializers.CharField(source="paid_by.get_full_name", read_only=True)
+    school_year_name = serializers.SerializerMethodField()   
+
+    class Meta:
+        model = EmployeeSalary
+        fields = ["id", "user","employee_name", "role","gross_amount", "deductions", "net_amount",
+                  "month", "school_year", "school_year_name","payment_date", "payment_method",
+                  "paid_by", "paid_by_name","remarks", "status", "created_at"]
+        extra_kwargs = {
+            "net_amount": {"read_only": True},   
+            "paid_by": {"read_only": True}    
+        }
+
+    def get_school_year_name(self, obj):   
+        return obj.school_year.year_name if obj.school_year else None
+
+
+
+    def validate(self, data):
+        user = data.get("user")
+        month = data.get("month")
+        school_year = data.get("school_year")
+
+        if data.get('payment_date') and data['payment_date'] > date.today():
+            raise serializers.ValidationError({"payment_date": "payment_date cannot be in the future."})
+
+        if EmployeeSalary.objects.filter(user=user, month=month, school_year=school_year).exists():
+            raise serializers.ValidationError("Salary record for this employee for this month already exists.")
+
+        deductions = data.get("deductions") or 0
+        if "user" in data:
+            data["gross_amount"] = getattr(user, "base_salary", 0)
+        data["net_amount"] = data["gross_amount"] - deductions
+        return data
+
+
+
+    def create(self, validated_data):
+        instance = super().create(validated_data)
+        if instance.status == "paid":
+            instance.paid_by = self.context["request"].user
+            instance.save()
+        return instance
+
+    def update(self, instance, validated_data):
+        instance = super().update(instance, validated_data)
+        if instance.status == "paid":
+            instance.paid_by = self.context["request"].user
+            instance.save()
+        return instance
+
+
+
+class IncomeCategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = IncomeCategory
+        fields = "__all__"
+
+class SchoolIncomeSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source="category.name", read_only=True)
+    creator = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SchoolIncome
+        fields = "__all__"
+        read_only_fields = ["created_at", "creator"]
+
+    def get_creator(self, obj):
+        if obj.created_by:
+            return f"{obj.created_by.first_name} {obj.created_by.last_name}".strip()
+        return None
+
+    def validate(self, data):
+        category = data.get("category")
+        month = data.get("month")
+        school_year = data.get("school_year")
+        income_date = data.get("income_date")
+
+        # Ensure amount is positive (skip for Monthly Fees, it gets auto-set later)
+        if category and category.name != "Monthly Fees":
+            if data.get("amount", 0) <= 0:
+                raise serializers.ValidationError({
+                    "amount": "Amount must be a positive number."
+                })
+
+        # Ensure income date is not in the future
+        if income_date and income_date > date.today():
+            raise serializers.ValidationError({
+                "income_date": "Income date cannot be in the future."
+            })
+
+        # Ensure one category per month per school_year
+        if category and month and school_year:
+            qs = SchoolIncome.objects.filter(
+                category=category,
+                month=month,
+                school_year=school_year
+            )
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError({
+                    "category": f"Income for '{category.name}' already exists for {month} ({school_year})."
+                })
+
+        return data
+
+    def create(self, validated_data):
+        # Auto-assign creator
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            validated_data["created_by"] = request.user
+
+        school_year = validated_data["school_year"]   # this is a SchoolYear instance
+        month = validated_data["month"]               # pull from validated_data
+        category = validated_data.get("category")
+
+        # Auto-set amount for Monthly Fees
+        if category and category.name == "Monthly Fees":
+            total = (
+                FeeRecord.objects.filter(
+                    month=month,
+                    school_year__year=school_year   # StudentYearLevel.year → SchoolYear
+                ).aggregate(total=Sum("paid_amount"))["total"] or 0
+            )
+            validated_data["amount"] = total
+
+        return super().create(validated_data)
+        
+    def update(self, instance, validated_data):
+        allowed_fields = [
+            "amount",
+            "description",
+            "income_date",
+            "payment_method",
+            "attachment",
+            "status",
+        ]
+
+        # block updates for restricted fields (category, school_year, created_by etc.)
+        for field in list(validated_data.keys()):
+            if field not in allowed_fields:
+                validated_data.pop(field)
+
+        # special rule: "Monthly Fees" → amount cannot be updated
+        category = instance.category
+        if category and category.name == "Monthly Fees":
+            validated_data.pop("amount", None)
+
+        return super().update(instance, validated_data)
+    

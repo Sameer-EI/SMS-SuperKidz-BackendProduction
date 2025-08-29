@@ -1,7 +1,7 @@
 from rest_framework.exceptions import ValidationError
 from rest_framework import serializers
 
-from authentication.models import ErrorLog, User
+from authentication.models import ErrorLog, User, UserStatusLog
 from director.models import Director, OfficeStaff, Role,YearLevel, SchoolYear, ClassPeriod, Director, Guardian
 
 from director.serializers import RoleSerializer
@@ -29,9 +29,13 @@ class UserSerializer(serializers.ModelSerializer):
         fields = [
             "first_name", "last_name", "email", "password", "role",
             "year_level", "school_year", "gender", "date_of_birth",
-             "user_profile"
+            "user_profile",
             # "enrolment_date", "user_profile"
+            # added here for termination
+            'is_active', 'deactivation_reason', 'deactivation_date', 'reactivation_date'
         ]
+        # no changes by api
+        read_only_fields = ['id', 'deactivation_date', 'reactivation_date']
         extra_kwargs = {
             'password': {'write_only': True},
         }
@@ -165,4 +169,12 @@ class ForgotSerializers(serializers.Serializer):
 class ErrorLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = ErrorLog
+        fields = '__all__'
+
+
+# ******************** UserStatusLog**************
+        
+class UserStatusLogSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserStatusLog
         fields = '__all__'

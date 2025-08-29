@@ -89,6 +89,7 @@
 
 from datetime import datetime
 import os
+from datetime import datetime
 
 def Document_folder(instance, filename):
     try:
@@ -273,11 +274,36 @@ def calculate_subject_summary(subjects_data):
     }
 
 
+# ---------------------  Income and Expense 
+
 def income_attachments(instance, filename):
     category_name = instance.category.name.replace(" ", "_").lower()
     return os.path.join(
         "income_attachments",
-        str(datetime.now().year),                  # Year
-        str(datetime.now().month).zfill(2),        # Month
-        f"{category_name}_{filename}"  # FileName = id_category_filename
+        str(datetime.now().year),               
+        str(datetime.now().month).zfill(2),       
+        f"{category_name}_{filename}"  
+        )
+
+
+# def expense_attachments(instance, filename):
+#     category_name = instance.category.name.replace(" ", "_").lower()
+#     return os.path.join(
+#         "expense_attachments",
+#         str(datetime.now().year),                  # Year
+#         str(datetime.now().month).zfill(2),        # Month
+#         f"{category_name}_{filename}"  
+#         )
+
+def expense_attachments(instance, filename):
+    category_name = instance.category.name.replace(" ", "_").lower()
+    year = instance.school_year.start_date.year if instance.school_year else datetime.now().year
+    # month = instance.expense_date.month if instance.expense_date else datetime.now().month
+    month_name = instance.expense_date.strftime("%B") if instance.expense_date else datetime.now().strftime("%B")
+
+    return os.path.join(
+        "expense_attachments",
+        str(year),
+        month_name,  
+        f"{category_name}_{filename}"
     )

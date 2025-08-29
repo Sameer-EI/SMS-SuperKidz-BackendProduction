@@ -40,9 +40,11 @@ admin.site.register(
         NonScholasticGradeTermWise,
         PersonalSocialQuality,
         PersonalSocialQualityTermWise,
-        # ExpenseCategory,
-        # SchoolExpense,
-        # IncomeCategory,
-        # SchoolIncome
+        ExpenseCategory,
+        SchoolExpense,
+        IncomeCategory,
+        SchoolIncome,
+        EmployeeSalary,
+        Employee
     ]
 )
