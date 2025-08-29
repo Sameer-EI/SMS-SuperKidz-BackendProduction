@@ -393,6 +393,7 @@ class FeeRecord(models.Model):
     razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)
     razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
     razorpay_signature_id = models.CharField(max_length=255, blank=True, null=True)
+    is_active = models.BooleanField(default=True) 
 
     def __str__(self):
         return f"{self.student.user.get_full_name()} - {self.month}"

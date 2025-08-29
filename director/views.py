@@ -1902,222 +1902,11 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         return queryset.distinct()
 
+    # removed commented or unnecessary code from line 1906 - 2266
+        # commented as of 26Aug25 at 04:34 PM
+
+    # Added as of 26Aug25 at 04:34 PM
     @action(detail=False, methods=["get"], url_path="fee-preview")
-    # def preview(self, request):
-    #     """
-    #     GET /api/fee-record/preview/?student_id=1
-    #     Returns grouped year-level fees for a student with discounts applied,
-    #     excluding already-paid fees (per school year rules).
-    #     """
-    #     student_id = request.query_params.get("student_id")
-    #     if not student_id:
-    #         return Response({"detail": "student_id is required"}, status=400)
-
-    #     try:
-    #         student = Student.objects.get(id=student_id)
-    #     except Student.DoesNotExist:
-    #         return Response({"detail": "Student not found"}, status=404)
-
-    #     # Get student's active year level
-    #     student_year_level = (
-    #         StudentYearLevel.objects
-    #         .filter(student=student)
-    #         .order_by("-year")  # latest school year
-    #         .first()
-    #     )
-
-    #     if not student_year_level:
-    #         raise serializers.ValidationError({
-    #             "student_id": "No year level found for this student."
-    #         })
-
-
-    #     # Fetch all year-level fees
-    #     year_level_fees = YearLevelFee.objects.filter(year_level=student_year_level.level)
-
-    #     # Fetch already paid fees for this student + school year
-    #     paid_fees = FeeRecord.objects.filter(school_year__year__year_name=student_year_level.year.year_name)
-
-    #     # ---- Handle admission fee (once per school year) ----
-    #     admission_paid_fee_ids = (
-    #         paid_fees
-    #         .filter(year_level_fees__fee_type__name__iexact="admission fee")
-    #         .values_list("year_level_fees__id", flat=True)
-    #     )
-
-    #     # ---- Handle monthly fees (once per month in school year) ----
-    #     # assumes FeeRecord has "month" field like "August"
-    #     current_month = student_year_level.current_month if hasattr(student_year_level, "current_month") else None
-    #     monthly_paid_fee_ids = []
-    #     if current_month:
-    #         monthly_paid_fee_ids = paid_fees.exclude(
-    #             fee__fee_type__name__iexact="admission fee"
-    #         ).filter(
-    #             month=current_month
-    #         ).values_list("fee_id", flat=True)
-
-    #     # Combine all already-paid fee IDs
-    #     exclude_fee_ids = list(admission_paid_fee_ids) + list(monthly_paid_fee_ids)
-
-    #     # Filter year_level_fees to exclude already-paid ones
-    #     year_level_fees = year_level_fees.exclude(id__in=exclude_fee_ids)
-
-    #     # Pass student in context so serializer applies discounts
-    #     serializer = YearLevelFeeSerializer(year_level_fees, many=True, context={"student": student})
-    #     grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
-
-    #     #if tuition fee is paid after 15th of the month, then it will apply 25 rupee fine
-    #     today = date.today()
-    #     for group in grouped_fees:
-    #         for fee in group["fees"]:
-    #             if fee["fee_type"].lower() == "tuition fee" and today.day > 15:
-    #                 fee["late_fee"] = 25
-
-    #     return Response(grouped_fees)
-
-    # def preview(self, request):
-    #     """
-    #     GET /api/fee-record/preview/?student_id=1
-    #     Returns grouped year-level fees for a student with discounts applied,
-    #     showing 'Already Paid' for paid fees (per school year rules).
-    #     """
-    #     student_id = request.query_params.get("student_id")
-    #     if not student_id:
-    #         return Response({"detail": "student_id is required"}, status=400)
-
-    #     try:
-    #         student = Student.objects.get(id=student_id)
-    #     except Student.DoesNotExist:
-    #         return Response({"detail": "Student not found"}, status=404)
-
-    #     # Get student's active year level
-    #     student_year_level = (
-    #         StudentYearLevel.objects
-    #         .filter(student=student)
-    #         .order_by("-year")  # latest school year
-    #         .first()
-    #     )
-
-    #     if not student_year_level:
-    #         raise serializers.ValidationError({
-    #             "student_id": "No year level found for this student."
-    #         })
-
-    #     # Fetch all year-level fees
-    #     year_level_fees = YearLevelFee.objects.filter(year_level=student_year_level.level)
-
-    #     # Fetch already paid fees for this student + school year
-    #     paid_fees = FeeRecord.objects.filter(
-    #         school_year__year__year_name=student_year_level.year.year_name
-    #     )
-
-    #     # Admission fee (once per school year)
-    #     admission_paid_fee_ids = (
-    #         paid_fees.filter(year_level_fees__fee_type__name__iexact="admission fee")
-    #         .values_list("year_level_fees__id", flat=True)
-    #     )
-
-    #     # Monthly fees (once per month)
-    #     current_month = getattr(student_year_level, "current_month", None)
-    #     monthly_paid_fee_ids = []
-    #     if current_month:
-    #         monthly_paid_fee_ids = (
-    #             paid_fees.exclude(year_level_fees__fee_type__name__iexact="admission fee")
-    #             .filter(month=current_month)
-    #             .values_list("year_level_fees__id", flat=True)
-    #         )
-
-    #     paid_fee_ids = set(admission_paid_fee_ids) | set(monthly_paid_fee_ids)
-
-    #     # Serialize
-    #     serializer = YearLevelFeeSerializer(year_level_fees, many=True, context={"student": student})
-    #     grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
-
-    #     # Mark already paid + late fee logic
-    #     today = date.today()
-    #     for group in grouped_fees:
-    #         for fee in group["fees"]:
-    #             if fee["id"] in paid_fee_ids:
-    #                 fee["status"] = "Already Paid"
-    #             elif fee["fee_type"].lower() == "tuition fee" and today.day > 15:
-    #                 fee["late_fee"] = 25
-
-    #     return Response(grouped_fees)
-
-    # def preview(self, request):
-    #     """
-    #     GET /api/fee-record/preview/?student_id=1
-    #     Returns grouped year-level fees for a student with discounts applied,
-    #     admission fee only once per year, tuition fee only once per month,
-    #     marking already-paid fees with "status": "Already Paid".
-    #     """
-    #     student_id = request.query_params.get("student_id")
-    #     if not student_id:
-    #         return Response({"detail": "student_id is required"}, status=400)
-
-    #     month = request.query_params.get("month")
-    #     if not month:
-    #         return Response({"detail": "month is required"}, status=400)
-
-    #     try:
-    #         student = Student.objects.get(id=student_id)
-    #     except Student.DoesNotExist:
-    #         return Response({"detail": "Student not found"}, status=404)
-
-    #     # Get student's active year level
-    #     student_year_level = (
-    #         StudentYearLevel.objects
-    #         .filter(student=student)
-    #         .order_by("-year")  # latest school year
-    #         .first()
-    #     )
-    #     if not student_year_level:
-    #         raise serializers.ValidationError({
-    #             "student_id": "No year level found for this student."
-    #         })
-
-    #     # Fetch all year-level fees for this level
-    #     year_level_fees = YearLevelFee.objects.filter(year_level=student_year_level.level)
-
-    #     # Paid fee records for this student & school year
-    #     paid_fees = FeeRecord.objects.filter(
-    #         school_year__year__year_name=student_year_level.year.year_name
-    #     )
-
-    #     # Admission fee (once per year)
-    #     admission_paid_fee_ids = paid_fees.filter(
-    #         year_level_fees__fee_type__name__iexact="admission fee"
-    #     ).values_list("year_level_fees__id", flat=True)
-
-    #     # Tuition fee (once per month)
-    #     today = date.today()
-    #     # current_month = today.strftime("%B")  # e.g. "August"
-
-    #     monthly_paid_fee_ids = paid_fees.exclude(
-    #         year_level_fees__fee_type__name__iexact="admission fee"
-    #     ).filter(
-    #         month=month
-    #     ).values_list("year_level_fees__id", flat=True)
-
-    #     # Combine all paid fees
-    #     paid_fee_ids = set(admission_paid_fee_ids) | set(monthly_paid_fee_ids)
-
-    #     # Serialize fees
-    #     serializer = YearLevelFeeSerializer(year_level_fees, many=True, context={"student": student})
-    #     grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
-
-    #     # Add status/late fee
-    #     for group in grouped_fees:
-    #         for fee in group["fees"]:
-    #             if fee["id"] in paid_fee_ids:
-    #                 fee["status"] = "Already Paid"
-    #                 # wipe out amounts if you don’t want them visible
-    #                 fee.pop("amount", None)
-    #                 fee.pop("final_amount", None)
-    #             elif fee["fee_type"].lower() == "tuition fee" and today.day > 15:
-    #                 fee["late_fee"] = 25
-
-    #     return Response(grouped_fees)
     def preview(self, request):
         student_id = request.query_params.get("student_id")
         month = request.query_params.get("month")
@@ -2145,80 +1934,78 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         # Paid fee records for this student & school year
         paid_fees = FeeRecord.objects.filter(
-            school_year__year__year_name=student_year_level.year.year_name
+            student=student,
+            school_year__year=student_year_level.year
         )
 
-
-        # Admission fee (once per year)
+        # Admission fees → only once per year
         admission_paid_fee_ids = paid_fees.filter(
             year_level_fees__fee_type__name__iexact="admission fee"
         ).values_list("year_level_fees", flat=True)
 
-        # Other fees (per month)
+        # Tuition fees (monthly) → must match same month
         monthly_paid_fee_ids = paid_fees.exclude(
             year_level_fees__fee_type__name__iexact="admission fee"
         ).filter(
-            month=month
+            month=month,
+            year_level_fees__fee_type__name__iexact="tuition fee"
         ).values_list("year_level_fees", flat=True)
 
-        # Combine for quick lookup
-        paid_fee_ids = set(admission_paid_fee_ids) | set(monthly_paid_fee_ids)
+        # Exam fees → must match same month
+        exam_paid_fee_ids = paid_fees.filter(
+            month=month,
+            year_level_fees__fee_type__name__iexact="exam fee"
+        ).values_list("year_level_fees", flat=True)
+
+        # Transport fees → must match same month
+        transport_paid_fee_ids = paid_fees.filter(
+            month=month,
+            year_level_fees__fee_type__name__iexact="transport fee"
+        ).values_list("year_level_fees", flat=True)
 
         # Serialize fees
         serializer = YearLevelFeeSerializer(year_level_fees, many=True, context={"student": student})
         grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
 
         today = date.today()
-        # Add status/late fee
+
+        # --- Add status/late fee ---
         for group in grouped_fees:
+            new_fees_list = []  # Create a new list to hold the modified fee dictionaries
             for fee in group["fees"]:
                 fee_id = fee["id"]
                 fee_type = fee["fee_type"].lower()
 
+                # --- HANDLING ADMISSION, TUITION, EXAM, TRANSPORT ---
                 if (fee_type == "admission fee" and fee_id in admission_paid_fee_ids) or \
-                (fee_type != "admission fee" and fee_id in monthly_paid_fee_ids):
-                    fee["status"] = "Already Paid"
-                    fee.pop("amount", None)
-                    fee.pop("final_amount", None)
-                elif fee_type == "tuition fee" and today.day > 15:
-                    fee["late_fee"] = 25
+                (fee_type == "tuition fee" and fee_id in monthly_paid_fee_ids) or \
+                (fee_type == "exam fee" and fee_id in exam_paid_fee_ids) or \
+                (fee_type == "transport fee" and fee_id in transport_paid_fee_ids):
+
+                    # Already Paid → minimal response
+                    new_fee = {
+                        "fee_type": fee_type.title(),
+                        "id": fee_id,
+                        "status": "Already Paid"
+                    }
+                    new_fees_list.append(new_fee)
+
+                else:
+                    # Pending → include amounts
+                    fee["amount"] = str(fee.get("amount", "0"))
+                    fee["final_amount"] = str(fee.get("final_amount", "0"))
+                    fee["status"] = "Pending"
+
+                    # Late Fee (only for Tuition Fee)
+                    if fee_type == "tuition fee" and today.day > 15:
+                        fee["late_fee"] = 25
+
+                    new_fees_list.append(fee)
+
+            group["fees"] = new_fees_list
 
         return Response(grouped_fees)
 
-
-    # API to submit fee more than a single month
-    # https://187gwsw1-7000.inc1.devtunnels.ms/d/fee-record/submit_single_multi_month_fees/
-    # @action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
-    # def submit_single_multi_month_fees(self, request):
-    #     student_id = request.data.get('student_id')
-    #     months = request.data.get('months', [])
-    #     year_level_fees = request.data.get('year_level_fees', [])
-    #     paid_amount = request.data.get('paid_amount')
-    #     payment_mode = request.data.get('payment_mode')
-    #     remarks = request.data.get('remarks')
-    #     received_by = request.data.get('received_by')
-
-    #     if not months or not isinstance(months, list):
-    #         return Response({"error": "Months must be a non-empty list."}, status=status.HTTP_400_BAD_REQUEST)
-
-    #     responses = []
-    #     for month in months:
-    #         serializer = self.get_serializer(data={
-    #             "student_id": student_id,
-    #             "month": month,
-    #             "year_level_fees": year_level_fees,
-    #             "paid_amount": paid_amount,
-    #             "payment_mode": payment_mode,
-    #             "remarks": f"{remarks or ''} ({month})",
-    #             "received_by": received_by
-    #         })
-    #         if serializer.is_valid():
-    #             serializer.save()
-    #             responses.append(serializer.data)
-    #         else:
-    #             responses.append({"month": month, "errors": serializer.errors})
-
-    #     return Response(responses, status=status.HTTP_200_OK)
     
     @action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
     def submit_single_multi_month_fees(self, request):
