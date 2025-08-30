@@ -677,7 +677,32 @@ class AdmissionSerializer(serializers.ModelSerializer):
 #         # If not an assignment request, create a regular ClassPeriod (fallback)
 #         return super().create(validated_data)
 
+# class ClassPeriodSerializer(serializers.ModelSerializer):     just commeented as of 20Aug25
+#     # Extra fields for the custom POST action
+#     year_level_name = serializers.CharField(write_only=True, required=False)
+#     class_period_names = serializers.ListField(
+#         child=serializers.CharField(), write_only=True, required=False
+#     )
+
+#     class Meta:
+#         model = ClassPeriod
+#         fields = [
+#             'id', 'subject', 'teacher', 'term',
+#             'start_time', 'end_time', 'classroom', 'name',
+#             'year_level', 'year_level_name', 'class_period_names'
+#         ]
+
+
 class ClassPeriodSerializer(serializers.ModelSerializer):
+    # Alias: accept `year_level_id` instead of `year_level`
+    yearlevel_id = serializers.PrimaryKeyRelatedField(
+        source="year_level",  # map it to the actual FK
+        queryset=YearLevel.objects.all(),
+        write_only=True
+    )
+
+    year_level = serializers.PrimaryKeyRelatedField(read_only=True)  # still return year_level in response
+
     # Extra fields for the custom POST action
     year_level_name = serializers.CharField(write_only=True, required=False)
     class_period_names = serializers.ListField(
@@ -689,8 +714,10 @@ class ClassPeriodSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'subject', 'teacher', 'term',
             'start_time', 'end_time', 'classroom', 'name',
-            'year_level', 'year_level_name', 'class_period_names'
+            'year_level', 'yearlevel_id',  # include both
+            'year_level_name', 'class_period_names'
         ]
+
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)

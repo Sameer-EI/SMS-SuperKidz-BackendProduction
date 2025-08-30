@@ -50,7 +50,9 @@ class TeacherView(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='assign-teacher-details')
     def assign_teacher_details(self, request):
         teacher_id = request.data.get("teacher_id")
+        print(teacher_id)
         yearlevel_id = request.data.get("yearlevel_id")
+        print(yearlevel_id)
         subject_ids = request.data.get("subject_ids", [])
         period_ids = request.data.get("period_ids", [])
         
@@ -142,7 +144,7 @@ class TeacherView(viewsets.ModelViewSet):
                 break  # Assign only one period per subject for the teacher
 
         # Link teacher to year level
-        TeacherYearLevel.objects.get_or_create(teacher=teacher, year_level=yearlevel)
+        TeacherYearLevel.objects.get_or_create(teacher=teacher, yearlevel_id=yearlevel)
 
         # Return detailed response
         return Response({
