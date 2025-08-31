@@ -28,4 +28,6 @@ holidays==0.28.1
 
 
 # pip freeze > requirements.txt
-# pip install -r requirements.txt
+# pip install -r requirements.txt   # install project dependencies
+# type requirements.txt             # lisy required dependencies
+# .\.venv\Scripts\activate          # activate environment

@@ -28,7 +28,7 @@ class Teacher(models.Model):
     def __str__(self):
         return f'{self.user.first_name}  {self.user.last_name}'
     class Meta:
-        db_table = "Teacher"
+        db_table = "teacher"
         indexes = [models.Index(fields=['is_active'])]
     
 class TeacherYearLevel(models.Model):
