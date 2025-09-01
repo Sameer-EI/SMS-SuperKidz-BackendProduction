@@ -1226,6 +1226,91 @@ def DepartmentView(request, pk=None):
 
 
 @api_view(["GET", "POST", "PUT", "DELETE"])
+def ClassRoomView(request, pk=None):
+
+    def is_room_exists(room_type_id, room_name, exclude_id=None):
+      
+        queryset = ClassRoom.objects.filter(
+            room_type_id=room_type_id,
+            room_name__iexact=room_name.strip()
+        )
+        if exclude_id:
+            queryset = queryset.exclude(id=exclude_id)
+        return queryset.exists()
+
+  
+    if request.method == "GET":
+        if pk:
+            try:
+                classroom = ClassRoom.objects.get(id=pk)
+                serialize = ClassRoomSerializer(classroom)
+                return Response(serialize.data, status=status.HTTP_200_OK)
+            except ClassRoom.DoesNotExist:
+                return Response({"Message": "Data not found"}, status=status.HTTP_404_NOT_FOUND)
+        classrooms = ClassRoom.objects.all()
+        serialize = ClassRoomSerializer(classrooms, many=True)
+        return Response(serialize.data, status=status.HTTP_200_OK)
+
+
+    elif request.method == "POST":
+        room_type_id = request.data.get("room_type")
+        room_name = request.data.get("room_name", "").strip()
+
+        if not room_type_id or not room_name:
+            return Response({"Message": "Invalid Data"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if is_room_exists(room_type_id, room_name):
+            return Response(
+                {"Message": "This room already exists for this type."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serialize = ClassRoomSerializer(data=request.data)
+        if serialize.is_valid():
+            serialize.save()
+            return Response({"Message": "Data Saved Successfully"}, status=status.HTTP_200_OK)
+        return Response({"Message": "Insert Valid Data", "Errors": serialize.errors},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+
+    elif request.method == "PUT":
+        try:
+            classroom = ClassRoom.objects.get(id=pk)
+        except ClassRoom.DoesNotExist:
+            return Response({"Message": "Data not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        room_type_id = request.data.get("room_type")
+        room_name = request.data.get("room_name", "").strip()
+
+        if not room_type_id or not room_name:
+            return Response({"Message": "Invalid Data"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if is_room_exists(room_type_id, room_name, exclude_id=pk):
+            return Response(
+                {"Message": "This room already exists for this type."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serialize = ClassRoomSerializer(instance=classroom, data=request.data)
+        if serialize.is_valid():
+            serialize.save()
+            return Response({"Message": "Data Updated Successfully"}, status=status.HTTP_200_OK)
+        return Response({"Message": "Insert Valid Data", "Errors": serialize.errors},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+ 
+    elif request.method == "DELETE":
+        try:
+            classroom = ClassRoom.objects.get(id=pk)
+            classroom.delete()
+            return Response({"Message": "Data Deleted"}, status=status.HTTP_204_NO_CONTENT)
+        except ClassRoom.DoesNotExist:
+            return Response({"Message": "Data not found"}, status=status.HTTP_404_NOT_FOUND)
+
+
+
+
+@api_view(["GET", "POST", "PUT", "DELETE"])
 def ClassRoomTypeView(request, pk=None):
 
     if request.method == "GET":
@@ -1601,6 +1686,17 @@ class AdmissionView(viewsets.ModelViewSet):
         "previous_percentage",
     ]
     # parser_classes=[MultiPartParser,FormParser]
+    
+
+    # rte
+    @action(detail=False, methods=["get"], url_path="rte-students")
+    def rte_students(self, request):
+        queryset = self.queryset.filter(is_rte=True)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+  
+    
+    
     
     # ***************OfficeStaffView**************
     
