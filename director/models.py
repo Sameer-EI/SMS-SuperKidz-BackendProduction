@@ -404,7 +404,9 @@ class FeeRecordManager(models.Manager):
 class FeeDiscount(models.Model):
     student = models.OneToOneField("student.Student", on_delete=models.CASCADE,related_name="discount_info")
     admission_fee_discount = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
+    admission_fee = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)  # Added as of 21Aug25
     tuition_fee_discount = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
+    tuition_fee = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)  # Added as of 21Aug25
     discount_reason = models.CharField(max_length=255, blank=True, null=True)
     is_allowed = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -422,7 +424,8 @@ class FeeRecord(models.Model):
         ("January", "January"), ("February", "February"), ("March", "March"),
         ("April", "April"), ("May", "May"), ("June", "June"),
     ]
-    month = models.CharField(max_length=20, choices=MONTH_CHOICES)
+    month = models.CharField(max_length=20, choices=MONTH_CHOICES, null=True, blank=True)
+    school_year = models.ForeignKey(StudentYearLevel, on_delete=models.PROTECT,null=True, blank=True)  # Added as of 20Aug25
     year_level_fees = models.ManyToManyField(YearLevelFee)
     total_amount = models.DecimalField(max_digits=8, decimal_places=2)
     paid_amount = models.DecimalField(max_digits=8, decimal_places=2)
@@ -432,7 +435,7 @@ class FeeRecord(models.Model):
     payment_mode = models.CharField(max_length=20, choices=[('Cash', 'Cash'), ('Online', 'Online'), ('Cheque', 'Cheque')])
     is_cheque_cleared = models.BooleanField(default=False)  # Added as of 11June25 at 12:39 PM
     receipt_number = models.CharField(max_length=10, unique=True, editable=False, blank=True, auto_created=True)
-    late_fee = models.DecimalField(max_digits=8, decimal_places=2)
+    late_fee = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True, default=0)
     payment_status = models.CharField(max_length=20, choices=[('Paid', 'Paid'), ('Unpaid', 'Unpaid')])
     remarks = models.TextField(blank=True, null=True)
     received_by = models.CharField(max_length=100, null=True,blank=True)      # modified 24June25
@@ -540,8 +543,6 @@ class Document(models.Model):
 class File(models.Model):
     file = models.FileField(upload_to=Document_folder) 
     document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='files', null=True)
- 
-    
 
     def __str__(self):
         return f"File {self.id} - {self.file.name}"
@@ -746,12 +747,10 @@ class EmployeeSalary(models.Model):
     def __str__(self):
         return f"{self.user.user.first_name} {self.month} - {self.net_amount}"
 
-#-------------------
-# Income Models 
-#------------------- 
+# --------------------------------------------income---------------------------------------------
+
 class IncomeCategory(models.Model): 
     name = models.CharField(max_length=100, unique=True)# 
-    # description = models.TextField(blank=True, null=True)# 
 
     def __str__(self): 
         return self.name 
@@ -764,10 +763,18 @@ class SchoolIncome(models.Model):
     STATUS_CHOICES = [ 
         ('pending', 'Pending'), 
         ('confirmed', 'Confirmed'), ] 
+    MONTH_CHOICES = [
+        ("July", "July"), ("August", "August"), ("September", "September"),
+        ("October", "October"), ("November", "November"), ("December", "December"),
+        ("January", "January"), ("February", "February"), ("March", "March"),
+        ("April", "April"), ("May", "May"), ("June", "June"),
+    ]
+    month = models.CharField(max_length=20, choices=MONTH_CHOICES)
     category = models.ForeignKey(IncomeCategory, on_delete=models.PROTECT, related_name='incomes')# 
     amount = models.DecimalField(max_digits=12, decimal_places=2)# 
     description = models.TextField(blank=True, null=True)# 
     income_date = models.DateField()# 
+    school_year = models.ForeignKey(SchoolYear, on_delete=models.PROTECT)  # Added as of 20Aug25
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='cash') 
     attachment = models.FileField(upload_to=income_attachments, blank=True, null=True) 
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending') 
@@ -776,3 +783,7 @@ class SchoolIncome(models.Model):
     
     def __str__(self): 
         return f"{self.category.name} + ₹{self.amount} on {self.income_date}"
+    
+    class Meta:
+        unique_together = ['category', 'month', 'school_year']
+        
