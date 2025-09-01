@@ -130,10 +130,17 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 
-class ChangePasswordSerializer(serializers.Serializer):
-    current_password=serializers.CharField(min_length=8)
+# class ChangePasswordSerializer(serializers.Serializer):
+#     current_password=serializers.CharField(min_length=8)
+#     change_password = serializers.CharField(min_length=8)
+#     email=serializers.EmailField()
+
+
+class ChangePasswordSerializer(serializers.Serializer):     # Added as of 29Aug25 at 12:49 PM
+    current_password = serializers.CharField(min_length=8)
     change_password = serializers.CharField(min_length=8)
-    email=serializers.EmailField()
+
+
 
 # Changes as of 25April25 at 01:00 PM
 class LoginSerializers(serializers.Serializer):

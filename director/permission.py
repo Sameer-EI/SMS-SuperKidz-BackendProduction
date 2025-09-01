@@ -69,7 +69,7 @@ class RoleBasedExamPermission(BasePermission):
 
 
 
-class RoleBasedPermission(BasePermission):
+class RoleBasedPermission(BasePermission):  # role based result permission
     """
     For report card and related views, allow access based on user roles.
     """
@@ -205,7 +205,155 @@ class RoleBasedPermissionteacheryearlevel(BasePermission):
 
 
 
+# class FeeRecordPermission(BasePermission):
+#     """
+#     Director / Office Staff → full CRUD
+#     Teacher → only fee records of their class students (read-only)
+#     Student → only their own fee records (GET + POST)
+#     Guardian → only their children fee records (GET + POST)
+#     """
+#     def has_permission(self, request, view):
+#         user = request.user
+#         if not user.is_authenticated:
+#             return False
+
+#         # Director or Staff → FULL ACCESS
+#         if hasattr(user, "director") or hasattr(user, "officestaff") or user.is_staff or user.is_superuser:
+#             return True
+
+#         # Teacher → only SAFE methods
+#         if hasattr(user, "teacher"):
+#             return request.method in ("GET", "HEAD", "OPTIONS")
+
+#         # Student → GET + POST
+#         if hasattr(user, "student"):
+#             return request.method in ("GET", "POST")
+
+#         # Guardian → GET + POST
+#         if hasattr(user, "guardian"):
+#             return request.method in ("GET", "POST")
+
+#         return False
+
+#     def has_object_permission(self, request, view, obj):
+#         user = request.user
+
+#         # Director / Staff
+#         if hasattr(user, "director") or hasattr(user, "officestaff") or user.is_staff or user.is_superuser:
+#             return True
+
+#         # Teacher → only students in their YearLevel
+#         if hasattr(user, "teacher"):
+#             teacher_year_levels = user.teacher.teacheryearlevel_set.values_list("year_level_id", flat=True)
+#             return obj.student.student_year_levels.filter(level_id__in=teacher_year_levels).exists()
+
+#         # Student → only self
+#         if hasattr(user, "student"):
+#             return obj.student_id == user.student.id
+
+#         # Guardian → only children
+#         if hasattr(user, "guardian"):
+#             children_ids = user.guardian.students.values_list("id", flat=True)
+#             return obj.student_id in children_ids
+
+#         return False
+
+# class FeeRecordPermission(BasePermission):
+#     """
+#     Director / Office Staff → full CRUD
+#     Teacher → only fee records of their class students (read-only)
+#     Student → only their own fee records (GET + POST)
+#     Guardian → only their children fee records (GET + POST)
+#     """
+#     def has_permission(self, request, view):
+#         user = request.user
+#         if not user.is_authenticated:
+#             return False
+
+#         # Director or Staff → FULL ACCESS
+#         if hasattr(user, "director") or hasattr(user, "officestaff") or user.is_staff or user.is_superuser:
+#             return True
+
+#         # Teacher → only SAFE methods
+#         if hasattr(user, "teacher"):
+#             return request.method in ("GET", "HEAD", "OPTIONS")
+
+#         # Student → GET + POST
+#         if hasattr(user, "student"):
+#             return request.method in ("GET", "POST")
+
+#         # Guardian → GET + POST
+#         if hasattr(user, "guardian"):
+#             return request.method in ("GET", "POST")
+
+#         return False
+
+class FeeRecordPermission(BasePermission):
+    """
+    Director / Office Staff → full CRUD
+    Student → GET + POST (only self records)
+    Guardian → GET + POST (only children records)
+    Teacher → only GET (their assigned students)
+    """
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not user.is_authenticated:
+            return False
+
+        #  Director / Staff
+        if hasattr(user, "role"):
+            role_names = [role.name.lower() for role in user.role.all()]
+        else:
+            role_names = []
+
+        if "director" in role_names or "staff" in role_names or user.is_staff or user.is_superuser:
+            return True
+
+        # Student
+        if hasattr(user, "student"):
+            return request.method in ["GET", "POST"]
+
+        #  Guardian (detect via relation, not role)
+        if hasattr(user, "guardian_relation"):   
+            return request.method in ["GET", "POST"]
+
+        #  Teacher
+        if hasattr(user, "teacher"):
+            return request.method == "GET"
+
+        return False
+
+
+    def has_object_permission(self, request, view, obj):
+        user = request.user
+
+        # Director / Staff
+        if hasattr(user, "director") or hasattr(user, "officestaff") or user.is_staff or user.is_superuser:
+            return True
+
+        # Teacher → only students in their YearLevel
+        if hasattr(user, "teacher"):
+            teacher_year_levels = user.teacher.teacheryearlevel_set.values_list("year_level_id", flat=True)
+            return obj.student.student_year_levels.filter(level_id__in=teacher_year_levels).exists()
+
+        # Student → only self
+        if hasattr(user, "student"):
+            return obj.student_id == user.student.id
+
+        # Guardian → only children
+        if hasattr(user, "guardian_relation"):
+            children_ids = user.guardian_relation.studentguardian.values_list("student_id", flat=True)
+            return obj.student_id in children_ids
+
+        return False
 
 
 
-
+class IsDirectororOfficeStaff(BasePermission):
+    """
+    Allows access only to users with the 'office_staff'and'director' role.
+    """
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and request.user.role.filter(name="director").exists() or request.user.role.filter(name="office_staff").exists()
+    

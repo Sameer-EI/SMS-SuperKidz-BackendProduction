@@ -107,13 +107,13 @@ class CountrySerializer(serializers.ModelSerializer):
 
 
 class subjectSerializer(serializers.ModelSerializer):
-    department = serializers.SerializerMethodField()
+    department_name = serializers.SerializerMethodField()  # repalced department to department_name because of SerializerMethodField (Read Only Field).
 
     class Meta:
         model = Subject
-        fields = ['id', 'subject_name', 'department'] 
+        fields = ['id', 'subject_name', 'department', 'department_name'] 
 
-    def get_department(self, obj):
+    def get_department_name(self, obj):
         return obj.department.department_name if obj.department else None
 
 
@@ -684,7 +684,32 @@ class AdmissionSerializer(serializers.ModelSerializer):
 #         # If not an assignment request, create a regular ClassPeriod (fallback)
 #         return super().create(validated_data)
 
+# class ClassPeriodSerializer(serializers.ModelSerializer):     just commeented as of 20Aug25
+#     # Extra fields for the custom POST action
+#     year_level_name = serializers.CharField(write_only=True, required=False)
+#     class_period_names = serializers.ListField(
+#         child=serializers.CharField(), write_only=True, required=False
+#     )
+
+#     class Meta:
+#         model = ClassPeriod
+#         fields = [
+#             'id', 'subject', 'teacher', 'term',
+#             'start_time', 'end_time', 'classroom', 'name',
+#             'year_level', 'year_level_name', 'class_period_names'
+#         ]
+
+
 class ClassPeriodSerializer(serializers.ModelSerializer):
+    # Alias: accept `year_level_id` instead of `year_level`
+    yearlevel_id = serializers.PrimaryKeyRelatedField(
+        source="year_level",  # map it to the actual FK
+        queryset=YearLevel.objects.all(),
+        write_only=True
+    )
+
+    year_level = serializers.PrimaryKeyRelatedField(read_only=True)  # still return year_level in response
+
     # Extra fields for the custom POST action
     year_level_name = serializers.CharField(write_only=True, required=False)
     class_period_names = serializers.ListField(
@@ -696,8 +721,10 @@ class ClassPeriodSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'subject', 'teacher', 'term',
             'start_time', 'end_time', 'classroom', 'name',
-            'year_level', 'year_level_name', 'class_period_names'
+            'year_level', 'yearlevel_id',  # include both
+            'year_level_name', 'class_period_names'
         ]
+
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
@@ -773,10 +800,14 @@ class YearLevelFeeSerializer(serializers.ModelSerializer):
     year_level_name = serializers.SerializerMethodField()
     fee_type_name = serializers.SerializerMethodField()
     year_level_id = serializers.IntegerField(source='year_level.id', read_only=True)
+    final_amount = serializers.SerializerMethodField()
+    # original_amount = serializers.DecimalField(source="amount", max_digits=8, decimal_places=2, read_only=True)
+
 
     class Meta:
         model = YearLevelFee
-        fields = ['id', 'year_level', 'fee_type', 'year_level_name', 'fee_type_name', 'amount', 'year_level_id']
+        fields = ['id', 'year_level', 'fee_type', 'year_level_name', 'fee_type_name', 'amount',
+            'final_amount', 'year_level_id']
 
     def get_year_level_name(self, obj):
         return obj.year_level.level_name
@@ -784,11 +815,98 @@ class YearLevelFeeSerializer(serializers.ModelSerializer):
     def get_fee_type_name(self, obj):
         return obj.fee_type.name
 
-    def to_representation(self, instance):
+    
+    
+    # def to_representation(self, instance):        # just commented as of 26Aug25
+    #     data = super().to_representation(instance)
+    #     data.pop('year_level', None)
+    #     data.pop('fee_type', None)
+    #     return data
+    
+    def to_representation(self, instance):          # Added as of 26Aug25 at 01:30 PM
         data = super().to_representation(instance)
         data.pop('year_level', None)
         data.pop('fee_type', None)
+        
+        # Ensure amount and final_amount are properly formatted as strings with 2 decimal places
+        data['amount'] = str(Decimal(data['amount']).quantize(Decimal('0.00')))
+        data['final_amount'] = str(Decimal(data['final_amount']).quantize(Decimal('0.00')))
+        
         return data
+    
+    
+
+    # def get_final_amount(self, obj):
+    #     student = self.context.get("student")
+    #     final_amount = obj.amount
+    #     fee_type = obj.fee_type.name.lower()
+
+    #     if student:
+    #         discount = FeeDiscount.objects.filter(student=student, is_allowed=True).first()
+    #         fee_type = obj.fee_type.name.lower()
+
+    #         if discount:
+    #             if "admission fee" in fee_type and discount.admission_fee_discount:
+    #                 final_amount = obj.amount - discount.admission_fee_discount
+    #             if "tuition fee" in fee_type and discount.tuition_fee_discount:
+    #                 final_amount = obj.amount - discount.tuition_fee_discount
+
+    #     return str(final_amount)                  # just commented as of 26Aug25 at 11:53 AM
+    
+    # Added as of 26Aug25 at 11:53 AM
+    def get_final_amount(self, obj):
+        student = self.context.get("student")
+        final_amount = obj.amount
+        fee_type = obj.fee_type.name.lower()
+
+        if student:
+            discount = FeeDiscount.objects.filter(student=student, is_allowed=True).first()
+            fee_type = obj.fee_type.name.lower()
+
+            if discount:
+                if "admission fee" in fee_type and discount.admission_fee_discount:
+                    final_amount = obj.amount - discount.admission_fee_discount
+                if "tuition fee" in fee_type and discount.tuition_fee_discount:
+                    final_amount = obj.amount - discount.tuition_fee_discount
+
+        # Return as Decimal instead of string
+        return final_amount
+
+    
+    
+    def get_year_level_fees_grouped(self, obj):
+        grouped = defaultdict(list)
+
+        # fetch fee discount for this student if allowed
+        discount = FeeDiscount.objects.filter(student=obj.student, is_allowed=True).first()
+
+        for fee in obj.year_level_fees.all():
+            year_level_name = fee.year_level.level_name
+            fee_type = fee.fee_type.name.lower()
+            fee_amount = fee.amount
+
+            # FIXED: Always show original amount
+            final_amount = fee_amount  
+
+            if discount:
+                # if it's admission fee and student has a discounted admission_fee saved in FeeDiscount
+                if "admission fee" in fee_type:
+                    final_amount = fee_amount - (discount.admission_fee_discount or 0)  # highlighted
+                # if it's tuition fee and student has a discounted tuition_fee saved in FeeDiscount
+                if "tuition fee" in fee_type:
+                    final_amount = fee_amount - (discount.tuition_fee_discount or 0)  # highlighted
+
+            # FIXED: Always send amount and final_amount
+            grouped[year_level_name].append({
+                "id": fee.id,
+                "fee_type": fee.fee_type.name,
+                "amount": str(fee_amount),  # original amount
+                "final_amount": str(final_amount),  # discounted/final amount
+            })
+
+        return [{"year_level": yl, "fees": fees} for yl, fees in grouped.items()]
+
+
  
     # Added this as of 11June25 at 11:39 AM
     @staticmethod
@@ -800,7 +918,8 @@ class YearLevelFeeSerializer(serializers.ModelSerializer):
             fee_data = {
                 'id': fee['id'],
                 'fee_type': fee['fee_type_name'],
-                'amount': fee['amount']
+                'amount': fee['amount'],
+                'final_amount': fee['final_amount'],
             }
 
             # Use a tuple key to keep both id and name
@@ -818,17 +937,39 @@ class YearLevelFeeSerializer(serializers.ModelSerializer):
         return list(grouped_fees.values())
 
 
-class FeeDiscountSerializer(serializers.ModelSerializer):
+# class FeeDiscountSerializer(serializers.ModelSerializer):         # commented today as of 26Aug25 at 09:53 AM
+#     student_id = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all(),source='student')
+#     student_name = serializers.SerializerMethodField()
+
+#     class Meta:
+#         model = FeeDiscount
+#         fields = ["id","student_id","student_name","admission_fee_discount","tuition_fee_discount","admission_fee","tuition_fee","discount_reason","is_allowed","created_at","updated_at",]
+#         read_only_fields = ["admission_fee","tuition_fee","created_at", "updated_at"]  
+    
+#     def get_student_name(self, obj):
+#         return f"{obj.student.user.first_name} {obj.student.user.last_name}".strip()
+
+class FeeDiscountSerializer(serializers.ModelSerializer):   # added today as of 26Aug25 at 09:53 AM to add class
     student_id = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all(),source='student')
     student_name = serializers.SerializerMethodField()
+    year_level = serializers.SerializerMethodField()
 
     class Meta:
         model = FeeDiscount
-        fields = ["id","student_id","student_name","admission_fee_discount","tuition_fee_discount","discount_reason","is_allowed","created_at","updated_at",]
-        read_only_fields = ["created_at", "updated_at"]  
+        fields = ["id","student_id","student_name","year_level","admission_fee_discount","tuition_fee_discount","admission_fee","tuition_fee","discount_reason","is_allowed","created_at","updated_at",]
+        read_only_fields = ["admission_fee","tuition_fee","created_at", "updated_at"]  
     
     def get_student_name(self, obj):
         return f"{obj.student.user.first_name} {obj.student.user.last_name}".strip()
+
+    def get_year_level(self, obj):
+        student_year_level = (
+            StudentYearLevel.objects
+            .filter(student=obj.student)
+            .order_by('-year')  # if multiple, get the latest
+            .first()
+        )
+        return student_year_level.level.level_name if student_year_level else None
 
     def validate(self, attrs):
         student = attrs.get("student")
@@ -887,6 +1028,9 @@ class FeeDiscountSerializer(serializers.ModelSerializer):
             errors["tuition_fee_discount"] = (
                 f"Cannot exceed actual tuition fee ({tuition_fee_amount})."
             )
+        
+        attrs["admission_fee"] = admission_fee_amount - admission_discount
+        attrs["tuition_fee"] = tuition_fee_amount - tuition_discount
 
         if errors:
             raise serializers.ValidationError(errors)
@@ -909,15 +1053,14 @@ class FeeRecordSerializer(serializers.ModelSerializer):
     payment_status = serializers.CharField(max_length=20, read_only=True)
     remarks = serializers.CharField(max_length=255, required=False, allow_null=True)
     received_by = serializers.CharField(max_length=100,required=False, allow_null=True)
-    
     payment_mode = serializers.ChoiceField(choices=FeeRecord._meta.get_field('payment_mode').choices)
-
     month = serializers.ChoiceField(choices=FeeRecord.MONTH_CHOICES)
-
+    school_year = serializers.SerializerMethodField(read_only=True)
+    
     class Meta:
         model = FeeRecord
         fields = [
-            'id', 'student', 'student_id', 'month', 'year_level_fees', 'year_level_fees_grouped',
+            'id', 'student', 'student_id', 'month', 'school_year', 'year_level_fees', 'year_level_fees_grouped',
             'total_amount', 'paid_amount', 'due_amount','discounted_amount', 'payment_date', 'payment_mode', 'is_cheque_cleared','receipt_number',
             'late_fee', 'payment_status', 'remarks', 'received_by'
         ]
@@ -928,9 +1071,15 @@ class FeeRecordSerializer(serializers.ModelSerializer):
             "id": obj.student.id,
             "name": f"{obj.student.user.first_name} {obj.student.user.last_name}"
         }
+
+    def get_school_year(self, obj):
+        if obj.school_year and obj.school_year.year:
+            return obj.school_year.year.year_name
+        return None
     
     def get_discounted_amount(self, obj):
-        total_discount = 0
+        admission_discount = 0
+        tuition_discount = 0
 
         try:
             discount = FeeDiscount.objects.get(student=obj.student, is_allowed=True)
@@ -940,33 +1089,180 @@ class FeeRecordSerializer(serializers.ModelSerializer):
         for fee in obj.year_level_fees.all():
             fee_type = fee.fee_type.name.lower()
             if "admission fee" in fee_type and discount.admission_fee_discount:
-                total_discount += float(discount.admission_fee_discount)
+                admission_discount += float(discount.admission_fee_discount)
             if "tuition fee" in fee_type and discount.tuition_fee_discount:
-                total_discount += float(discount.tuition_fee_discount)
+                tuition_discount += float(discount.tuition_fee_discount)
 
-        return f"{total_discount:.2f}"
+        return {"admission discount":f"{admission_discount:.2f}",
+                "tuition discount":f"{tuition_discount:.2f}"}
     
     def to_representation(self, instance):
         data = super().to_representation(instance)
         user = self.context['request'].user
 
         # Check role
-        if not user.role.filter(name="Director").exists():
-            data.pop('discounted_amount', None)  # hide it from non-directors
+        roles = user.role.values_list("name", flat=True)
+
+        if "director" not in roles and "student" not in roles:
+            data.pop("discounted_amount", None)# hide it from non-directors or students
 
         return data
     
     
+    # def get_year_level_fees_grouped(self, obj):
+    #     grouped = defaultdict(list)
+    #     for fee in obj.year_level_fees.all():
+    #         year_level_name = fee.year_level.level_name
+    #         grouped[year_level_name].append({
+    #             "id": fee.id,
+    #             "fee_type": fee.fee_type.name,
+    #             "amount": str(fee.amount),
+    #         })
+        
+    #     return [{"year_level": yl, "fees": fees} for yl, fees in grouped.items()]
+
     def get_year_level_fees_grouped(self, obj):
         grouped = defaultdict(list)
+
+        #  fetch fee discount for this student if allowed
+        discount = FeeDiscount.objects.filter(student=obj.student, is_allowed=True).first()
+
         for fee in obj.year_level_fees.all():
             year_level_name = fee.year_level.level_name
+            fee_type = fee.fee_type.name.lower()
+            fee_amount = fee.amount
+
+            # default: use original amount
+            final_amount = fee_amount  
+
+            if discount:
+                # if it's admission fee and student has a discounted admission_fee saved in FeeDiscount
+                if "admission fee" in fee_type and discount.admission_fee and discount.admission_fee != 0:
+                    final_amount = discount.admission_fee
+
+                # if it's tuition fee and student has a discounted tuition_fee saved in FeeDiscount
+                if "tuition fee" in fee_type and discount.tuition_fee and discount.tuition_fee != 0:
+                    final_amount = discount.tuition_fee
+
             grouped[year_level_name].append({
                 "id": fee.id,
                 "fee_type": fee.fee_type.name,
-                "amount": str(fee.amount),
+                "amount": str(final_amount),
             })
+
         return [{"year_level": yl, "fees": fees} for yl, fees in grouped.items()]
+
+    
+    ### ------------ conmmented as of 27Aug25 at 05:15 PM below one ---------- ###
+    
+    # def validate(self, data):
+    #     student = data.get('student')
+    #     month = data.get('month')  # e.g., 'July'
+    #     year_level_fees = data.get('year_level_fees', [])
+    #     paid_amount = data.get('paid_amount', 0)
+
+    #     # if self.instance is None:
+    #     #     if FeeRecord.objects.filter(student=student, month=month).exists():
+    #     #         raise serializers.ValidationError(f"Fee already submitted for {month} for this student.")
+
+    #     if self.instance is None:
+    #         for fee in year_level_fees:
+    #             if "admission fee" in fee.fee_type.name.lower():
+    #                 if FeeRecord.objects.filter(
+    #                     student=student,
+    #                     year_level_fees__fee_type__name__iexact="Admission Fee"
+    #                 ).exists():
+    #                     # raise serializers.ValidationError(
+    #                     #     "Admission fee already paid for this student in this school year."
+    #                     # )
+    #                     raise serializers.ValidationError({
+    #                     "admission_fee": "Admission fee already paid for this student in this school year."
+    #                 })              # corrected as 0f 27Aug25 at 04:53 PM
+
+    #             if FeeRecord.objects.filter(student=student,month=month, year_level_fees=fee).exists():
+    #                 raise serializers.ValidationError(
+    #                     f"{fee.fee_type.name} of {month} is already submitted for {student}."
+    #                 )
+                
+
+    #     if not year_level_fees:
+    #         raise serializers.ValidationError("At least one year level fee must be selected.")
+
+    #     total = 0
+    #     for fee in year_level_fees:
+    #         total += fee.amount
+
+    #     # Get applicable discount (only allowed ones)
+    #     try:
+    #         discount = FeeDiscount.objects.get(student=student, is_allowed=True)
+    #     except FeeDiscount.DoesNotExist:
+    #         discount = None
+
+        
+    #     admission_discount = 0
+    #     tuition_discount = 0
+    #     if discount:
+    #         for fee in year_level_fees:
+    #             fee_type = fee.fee_type.name.lower()
+    #             if "admission fee" in fee_type:
+    #                 admission_discount += discount.admission_fee_discount or 0
+    #             if "tuition fee" in fee_type:
+    #                 tuition_discount += discount.tuition_fee_discount or 0
+
+    #     total_discount = admission_discount + tuition_discount
+
+    #     # Subtract discount from total but never negative
+    #     total = max(total - total_discount, 0)
+    #     data['total_amount'] = total
+
+    #     # # caluculate total amount based on year level fee
+    #     # data['total_amount'] = total
+
+    #     # # calculate late fee, if submitted after 15th
+    #     # today = date.today()
+    #     # data['late_fee'] = 25 if today.day > 15 else 0
+
+    #     # #if late fee is applicable, add it to total amount
+
+    #     # if data['late_fee'] > 0:
+    #     #     total += data['late_fee']
+    #     #     data['total_amount'] = total
+
+    #     # ---- Apply Late Fee ONLY for Tuition Fee ----
+    #     today = date.today()
+    #     late_fee = 0
+    #     for fee in year_level_fees:
+    #         if "tuition fee" in fee.fee_type.name.lower() and today.day > 15:
+    #             late_fee = 25
+    #             break  # apply only once per month
+
+    #     if late_fee > 0:
+    #         total += late_fee
+    #         data['late_fee'] = late_fee
+    #         data['total_amount'] = total        
+
+    #     #paid amount should be equal or less than total amount
+    #     if paid_amount > total:
+    #         raise serializers.ValidationError (
+    #                     f"Paid amount {paid_amount} cannot be greater than total amount {total}."
+    #                 )
+        
+    #     # calculate due amount
+    #     due = total - paid_amount
+    #     data['due_amount'] = due if due > 0 else 0
+
+
+    #     # Determine payment status  commented as of 11June25
+    #     # data['payment_status'] = 'Paid' if data['due_amount'] == 0 else 'Unpaid'
+
+    #     return data                  
+    
+    ### ------------ conmmented as of 27Aug25 at 05:15 PM above one ---------- ###
+    
+    
+    
+    ##### ------- updated validation -------  #### As of 27Aug25 at 05:14 PM below one
+    
     
     def validate(self, data):
         student = data.get('student')
@@ -974,16 +1270,34 @@ class FeeRecordSerializer(serializers.ModelSerializer):
         year_level_fees = data.get('year_level_fees', [])
         paid_amount = data.get('paid_amount', 0)
 
-        # if self.instance is None:
-        #     if FeeRecord.objects.filter(student=student, month=month).exists():
-        #         raise serializers.ValidationError(f"Fee already submitted for {month} for this student.")
-
         if self.instance is None:
             for fee in year_level_fees:
+                # Admission Fee Validation
+                if "admission fee" in fee.fee_type.name.lower():
+                    if FeeRecord.objects.filter(
+                        student=student,
+                        year_level_fees__fee_type__name__iexact="Admission Fee"
+                    ).exists():
+                        raise serializers.ValidationError({
+                            "admission_fee": "Admission fee already paid for this student in this school year."
+                        })
+
+                # Tuition Fee Validation   corrected here
+                if "tuition fee" in fee.fee_type.name.lower():
+                    if FeeRecord.objects.filter(
+                        student=student,
+                        month=month,
+                        year_level_fees__fee_type__name__iexact="Tuition Fee"
+                    ).exists():
+                        raise serializers.ValidationError({
+                            "tuition_fee": f"Tuition fee of {month} is already submitted for {student}."
+                        })
+
+                # Other fee types  structured response
                 if FeeRecord.objects.filter(student=student, month=month, year_level_fees=fee).exists():
-                    raise serializers.ValidationError(
-                        f"{fee.fee_type.name} of {month} is already submitted for {student}."
-                    )
+                    raise serializers.ValidationError({
+                        fee.fee_type.name.lower().replace(" ", "_"): f"{fee.fee_type.name} of {month} is already submitted for {student}."
+                    })
 
         if not year_level_fees:
             raise serializers.ValidationError("At least one year level fee must be selected.")
@@ -998,42 +1312,62 @@ class FeeRecordSerializer(serializers.ModelSerializer):
         except FeeDiscount.DoesNotExist:
             discount = None
 
-        total_discount = 0
+        admission_discount = 0
+        tuition_discount = 0
         if discount:
             for fee in year_level_fees:
                 fee_type = fee.fee_type.name.lower()
                 if "admission fee" in fee_type:
-                    total_discount += discount.admission_fee_discount or 0
+                    admission_discount += discount.admission_fee_discount or 0
                 if "tuition fee" in fee_type:
-                    total_discount += discount.tuition_fee_discount or 0
+                    tuition_discount += discount.tuition_fee_discount or 0
+
+        total_discount = admission_discount + tuition_discount
 
         # Subtract discount from total but never negative
         total = max(total - total_discount, 0)
         data['total_amount'] = total
 
-        # # caluculate total amount based on year level fee
-        # data['total_amount'] = total
-
-        # calculate late fee, if submitted after 15th
+        # ---- Apply Late Fee ONLY for Tuition Fee ----
         today = date.today()
-        data['late_fee'] = 25 if today.day > 15 else 0
+        late_fee = 0
+        for fee in year_level_fees:
+            if "tuition fee" in fee.fee_type.name.lower() and today.day > 15:
+                late_fee = 25
+                break  # apply only once per month
 
-        #paid amount should be equal or less than total amount
+        if late_fee > 0:
+            total += late_fee
+            data['late_fee'] = late_fee
+            data['total_amount'] = total        
+
+        # paid amount should be equal or less than total amount
         if paid_amount > total:
-            raise serializers.ValidationError("Paid amount cannot be greater than total amount.")
+            raise serializers.ValidationError(
+                f"Paid amount {paid_amount} cannot be greater than total amount {total}."
+            )
         
         # calculate due amount
-        due = total + data['late_fee'] - paid_amount
+        due = total - paid_amount
         data['due_amount'] = due if due > 0 else 0
-        
-        # Determine payment status  commented as of 11June25
-        # data['payment_status'] = 'Paid' if data['due_amount'] == 0 else 'Unpaid'
 
         return data
+
+
+    
+    ##### ------- updated validation -------  #### As of 27Aug25 at 05:14 PM above one
+    
+    
+    
+    
+    
+    
+    
     
     ### Added this as of 11June25 at 01:39 PM
     def create(self, validated_data):
         year_level_fees = validated_data.pop('year_level_fees')
+        # print(f"Year Level Fees: {year_level_fees}")
         validated_data['payment_date'] = date.today()
 
         total_amount = validated_data.get('total_amount', 0)
@@ -1042,15 +1376,36 @@ class FeeRecordSerializer(serializers.ModelSerializer):
         due_amount = validated_data.get('due_amount', 0)
         payment_mode = validated_data.get('payment_mode')
         is_cheque_cleared = validated_data.get('is_cheque_cleared', False)
+        student = validated_data.get("student")
+
+        # student_year_level = student.student_year_levels.order_by("-year__start_date").first()
+        # if student_year_level:
+        #     validated_data["school_year"] = student_year_level 
+        
+        # if any("admission fee" in fee.fee_type.name.lower() for fee in year_level_fees):
+        #     if FeeRecord.objects.filter(student=student, school_year=student_year_level, year_level_fees__fee_type__name__icontains="admission fee").exists():
+        #         raise serializers.ValidationError("Admission fee already paid for this student in this school year.")
+        
+        # for fee in year_level_fees:
+        #     fee_type = fee.fee_type.name.lower()
+        #     if "admission fee" in fee_type and discount.admission_fee_discount:
+        #         admission_discount += float(discount.admission_fee_discount)
+        #         fees = fee_amount - admission_discount
+  #to be continued if admission fee isnt paid 
+                
+        # get student's latest StudentYearLevel (adjust ordering logic if needed)
+        student_year_level = student.student_year_levels.order_by("-year__start_date").first()
+        if student_year_level:
+            validated_data["school_year"] = student_year_level  
 
         # Default status
         payment_status = 'Unpaid'
         
         if payment_mode == 'Cash' or payment_mode == 'Online':
-            if paid_amount >= total_amount + validated_data.get('late_fee', 0):
+            if paid_amount >= total_amount :
                 payment_status = 'Paid'
         elif payment_mode == 'Cheque':
-            if is_cheque_cleared and paid_amount >= total_amount + late_fee:
+            if is_cheque_cleared and paid_amount >= total_amount:
                 payment_status = 'Paid'
             else:
                 payment_status = 'Unpaid'
@@ -1082,7 +1437,6 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
 
     
     # just added as of 16June25 at 12:29 PM
-            # just added as of 16June25 at 12:29 PM
 
     
     def validate(self, data):       # corrected late fee logic for advanced fee payment
@@ -1107,6 +1461,49 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
         # Calculate total fees
         total = sum(fee.amount for fee in year_level_fees)
 
+        # # Get applicable discount (only allowed ones)
+        # try:
+        #     discount = FeeDiscount.objects.get(student=student, is_allowed=True)
+        # except FeeDiscount.DoesNotExist:
+        #     discount = None
+
+        # total_discount = Decimal("0.00")
+        # if discount:
+        #     for fee in year_level_fees:
+        #         fee_type = fee.fee_type.name.lower()
+        #         if "admission fee" in fee_type:
+        #             total_discount += discount.admission_fee_discount or Decimal("0.00")
+        #         if "tuition fee" in fee_type:
+        #             total_discount += discount.tuition_fee_discount or Decimal("0.00")
+
+        # # Subtract discount from total but never negative
+        # total = max(total - total_discount, Decimal("0.00"))
+
+
+        # # Calculate late fee based on current or past month logic (same as cash serializer)
+        # month_map = {
+        #     'January': 1, 'February': 2, 'March': 3, 'April': 4,
+        #     'May': 5, 'June': 6, 'July': 7, 'August': 8,
+        #     'September': 9, 'October': 10, 'November': 11, 'December': 12
+        # }
+        # today = date.today()
+        # fee_month_num = month_map.get(month)
+
+        # if fee_month_num is not None and fee_month_num <= today.month:
+        #     late_fee = Decimal("25.00") if today.day > 15 else Decimal("0.00")
+        # else:
+        #     late_fee = Decimal("0.00")
+        #print(f"Late fee for {month}: {late_fee}")
+
+        # calculate late fee, if submitted after 15th
+        today = date.today()
+        late_fee = 25 if today.day > 15 else 0
+
+        #if late fee is applicable, add it to total amount
+        if late_fee > 0:
+            total += late_fee
+            data['total_amount'] = total
+
         # Get applicable discount (only allowed ones)
         try:
             discount = FeeDiscount.objects.get(student=student, is_allowed=True)
@@ -1125,25 +1522,11 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
         # Subtract discount from total but never negative
         total = max(total - total_discount, Decimal("0.00"))
 
-
-        # Calculate late fee based on current or past month logic (same as cash serializer)
-        month_map = {
-            'January': 1, 'February': 2, 'March': 3, 'April': 4,
-            'May': 5, 'June': 6, 'July': 7, 'August': 8,
-            'September': 9, 'October': 10, 'November': 11, 'December': 12
-        }
-        today = date.today()
-        fee_month_num = month_map.get(month)
-
-        if fee_month_num is not None and fee_month_num <= today.month:
-            late_fee = Decimal("25.00") if today.day > 15 else Decimal("0.00")
-        else:
-            late_fee = Decimal("0.00")
-
-        due_amount = total + late_fee - paid_amount
-        if paid_amount > (total + late_fee):
+        due_amount = total - paid_amount
+        # print(due_amount)
+        if paid_amount > total:
             raise serializers.ValidationError(
-                f"Paid amount ({paid_amount}) cannot be greater than the total due ({total + late_fee})."
+                f"Paid amount ({paid_amount}) cannot be greater than the total due ({total})."
             )
 
         data['total_amount'] = total
@@ -1794,7 +2177,11 @@ class SubjectScoreSerializer(serializers.ModelSerializer):
 
 """----------------------------------------NonScholasticGradeTermWise-------------------------------------------------"""
 
-        
+class PersonalSocialQualitySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PersonalSocialQuality
+        fields = "__all__"
+
 class NonScholasticGradeTermWiseSerializer(serializers.ModelSerializer):
     ALLOWED_GRADES = ["A++", "A+", "A", "B", "C", "D"]
 
@@ -2017,4 +2404,101 @@ class EmployeeSalarySerializer(serializers.ModelSerializer):
 
 
 
+class IncomeCategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = IncomeCategory
+        fields = "__all__"
 
+class SchoolIncomeSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source="category.name", read_only=True)
+    creator = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SchoolIncome
+        fields = "__all__"
+        read_only_fields = ["created_at", "creator"]
+
+    def get_creator(self, obj):
+        if obj.created_by:
+            return f"{obj.created_by.first_name} {obj.created_by.last_name}".strip()
+        return None
+
+    def validate(self, data):
+        category = data.get("category")
+        month = data.get("month")
+        school_year = data.get("school_year")
+        income_date = data.get("income_date")
+
+        # Ensure amount is positive (skip for Monthly Fees, it gets auto-set later)
+        if category and category.name != "Monthly Fees":
+            if data.get("amount", 0) <= 0:
+                raise serializers.ValidationError({
+                    "amount": "Amount must be a positive number."
+                })
+
+        # Ensure income date is not in the future
+        if income_date and income_date > date.today():
+            raise serializers.ValidationError({
+                "income_date": "Income date cannot be in the future."
+            })
+
+        # Ensure one category per month per school_year
+        if category and month and school_year:
+            qs = SchoolIncome.objects.filter(
+                category=category,
+                month=month,
+                school_year=school_year
+            )
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError({
+                    "category": f"Income for '{category.name}' already exists for {month} ({school_year})."
+                })
+
+        return data
+
+    def create(self, validated_data):
+        # Auto-assign creator
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            validated_data["created_by"] = request.user
+
+        school_year = validated_data["school_year"]   # this is a SchoolYear instance
+        month = validated_data["month"]               # pull from validated_data
+        category = validated_data.get("category")
+
+        # Auto-set amount for Monthly Fees
+        if category and category.name == "Monthly Fees":
+            total = (
+                FeeRecord.objects.filter(
+                    month=month,
+                    school_year__year=school_year   # StudentYearLevel.year → SchoolYear
+                ).aggregate(total=Sum("paid_amount"))["total"] or 0
+            )
+            validated_data["amount"] = total
+
+        return super().create(validated_data)
+        
+    def update(self, instance, validated_data):
+        allowed_fields = [
+            "amount",
+            "description",
+            "income_date",
+            "payment_method",
+            "attachment",
+            "status",
+        ]
+
+        # block updates for restricted fields (category, school_year, created_by etc.)
+        for field in list(validated_data.keys()):
+            if field not in allowed_fields:
+                validated_data.pop(field)
+
+        # special rule: "Monthly Fees" → amount cannot be updated
+        category = instance.category
+        if category and category.name == "Monthly Fees":
+            validated_data.pop("amount", None)
+
+        return super().update(instance, validated_data)
+    

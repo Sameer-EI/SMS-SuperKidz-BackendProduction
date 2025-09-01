@@ -33,27 +33,54 @@ class UserView(APIView):
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-@api_view(["POST"])
+# @api_view(["POST"])       #  commented as of 29Aug25 at 12:50 PM
+# @permission_classes([IsAuthenticated])
+# def ChangePasswordView(request):
+#     current_password = request.data.get("current_password")
+#     Change_Password = request.data.get("change_password")
+#     email = request.data.get("email")
+
+#     serialized = ChangePasswordSerializer(data=request.data)
+
+#     if serialized.is_valid():
+
+#         user = authenticate(email=email, password=current_password)
+
+#         if user is not None:
+
+#             user.set_password(Change_Password)
+#             user.save()
+#             return Response({"Message": " Changed password Successfully"})
+
+#         return Response({"Message ": " Invalid Password"})
+#     return Response(serialized.errors, status=400)
+
+
+@api_view(["POST"])     #  Added as of 29Aug25 at 12:50 PM
 @permission_classes([IsAuthenticated])
 def ChangePasswordView(request):
     current_password = request.data.get("current_password")
-    Change_Password = request.data.get("change_password")
-    email = request.data.get("email")
-
+    change_password = request.data.get("change_password")
+    
+    # Get the authenticated user from the request
+    user = request.user
+    
     serialized = ChangePasswordSerializer(data=request.data)
 
     if serialized.is_valid():
-
-        user = authenticate(email=email, password=current_password)
-
-        if user is not None:
-
-            user.set_password(Change_Password)
+        # Check if the provided current password matches the user's actual password
+        if user.check_password(current_password):
+            user.set_password(change_password)
             user.save()
-            return Response({"Message": " Changed password Successfully"})
-
-        return Response({"Message ": " Invalid Password"})
+            return Response({"Message": "Password changed successfully"})
+        
+        return Response({"Message": "Invalid current password"}, status=400)
+    
     return Response(serialized.errors, status=400)
+
+
+
+
 
 
 # from rest_framework.decorators import api_view
