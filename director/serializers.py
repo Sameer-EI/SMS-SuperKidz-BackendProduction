@@ -1957,7 +1957,7 @@ class NonScholasticGradeTermWiseSerializer(serializers.ModelSerializer):
 
     def validate_non_scholastic_subject(self, subject):
         
-        expected_department = "Non-scholatic"  # change if needed
+        expected_department = "Non-scholastic"  # change if needed
         
         if not subject.department or subject.department.department_name != expected_department:
             raise serializers.ValidationError(
@@ -2272,3 +2272,26 @@ class SchoolIncomeSerializer(serializers.ModelSerializer):
 
         return super().update(instance, validated_data)
     
+
+class SchoolTurnOverSerializer(serializers.ModelSerializer):
+    yearly_profit = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SchoolTurnOver
+        fields = [
+            "id",
+            "school_year",
+            "carry_forward",
+            "total_income",
+            "total_expense",
+            "yearly_profit",
+            "net_turnover",
+            "calculated_at",
+            "is_locked",
+            "verified_by",
+            "verified_at",
+        ]
+
+    def get_yearly_profit(self, obj):
+        return str(obj.total_income - obj.total_expense)
+  
