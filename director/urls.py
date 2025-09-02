@@ -48,7 +48,7 @@ router.register(r'Expense-Category', ExpenseCategoryView)
 router.register(r'School-Expense', SchoolExpenseView)
 router.register(r'Employee',EmployeeView,basename=Employee)
 router.register(r'Employee-salary',EmployeeSalaryView)
-
+router.register(r'school-turnover',SchoolTurnOverViewSet,basename='school-turnover')
 
 urlpatterns = [
     path("year-levels/", YearLevelView),

@@ -45,6 +45,7 @@ admin.site.register(
         IncomeCategory,
         SchoolIncome,
         EmployeeSalary,
-        Employee
+        Employee,
+        SchoolTurnOver,
     ]
 )

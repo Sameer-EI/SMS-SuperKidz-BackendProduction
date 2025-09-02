@@ -787,3 +787,27 @@ class SchoolIncome(models.Model):
     class Meta:
         unique_together = ['category', 'month', 'school_year']
         
+
+class SchoolTurnOver(models.Model):
+
+    school_year = models.OneToOneField(SchoolYear, on_delete=models.CASCADE)
+
+    carry_forward = models.JSONField(default=dict, blank=True)#store last year balance
+    total_income = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    total_expense = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    net_turnover = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    financial_outcome = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    financial_status = models.CharField(
+        max_length=10,
+        choices=[("Profit", "Profit"), ("Loss", "Loss"), ("Break-even", "Break-even")],
+        default="Break-even"
+    )
+    calculated_at = models.DateTimeField(auto_now_add=True)
+
+    verified_by = models.ForeignKey("authentication.User", on_delete=models.SET_NULL, null=True, blank=True)
+    verified_at = models.DateTimeField(blank=True, null=True)
+    is_locked = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f"Yearly Turnover: {self.school_year}"
+    
