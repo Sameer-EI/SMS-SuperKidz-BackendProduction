@@ -2,7 +2,7 @@ from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from .models import   StudentAttendance
+from .models import  *
 from .serializers import *
 from django.utils.dateformat import format as date_format
 from datetime import date,datetime, timedelta
