@@ -1,6 +1,8 @@
 import django_filters as df
 from .models import Admission
 
+
+
 class AdmissionFilter(df.FilterSet):
     school_year = df.CharFilter(field_name="school_year__year_name", lookup_expr="iexact")
     year_level  = df.CharFilter(field_name="year_level__level_name",  lookup_expr="iexact")
@@ -16,6 +18,9 @@ class AdmissionFilter(df.FilterSet):
     # by name of guardian and student
     student_name  = df.CharFilter(method="filter_by_student_name")
     guardian_name = df.CharFilter(method="filter_by_guardian_name")
+    
+    
+    
 
     def filter_by_student_name(self, qs, name, value):
         """Match first OR last name of the linked Student’s User record."""
@@ -48,3 +53,6 @@ class AdmissionFilter(df.FilterSet):
             "date_after",
             "date_before",
         ]
+
+
+
