@@ -1,3 +1,26 @@
+# Core
+django>=5.0
+djangorestframework
+
+# Auth & JWT
+djangorestframework-simplejwt
+
+# Utilities
+django-cors-headers
+django-filter
+
+# Media & Images
+pillow
+
+# Payments
+razorpay
+
+# Database (agar PostgreSQL use karte ho)
+psycopg2-binary
+
+# Optional: for environment variables
+python-decouple
+=======
 asgiref==3.8.1
 certifi==2025.6.15
 channels==4.2.2
@@ -31,3 +54,4 @@ holidays==0.28.1
 # pip install -r requirements.txt   # install project dependencies
 # type requirements.txt             # lisy required dependencies
 # .\.venv\Scripts\activate          # activate environment
+
