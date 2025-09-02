@@ -2064,50 +2064,6 @@ class FeeRecordView(viewsets.ModelViewSet):
         return Response(grouped_fees)
     
     
-    
-    @action(detail=False, methods=['post'], url_path="send-due-fee-notifications")
-    def send_due_fee_notifications(self, request):
-        """
-        Sare students jinke fees due hai unka message ek hi TEST number pe bhejega.
-        """
-        due_records = FeeRecord.objects.filter(is_active=True, due_amount__gt=0)
-
-        if not due_records.exists():
-            return Response({"message": "No students with due fees."}, status=status.HTTP_200_OK)
-
-        sent_notifications = []
-
-        for record in due_records:
-            student = record.student
-            student_name = student.user.get_full_name()
-
-            message_text = (
-                f"Dear {student_name},\n"
-                f"Your fee for {record.month} is still due.\n"
-                f"Receipt No: {record.receipt_number}\n"
-                f"Total Amount: ₹{record.total_amount:.2f}\n"
-                f"Paid Amount: ₹{record.paid_amount:.2f}\n"
-                f"Due Amount: ₹{record.due_amount:.2f}\n"
-                f"Kindly clear your dues at the earliest. Thank you!"
-            )
-
-            # 👉 Ab actual sending yaha hoga
-            response = send_whatsapp_message(message_text)
-            sent_notifications.append({
-                "student": student_name,
-                "receipt": record.receipt_number,
-                "whatsapp_response": response
-            })
-
-        return Response({
-            "total_due_students": due_records.count(),
-            "notifications": sent_notifications
-        }, status=status.HTTP_200_OK)
-    
-
-    
-    
-     
   
     @action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
     def submit_single_multi_month_fees(self, request):
@@ -2580,11 +2536,36 @@ class FeeRecordView(viewsets.ModelViewSet):
         else:
             return Response({"detail": "Permission denied."}, status=403)
 
-        # serializer = FeeRecordSerializer(queryset, many=True)
+        # serializer = FeeRecordSerializer(queryset, many=True) 
         # return Response(serializer.data)
 
         serializer = FeeRecordSerializer(queryset, many=True, context={"request": request})
-        return Response(serializer.data)
+        notifications = []
+        for fee_record in queryset:
+            student = fee_record.student
+            msg = (
+                f"📢 Dear {student.user.get_full_name()},\n"
+                f"Your fee for {fee_record.month} is still UNPAID.\n"
+                f"Total Amount: ₹{fee_record.total_amount}\n"
+                f"Paid: ₹{fee_record.paid_amount}\n"
+                f"Due: ₹{fee_record.due_amount}\n"
+                f"Please clear it at the earliest."
+            )
+            # WhatsApp notification bhejna
+            response = send_whatsapp_message(msg)   # <-- apka existing function
+            notifications.append({
+                "student": student.user.get_full_name(),
+                "month": str(fee_record.month),
+                "due_amount": str(fee_record.due_amount),
+                "response": response
+            })
+        # -------------------------------------------------------
+
+        return Response({
+            "unpaid_fees": serializer.data,
+            "notifications": notifications
+        })
+
 
 
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="overall_unpaid_fees")
