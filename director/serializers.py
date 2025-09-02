@@ -2274,8 +2274,6 @@ class SchoolIncomeSerializer(serializers.ModelSerializer):
     
 
 class SchoolTurnOverSerializer(serializers.ModelSerializer):
-    yearly_profit = serializers.SerializerMethodField()
-
     class Meta:
         model = SchoolTurnOver
         fields = [
@@ -2284,14 +2282,11 @@ class SchoolTurnOverSerializer(serializers.ModelSerializer):
             "carry_forward",
             "total_income",
             "total_expense",
-            "yearly_profit",
+            "financial_outcome", 
+            "financial_status", 
             "net_turnover",
             "calculated_at",
             "is_locked",
             "verified_by",
             "verified_at",
         ]
-
-    def get_yearly_profit(self, obj):
-        return str(obj.total_income - obj.total_expense)
-  

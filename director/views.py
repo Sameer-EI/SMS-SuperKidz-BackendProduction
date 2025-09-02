@@ -2026,11 +2026,24 @@ class FeeRecordView(viewsets.ModelViewSet):
             year_level_fees__fee_type__name__iexact="admission fee"
         ).values_list("year_level_fees", flat=True)
 
-        # Monthly fees → must match same month
+        # Tuition fees (monthly) → must match same month
         monthly_paid_fee_ids = paid_fees.exclude(
             year_level_fees__fee_type__name__iexact="admission fee"
         ).filter(
-            month=month
+            month=month,
+            year_level_fees__fee_type__name__iexact="tuition fee"
+        ).values_list("year_level_fees", flat=True)
+
+        # Exam fees → must match same month
+        exam_paid_fee_ids = paid_fees.filter(
+            month=month,
+            year_level_fees__fee_type__name__iexact="exam fee"
+        ).values_list("year_level_fees", flat=True)
+
+        # Transport fees → must match same month
+        transport_paid_fee_ids = paid_fees.filter(
+            month=month,
+            year_level_fees__fee_type__name__iexact="transport fee"
         ).values_list("year_level_fees", flat=True)
 
         # Serialize fees
@@ -2039,28 +2052,40 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         today = date.today()
 
-        # Add status/late fee
+        # --- Add status/late fee ---
         for group in grouped_fees:
+            new_fees_list = []  # Create a new list to hold the modified fee dictionaries
             for fee in group["fees"]:
                 fee_id = fee["id"]
                 fee_type = fee["fee_type"].lower()
 
-                # Default to Pending
-                fee["status"] = "Pending"
+                # --- HANDLING ADMISSION, TUITION, EXAM, TRANSPORT ---
+                if (fee_type == "admission fee" and fee_id in admission_paid_fee_ids) or \
+                (fee_type == "tuition fee" and fee_id in monthly_paid_fee_ids) or \
+                (fee_type == "exam fee" and fee_id in exam_paid_fee_ids) or \
+                (fee_type == "transport fee" and fee_id in transport_paid_fee_ids):
 
-                if fee_type == "admission fee" and fee_id in admission_paid_fee_ids:
-                    fee["status"] = "Already Paid"
-                    fee.pop("amount", None)
-                    fee.pop("final_amount", None)
+                    # Already Paid → minimal response
+                    new_fee = {
+                        "fee_type": fee_type.title(),
+                        "id": fee_id,
+                        "status": "Already Paid"
+                    }
+                    new_fees_list.append(new_fee)
 
-                elif fee_type != "admission fee" and fee_id in monthly_paid_fee_ids:
-                    fee["status"] = "Already Paid"
-                    fee.pop("amount", None)
-                    fee.pop("final_amount", None)
+                else:
+                    # Pending → include amounts
+                    fee["amount"] = str(fee.get("amount", "0"))
+                    fee["final_amount"] = str(fee.get("final_amount", "0"))
+                    fee["status"] = "Pending"
 
-                # Tuition fee late fee after 15th
-                elif fee_type == "tuition fee" and today.day > 15:
-                    fee["late_fee"] = 25
+                    # Late Fee (only for Tuition Fee)
+                    if fee_type == "tuition fee" and today.day > 15:
+                        fee["late_fee"] = 25
+
+                    new_fees_list.append(fee)
+
+            group["fees"] = new_fees_list
 
         return Response(grouped_fees)
 
@@ -5037,7 +5062,35 @@ class SchoolTurnOverViewSet(viewsets.ModelViewSet):
             raise ValidationError("This turnover is locked and cannot be deleted.")
         super().perform_destroy(instance)
 
+    # def update_totals(self, instance):
+    #     income_sum = (
+    #         SchoolIncome.objects.filter(
+    #             school_year=instance.school_year, status="confirmed"
+    #         ).aggregate(total=Sum("amount"))["total"]
+    #         or 0
+    #     )
+
+    #     expense_sum = (
+    #         SchoolExpense.objects.filter(
+    #             school_year=instance.school_year, status="approved"
+    #         ).aggregate(total=Sum("amount"))["total"]
+    #         or 0
+    #     )
+
+    #     instance.total_income = income_sum
+    #     instance.total_expense = expense_sum
+
+    #     # calculate yearly profit
+    #     yearly_profit = income_sum - expense_sum
+
+    #     # add carry_forward safely as Decimal
+    #     cf_total = sum(Decimal(str(v)) for v in instance.carry_forward.values()) if instance.carry_forward else Decimal(0)
+
+    #     instance.net_turnover = yearly_profit + cf_total
+
+    #     instance.save(update_fields=["total_income", "total_expense", "net_turnover"])
     def update_totals(self, instance):
+        # calculate totals
         income_sum = (
             SchoolIncome.objects.filter(
                 school_year=instance.school_year, status="confirmed"
@@ -5055,16 +5108,31 @@ class SchoolTurnOverViewSet(viewsets.ModelViewSet):
         instance.total_income = income_sum
         instance.total_expense = expense_sum
 
-        # calculate yearly profit
+        # existing logic: yearly profit
         yearly_profit = income_sum - expense_sum
 
         # add carry_forward safely as Decimal
         cf_total = sum(Decimal(str(v)) for v in instance.carry_forward.values()) if instance.carry_forward else Decimal(0)
 
+        # net turnover = yearly profit + carry_forward
         instance.net_turnover = yearly_profit + cf_total
 
-        instance.save(update_fields=["total_income", "total_expense", "net_turnover"])
-        
+        # ---- new logic: financial outcome & status ----
+        instance.financial_outcome = yearly_profit  # same as income - expense
+        if instance.financial_outcome > 0:
+            instance.financial_status = "Profit"
+        elif instance.financial_outcome < 0:
+            instance.financial_status = "Loss"
+        else:
+            instance.financial_status = "Break-even"
+        # ------------------------------------------------
+
+        # save all fields together
+        instance.save(update_fields=[
+            "total_income", "total_expense", "net_turnover",
+            "financial_outcome", "financial_status"
+        ])
+   
     def _handle_verification(self, instance, user):
         if not instance.is_locked:
             instance.is_locked = True
