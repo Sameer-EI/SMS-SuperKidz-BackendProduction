@@ -478,7 +478,7 @@ class OfficeStaff(models.Model):
     phone_no = models.CharField(max_length=20)
     gender = models.CharField(max_length=20)
     user = models.OneToOneField("authentication.User", on_delete=models.SET_NULL, null=True)
-    phone_no = models.CharField(max_length=20,null=True, blank=True)
+    phone_no = models.CharField(max_length=20,null=True, blank=True)   # first mistake 
     gender = models.CharField(max_length=20,null=True, blank=True)
     department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True)
     date_joined = models.DateField(auto_now_add=True)
