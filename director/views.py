@@ -1,4 +1,4 @@
-from django.forms import DateField
+from django.forms import DateField, ValidationError
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.db.models import Count
@@ -6,6 +6,9 @@ from collections import OrderedDict
 from attendance.models import StudentAttendance
 # from director.permission import *
 from director.utils import calculate_subject_summary
+from rest_framework.exceptions import ValidationError
+from director.permission import IsDirectororOfficeStaff
+
 
 
 # from director.permission import IsDirector
@@ -41,6 +44,7 @@ from datetime import datetime, timedelta
 from django.utils.timezone import now
 from django.db.models.functions import Cast
 from teacher.models import Teacher, TeacherYearLevel
+
 
 
 from django.db.models import OuterRef, Subquery, Sum, Value, FloatField
@@ -338,7 +342,7 @@ def Director_Dashboard_Summary(request):
 @api_view(["GET"])
 def teacher_dashboard(request, id):
     try:
-        teacher = Teacher.objects.get(id=id)
+        teacher = Teacher.objects.get(user_id=id)
         teacher_name = f"{teacher.user.first_name} {teacher.user.last_name}"
 
        
@@ -382,7 +386,7 @@ def guardian_dashboard(request, id=None):
         return Response({"error": "Guardian ID is required"}, status=400)
 
     try:
-        guardian = Guardian.objects.get(id=id)  # Corrected line
+        guardian = Guardian.objects.get(user_id=id)  # Corrected line
     except Guardian.DoesNotExist:
         return Response({"error": "Guardian not found"}, status=404)
 
@@ -466,7 +470,7 @@ def student_dashboard(request, id=None):
         return Response({"error": "Student ID is required"}, status=400)
 
     try:
-        student = Student.objects.get(id=id)
+        student = Student.objects.get(user_id=id)
     except Student.DoesNotExist:
         return Response({"error": "Student not found"}, status=404)
 
@@ -1226,6 +1230,91 @@ def DepartmentView(request, pk=None):
 
 
 @api_view(["GET", "POST", "PUT", "DELETE"])
+def ClassRoomView(request, pk=None):
+
+    def is_room_exists(room_type_id, room_name, exclude_id=None):
+      
+        queryset = ClassRoom.objects.filter(
+            room_type_id=room_type_id,
+            room_name__iexact=room_name.strip()
+        )
+        if exclude_id:
+            queryset = queryset.exclude(id=exclude_id)
+        return queryset.exists()
+
+  
+    if request.method == "GET":
+        if pk:
+            try:
+                classroom = ClassRoom.objects.get(id=pk)
+                serialize = ClassRoomSerializer(classroom)
+                return Response(serialize.data, status=status.HTTP_200_OK)
+            except ClassRoom.DoesNotExist:
+                return Response({"Message": "Data not found"}, status=status.HTTP_404_NOT_FOUND)
+        classrooms = ClassRoom.objects.all()
+        serialize = ClassRoomSerializer(classrooms, many=True)
+        return Response(serialize.data, status=status.HTTP_200_OK)
+
+
+    elif request.method == "POST":
+        room_type_id = request.data.get("room_type")
+        room_name = request.data.get("room_name", "").strip()
+
+        if not room_type_id or not room_name:
+            return Response({"Message": "Invalid Data"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if is_room_exists(room_type_id, room_name):
+            return Response(
+                {"Message": "This room already exists for this type."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serialize = ClassRoomSerializer(data=request.data)
+        if serialize.is_valid():
+            serialize.save()
+            return Response({"Message": "Data Saved Successfully"}, status=status.HTTP_200_OK)
+        return Response({"Message": "Insert Valid Data", "Errors": serialize.errors},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+
+    elif request.method == "PUT":
+        try:
+            classroom = ClassRoom.objects.get(id=pk)
+        except ClassRoom.DoesNotExist:
+            return Response({"Message": "Data not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        room_type_id = request.data.get("room_type")
+        room_name = request.data.get("room_name", "").strip()
+
+        if not room_type_id or not room_name:
+            return Response({"Message": "Invalid Data"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if is_room_exists(room_type_id, room_name, exclude_id=pk):
+            return Response(
+                {"Message": "This room already exists for this type."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serialize = ClassRoomSerializer(instance=classroom, data=request.data)
+        if serialize.is_valid():
+            serialize.save()
+            return Response({"Message": "Data Updated Successfully"}, status=status.HTTP_200_OK)
+        return Response({"Message": "Insert Valid Data", "Errors": serialize.errors},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+ 
+    elif request.method == "DELETE":
+        try:
+            classroom = ClassRoom.objects.get(id=pk)
+            classroom.delete()
+            return Response({"Message": "Data Deleted"}, status=status.HTTP_204_NO_CONTENT)
+        except ClassRoom.DoesNotExist:
+            return Response({"Message": "Data not found"}, status=status.HTTP_404_NOT_FOUND)
+
+
+
+
+@api_view(["GET", "POST", "PUT", "DELETE"])
 def ClassRoomTypeView(request, pk=None):
 
     if request.method == "GET":
@@ -1601,6 +1690,17 @@ class AdmissionView(viewsets.ModelViewSet):
         "previous_percentage",
     ]
     # parser_classes=[MultiPartParser,FormParser]
+    
+
+    # rte
+    @action(detail=False, methods=["get"], url_path="rte-students")
+    def rte_students(self, request):
+        queryset = self.queryset.filter(is_rte=True)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+  
+    
+    
     
     # ***************OfficeStaffView**************
     
@@ -1988,6 +2088,10 @@ class FeeRecordView(viewsets.ModelViewSet):
     
         return qs.distinct()
 
+    # removed commented or unnecessary code from line 1906 - 2266
+        # commented as of 26Aug25 at 04:34 PM
+
+    # Added as of 26Aug25 at 04:34 PM
     @action(detail=False, methods=["get"], url_path="fee-preview")
     def preview(self, request):
         student_id = request.query_params.get("student_id")
@@ -2025,11 +2129,24 @@ class FeeRecordView(viewsets.ModelViewSet):
             year_level_fees__fee_type__name__iexact="admission fee"
         ).values_list("year_level_fees", flat=True)
 
-        # Monthly fees → must match same month
+        # Tuition fees (monthly) → must match same month
         monthly_paid_fee_ids = paid_fees.exclude(
             year_level_fees__fee_type__name__iexact="admission fee"
         ).filter(
-            month=month
+            month=month,
+            year_level_fees__fee_type__name__iexact="tuition fee"
+        ).values_list("year_level_fees", flat=True)
+
+        # Exam fees → must match same month
+        exam_paid_fee_ids = paid_fees.filter(
+            month=month,
+            year_level_fees__fee_type__name__iexact="exam fee"
+        ).values_list("year_level_fees", flat=True)
+
+        # Transport fees → must match same month
+        transport_paid_fee_ids = paid_fees.filter(
+            month=month,
+            year_level_fees__fee_type__name__iexact="transport fee"
         ).values_list("year_level_fees", flat=True)
 
         # Serialize fees
@@ -2038,33 +2155,44 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         today = date.today()
 
-        # Add status/late fee
+        # --- Add status/late fee ---
         for group in grouped_fees:
+            new_fees_list = []  # Create a new list to hold the modified fee dictionaries
             for fee in group["fees"]:
                 fee_id = fee["id"]
                 fee_type = fee["fee_type"].lower()
 
-                # Default to Pending
-                fee["status"] = "Pending"
+                # --- HANDLING ADMISSION, TUITION, EXAM, TRANSPORT ---
+                if (fee_type == "admission fee" and fee_id in admission_paid_fee_ids) or \
+                (fee_type == "tuition fee" and fee_id in monthly_paid_fee_ids) or \
+                (fee_type == "exam fee" and fee_id in exam_paid_fee_ids) or \
+                (fee_type == "transport fee" and fee_id in transport_paid_fee_ids):
 
-                if fee_type == "admission fee" and fee_id in admission_paid_fee_ids:
-                    fee["status"] = "Already Paid"
-                    fee.pop("amount", None)
-                    fee.pop("final_amount", None)
+                    # Already Paid → minimal response
+                    new_fee = {
+                        "fee_type": fee_type.title(),
+                        "id": fee_id,
+                        "status": "Already Paid"
+                    }
+                    new_fees_list.append(new_fee)
 
-                elif fee_type != "admission fee" and fee_id in monthly_paid_fee_ids:
-                    fee["status"] = "Already Paid"
-                    fee.pop("amount", None)
-                    fee.pop("final_amount", None)
+                else:
+                    # Pending → include amounts
+                    fee["amount"] = str(fee.get("amount", "0"))
+                    fee["final_amount"] = str(fee.get("final_amount", "0"))
+                    fee["status"] = "Pending"
 
-                # Tuition fee late fee after 15th
-                elif fee_type == "tuition fee" and today.day > 15:
-                    fee["late_fee"] = 25
+                    # Late Fee (only for Tuition Fee)
+                    if fee_type == "tuition fee" and today.day > 15:
+                        fee["late_fee"] = 25
+
+                    new_fees_list.append(fee)
+
+            group["fees"] = new_fees_list
 
         return Response(grouped_fees)
+
     
-    
-  
     @action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
     def submit_single_multi_month_fees(self, request):
         student_id = request.data.get('student_id')
@@ -2544,7 +2672,7 @@ class FeeRecordView(viewsets.ModelViewSet):
         for fee_record in queryset:
             student = fee_record.student
             msg = (
-                f"📢 Dear {student.user.get_full_name()},\n"
+                f" Dear {student.user.get_full_name()},\n"
                 f"Your fee for {fee_record.month} is still UNPAID.\n"
                 f"Total Amount: ₹{fee_record.total_amount}\n"
                 f"Paid: ₹{fee_record.paid_amount}\n"
@@ -4015,7 +4143,7 @@ class NonScholasticGradeViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         roles = [role.name for role in user.role.all()]
-        print("role:",roles)
+        # print("role:",roles)
         student_id = self.request.query_params.get("student_id")
 
         if "office_staff" in roles or "director" in roles:
@@ -4984,6 +5112,9 @@ class SchoolIncomeViewSet(viewsets.ModelViewSet):
             Q(start_date__lte=today), Q(end_date__gte=today)
         ).first()
 
+        # skip filters on single-object actions
+        if self.action in ["retrieve", "update", "partial_update", "destroy"]:
+            return qs   
 
         # Get school_year param
         school_year_id = request.query_params.get("school_year")
@@ -5004,3 +5135,150 @@ class SchoolIncomeViewSet(viewsets.ModelViewSet):
 
        
         return qs
+
+class SchoolTurnOverViewSet(viewsets.ModelViewSet):
+    queryset = SchoolTurnOver.objects.all()
+    serializer_class = SchoolTurnOverSerializer
+    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]  # keep your custom perms if needed
+
+    def get_queryset(self):
+        queryset = SchoolTurnOver.objects.all()
+
+        school_year = self.request.query_params.get("school_year")
+        verified_by = self.request.query_params.get("verified_by")
+        is_locked = self.request.query_params.get("is_locked")
+
+        if school_year:
+            queryset = queryset.filter(school_year__id=school_year)
+        if verified_by:
+            queryset = queryset.filter(verified_by__id=verified_by)
+        if is_locked is not None:
+            queryset = queryset.filter(is_locked=is_locked.lower() == "true")
+
+        return queryset
+
+    def update(self, request, *args, **kwargs):
+        if request.method == "PUT":
+            return Response(
+                {"detail": "PUT is not allowed. Use PATCH instead."},
+                status=status.HTTP_405_METHOD_NOT_ALLOWED
+            )
+        return super().update(request, *args, **kwargs)
+    
+    def perform_create(self, serializer):
+        instance = serializer.save()
+
+        # fetch previous year carry_forward
+        prev_year = SchoolYear.objects.filter(id=instance.school_year.id - 1).first()
+        if prev_year:
+            try:
+                prev_turnover = SchoolTurnOver.objects.get(school_year=prev_year)
+                instance.carry_forward = {str(prev_year.year_name): float(prev_turnover.net_turnover or 0)}
+                instance.save(update_fields=["carry_forward"])
+            except SchoolTurnOver.DoesNotExist:
+                pass
+        
+        self.update_totals(instance)
+
+        # optional: auto-lock if needed
+        if instance.is_locked:
+            self._handle_verification(instance, self.request.user)
+
+    def perform_update(self, serializer):
+        instance_before = self.get_object()  # current DB state before save
+        was_locked = instance_before.is_locked
+
+        instance = serializer.save()
+        self.update_totals(instance)
+
+        # if it was unlocked and now locked -> verify + carry
+        if instance.is_locked and not was_locked:
+            self._handle_verification(instance, self.request.user)
+
+    def perform_destroy(self, instance):
+        if instance.is_locked:
+            raise ValidationError("This turnover is locked and cannot be deleted.")
+        super().perform_destroy(instance)
+
+    # def update_totals(self, instance):
+    #     income_sum = (
+    #         SchoolIncome.objects.filter(
+    #             school_year=instance.school_year, status="confirmed"
+    #         ).aggregate(total=Sum("amount"))["total"]
+    #         or 0
+    #     )
+
+    #     expense_sum = (
+    #         SchoolExpense.objects.filter(
+    #             school_year=instance.school_year, status="approved"
+    #         ).aggregate(total=Sum("amount"))["total"]
+    #         or 0
+    #     )
+
+    #     instance.total_income = income_sum
+    #     instance.total_expense = expense_sum
+
+    #     # calculate yearly profit
+    #     yearly_profit = income_sum - expense_sum
+
+    #     # add carry_forward safely as Decimal
+    #     cf_total = sum(Decimal(str(v)) for v in instance.carry_forward.values()) if instance.carry_forward else Decimal(0)
+
+    #     instance.net_turnover = yearly_profit + cf_total
+
+    #     instance.save(update_fields=["total_income", "total_expense", "net_turnover"])
+    def update_totals(self, instance):
+        # calculate totals
+        income_sum = (
+            SchoolIncome.objects.filter(
+                school_year=instance.school_year, status="confirmed"
+            ).aggregate(total=Sum("amount"))["total"]
+            or 0
+        )
+
+        expense_sum = (
+            SchoolExpense.objects.filter(
+                school_year=instance.school_year, status="approved"
+            ).aggregate(total=Sum("amount"))["total"]
+            or 0
+        )
+
+        instance.total_income = income_sum
+        instance.total_expense = expense_sum
+
+        # existing logic: yearly profit
+        yearly_profit = income_sum - expense_sum
+
+        # add carry_forward safely as Decimal
+        cf_total = sum(Decimal(str(v)) for v in instance.carry_forward.values()) if instance.carry_forward else Decimal(0)
+
+        # net turnover = yearly profit + carry_forward
+        instance.net_turnover = yearly_profit + cf_total
+
+        # ---- new logic: financial outcome & status ----
+        instance.financial_outcome = yearly_profit  # same as income - expense
+        if instance.financial_outcome > 0:
+            instance.financial_status = "Profit"
+        elif instance.financial_outcome < 0:
+            instance.financial_status = "Loss"
+        else:
+            instance.financial_status = "Break-even"
+        # ------------------------------------------------
+
+        # save all fields together
+        instance.save(update_fields=[
+            "total_income", "total_expense", "net_turnover",
+            "financial_outcome", "financial_status"
+        ])
+   
+    def _handle_verification(self, instance, user):
+        if not instance.is_locked:
+            instance.is_locked = True
+
+        if user and getattr(user, "is_authenticated", False):
+            instance.verified_by = user
+
+        if not instance.verified_at:
+            instance.verified_at = timezone.now()
+
+        instance.save(update_fields=["verified_by", "verified_at", "is_locked"])
