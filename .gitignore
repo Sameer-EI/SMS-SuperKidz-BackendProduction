@@ -1,7 +1,2 @@
-# pycache aur .pyc files ko repo se hatao (local me rahenge, bas git se niklenge)
-git rm --cached -r **/__pycache__/
-git rm --cached *.pyc
-
-# .gitignore me ye line add karo
 __pycache__/
 *.pyc
