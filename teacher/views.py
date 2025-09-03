@@ -509,9 +509,11 @@ from .models import TeacherAttendance
 from teacher.models import Teacher
 
 class TeacherAttendanceAPIView(APIView):
+    
 
     def post(self, request):
         teacher_id = request.data.get('teacher_id')
+        print(teacher_id)
         status_input = request.data.get('status')  # 'present' or 'absent'
         attendance_date = request.data.get('date', str(date.today()))  # optional
 
@@ -524,10 +526,19 @@ class TeacherAttendanceAPIView(APIView):
             return Response({'error': 'Teacher not found'}, status=404)
 
         # Check if already marked
-        obj, created = TeacherAttendance.objects.update_or_create(
+        if TeacherAttendance.objects.filter(teacher=teacher, date=attendance_date).exists():
+            return Response({
+                'message': 'Attendance already marked',
+                'teacher_id': teacher_id,
+                'date': attendance_date
+            }, status=400)
+        print("Attendance not marked previously.", attendance_date, teacher_id)
+
+        # Create new record
+        TeacherAttendance.objects.create(
             teacher=teacher,
             date=attendance_date,
-            defaults={'status': status_input}
+            status=status_input
         )
 
         return Response({
@@ -535,13 +546,40 @@ class TeacherAttendanceAPIView(APIView):
             'teacher_id': teacher_id,
             'status': status_input,
             'date': attendance_date
-        }, status=200)
+        }, status=201)
+    print("Attendance API called.", request)
+    
+class TeacherAttendanceGetAPI(APIView):
+    def get(self, request, id=None):
+        if id:  
+            try:
+                attendance_record = TeacherAttendance.objects.get(id=id)
+                # print(attendance_record)
+            except TeacherAttendance.DoesNotExist:
+                return Response({'error': 'Attendance record not found'}, status=404)
+            serializer = TeacherAttendanceSerializer(attendance_record)
+        else:  
+            attendance_records = TeacherAttendance.objects.all()
+            # print(attendance_records)
+            serializer = TeacherAttendanceSerializer(attendance_records, many=True)
+        return Response(serializer.data)
 
+    
+    def put(self, request, id):
+        try:
+            attendance_record = TeacherAttendance.objects.get(id=id)
+            print(id)
+        except TeacherAttendance.DoesNotExist:
+            return Response({'error': 'Attendance record not found'}, status=404)
 
+        serializer = TeacherAttendanceSerializer(attendance_record, data=request.data, partial=True)
+        print(request.data)
+       
 
-
-
-
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=400)
 
 class SubstituteAssignmentView(APIView):
     def get(self, request):

@@ -234,3 +234,13 @@ class SubstituteAssignmentSerializer(serializers.ModelSerializer):
 #     }
 # ]
 
+
+class TeacherAttendanceSerializer(serializers.ModelSerializer):
+    teacher_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TeacherAttendance
+        fields = ["id", "date", "status", "teacher", "teacher_name"]
+
+    def get_teacher_name(self, obj):
+        return f"{obj.teacher.user.first_name} {obj.teacher.user.last_name}"

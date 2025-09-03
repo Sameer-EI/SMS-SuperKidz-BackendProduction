@@ -10,7 +10,9 @@ router.register(r'teacheryearlevel', TeacherYearLevelView, basename='teacheryear
 urlpatterns = [
     path('', include(router.urls)),
     path('all-teachers/', AllTeachersWithYearLevelsAPIView.as_view()),
-    path('teacher-attendance/', TeacherAttendanceAPIView.as_view(), name='teacher-attendance'),
+    path('teacher-attendance/post/', TeacherAttendanceAPIView.as_view(), name='teacher-attendance'),
+    path('teacher-attendance/get/', TeacherAttendanceGetAPI.as_view(), name='teacher-attendance-get'),
+    path('teacher-attendance/get/<int:id>/', TeacherAttendanceGetAPI.as_view(), name='teacher-attendance-get'),
     path('substitute-assign/', SubstituteAssignmentView.as_view()),
     path('absent-teacher/', AbsentTeacherFreeReplacementAPIView.as_view()),
 ]
