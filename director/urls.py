@@ -48,19 +48,27 @@ router.register(r'Expense-Category', ExpenseCategoryView)
 router.register(r'School-Expense', SchoolExpenseView)
 router.register(r'Employee',EmployeeView,basename=Employee)
 router.register(r'Employee-salary',EmployeeSalaryView)
-
+router.register(r'school-turnover',SchoolTurnOverViewSet,basename='school-turnover')
 
 urlpatterns = [
     path("year-levels/", YearLevelView),
     path("year-level/<int:id>/", YearLevelView),
+    
     path("school-years/", SchoolYearView),
     path("school-year/<int:pk>/", SchoolYearView),
+    
     path("departments/", DepartmentView),
     path("department/<int:pk>/", DepartmentView),
+    
     path("classroom-types/", ClassRoomTypeView),
     path("classroom-type/<int:pk>/", ClassRoomTypeView),
+    
+    path("classrooms/", ClassRoomView),          
+    path("classrooms/<int:pk>/", ClassRoomView),  
+    
     path("roles/", RoleView, name="roleDetails"),
     path("role/<int:pk>/", RoleView, name="roleDetails"),
+    
     path("director-dashboard/", Director_Dashboard_Summary),
     path("teacher-dashboard/<int:id>/", teacher_dashboard),
     path("guardian-dashboard/<int:id>/", guardian_dashboard),
