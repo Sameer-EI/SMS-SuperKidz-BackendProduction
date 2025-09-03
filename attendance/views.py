@@ -578,13 +578,7 @@ class SchoolEventViewSet(ModelViewSet):
         # Save the new event
         event = serializer.save()
 
-        # Get all active users with phone numbers
-        phone_numbers = list(
-            User.objects.filter(is_active=True)
-            .exclude(phone_number__isnull=True)
-            .exclude(phone_number__exact="")
-            .values_list('phone_number', flat=True)
-        )
+
 
         # Prepare message
         message_text = (
@@ -594,9 +588,8 @@ class SchoolEventViewSet(ModelViewSet):
             f"Details: {event.description if hasattr(event, 'description') else 'No additional details'}"
         )
 
-        # Send WhatsApp to all users
-        if phone_numbers:
-            send_whatsapp_message(message_text, phone_numbers)
+
+        send_whatsapp_message(message_text)
 
     
 class MonthlyCalendarView(APIView):
