@@ -136,19 +136,23 @@ class TeacherYearLevelSerializer(serializers.ModelSerializer):
         return ""
 
     def validate(self, data):
+        teacher = data.get('teacher')  
         year_level = data.get('year_level')
-        instance = self.instance  # None if create, else update instance
+        instance = self.instance  # None if create, else update
 
-        qs = TeacherYearLevel.objects.filter(year_level=year_level)
+        # 🔹 Check if this teacher already has any year_level assigned
+        qs = TeacherYearLevel.objects.filter(teacher=teacher)
         if instance:
-            qs = qs.exclude(pk=instance.pk)
+            qs = qs.exclude(pk=instance.pk)  # exclude current record if updating
 
         if qs.exists():
+            assigned_year_level = qs.first().year_level
+            teacher_name = f"{teacher.user.get_full_name()}" if teacher and hasattr(teacher, 'user') else str(teacher)
             raise serializers.ValidationError({
-                'year_level': f"'{year_level}' is already assigned to another teacher."
+                'teacher': f"Teacher {teacher_name} is already assigned to '{assigned_year_level}'. Cannot assign another class."
             })
+
         return data
-    
 
 
 
@@ -225,13 +229,13 @@ class SubstituteAssignmentSerializer(serializers.ModelSerializer):
 #         "period": "Period 2",
 #         "date": "2025-08-18"
 #     },
-#     {
-#         "absent_teacher": 2,
-#         "substitute_teacher": 8,
-#         "year_level": 15,
-#         "period": "Period 1",
-#         "date": "2025-08-18"
-#     }
+    # {
+    #     "absent_teacher": 2,
+    #     "substitute_teacher": 8,
+    #     "year_level": 15,
+    #     "period": "Period 1",
+    #     "date": "2025-08-18"
+    # }
 # ]
 
 
