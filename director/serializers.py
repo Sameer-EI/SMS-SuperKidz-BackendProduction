@@ -1424,6 +1424,7 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
     student_id = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all(), source='student', write_only=True)
     year_level_fees = serializers.PrimaryKeyRelatedField(queryset=YearLevelFee.objects.all(), many=True)
     receipt_number = serializers.CharField(read_only=True)
+    
 
     class Meta:
         model = FeeRecord
@@ -1434,6 +1435,7 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['total_amount', 'due_amount', 'late_fee', 'payment_status',
                             'razorpay_payment_id', 'razorpay_signature_id', 'receipt_number']
+        # read_only_fields = ['total_amount', 'due_amount', 'late_fee', 'payment_status', 'receipt_number']
 
     
     # just added as of 16June25 at 12:29 PM

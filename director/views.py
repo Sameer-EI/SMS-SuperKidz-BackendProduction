@@ -2356,7 +2356,8 @@ class FeeRecordView(viewsets.ModelViewSet):
             instance = serializer.save()
 
             # Serialize with full FeeRecordSerializer to return complete info
-            full_data = FeeRecordSerializer(instance).data
+            # full_data = FeeRecordSerializer(instance).data    # fix the issue 04Sep25 at 03:43 PM
+            full_data = FeeRecordSerializer(instance, context={'request': request}).data
 
             return Response({
                 "message": "Payment successful and FeeRecord saved.",
