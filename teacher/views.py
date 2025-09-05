@@ -17,6 +17,7 @@ from django.db.models import Prefetch
 from rest_framework.permissions import AllowAny, IsAuthenticated,BasePermission
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from director.views import send_whatsapp_message 
 # from permission import RoleBasedPermission
 
 
@@ -403,12 +404,12 @@ from rest_framework import viewsets, status
 from rest_framework.response import Response
 from .models import TeacherYearLevel
 from .serializers import TeacherYearLevelSerializer
-from director.permission import RoleBasedPermissionteacheryearlevel
+# from director.permission import RoleBasedPermissionteacheryearlevel
 
 class TeacherYearLevelView(viewsets.ModelViewSet):
     serializer_class = TeacherYearLevelSerializer
     queryset = TeacherYearLevel.objects.all()
-    permission_classes = [ RoleBasedPermissionteacheryearlevel]
+    # permission_classes = [ RoleBasedPermissionteacheryearlevel]
 
     def get_queryset(self):
         # Permission class ke filter_queryset() ka use karo
@@ -774,8 +775,48 @@ class SubstituteAssignmentView(APIView):
 
         serializer = SubstituteAssignmentSerializer(data=serializer_data, many=many)
         if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+            assignments = serializer.save()
+
+            # ✅ Notification Part
+            notifications = []
+            if many:
+                for assignment in assignments:
+                    msg = (
+                        f"📢 Notification:\n"
+                        f"On {assignment.date}, period {assignment.period},\n"
+                        f"Teacher {assignment.absent_teacher} is absent.\n"
+                        f"Substitute assigned: {assignment.substitute_teacher}."
+                    )
+                    response = send_whatsapp_message(msg)  # <-- your WhatsApp fn
+                    notifications.append({
+                        "absent_teacher": str(assignment.absent_teacher),
+                        "substitute_teacher": str(assignment.substitute_teacher),
+                        "date": str(assignment.date),
+                        "period": assignment.period,
+                        "response": response
+                    })
+            else:
+                assignment = assignments
+                msg = (
+                    f" Notification:\n"
+                    f"On {assignment.date},  {assignment.period},\n"
+                    f"Teacher {assignment.absent_teacher} is absent.\n"
+                    f"Substitute assigned: {assignment.substitute_teacher}."
+                )
+                response = send_whatsapp_message(msg)
+                notifications.append({
+                    "absent_teacher": str(assignment.absent_teacher),
+                    "substitute_teacher": str(assignment.substitute_teacher),
+                    "date": str(assignment.date),
+                    "period": assignment.period,
+                    "response": response
+                })
+
+            return Response({
+                "assignments": serializer.data,
+                "notifications": notifications
+            }, status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 

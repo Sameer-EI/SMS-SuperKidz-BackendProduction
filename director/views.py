@@ -4,12 +4,14 @@ from rest_framework.response import Response
 from django.db.models import Count
 from collections import OrderedDict
 from attendance.models import StudentAttendance
-from director.permission import *
+# from director.permission import *
 from director.utils import calculate_subject_summary
 from rest_framework.exceptions import ValidationError
+from director.permission import IsDirectororOfficeStaff
 
 
-from director.permission import IsDirector
+
+# from director.permission import IsDirector
 from .serializers import *
 from rest_framework import filters
 from .models import *
@@ -42,6 +44,7 @@ from datetime import datetime, timedelta
 from django.utils.timezone import now
 from django.db.models.functions import Cast
 from teacher.models import Teacher, TeacherYearLevel
+
 
 
 from django.db.models import OuterRef, Subquery, Sum, Value, FloatField
@@ -1661,13 +1664,13 @@ class TermView(viewsets.ModelViewSet):
 
 
 from django_filters.rest_framework import DjangoFilterBackend  
-from .filters import AdmissionFilter
+# from .filters import AdmissionFilter
 class AdmissionView(viewsets.ModelViewSet):
     queryset = Admission.objects.all()
     serializer_class = AdmissionSerializer
 
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_class = AdmissionFilter
+    # filterset_class = AdmissionFilter
 
     search_fields = [
         "student__user__first_name",
@@ -1969,8 +1972,8 @@ def send_whatsapp_message(message_text):
     twilio_whatsapp_number = 'whatsapp:+14155238886'
     
     phone_numbers = [
-        '+918109145639',
-        '+918847418400',
+       '+918109145639',
+        # '+918847418400',
         '+918102637122'
     ]
 
@@ -2003,10 +2006,10 @@ def send_whatsapp_message(message_text):
 class FeeDiscountView(viewsets.ModelViewSet):
     queryset = FeeDiscount.objects.all()
     serializer_class = FeeDiscountSerializer
-    permission_classes = [IsAuthenticated,IsDirector]
+    # permission_classes = [IsAuthenticated,IsDirector]
 
 
-from director.permission import FeeRecordPermission
+# from director.permission import FeeRecordPermission
 from rest_framework.filters import SearchFilter  # (agar already import nahi hai)
 from django.db.models import Q  # (agar already import nahi hai)
 
@@ -2016,7 +2019,7 @@ from django.db.models import Q  # (agar already import nahi hai)
 class FeeRecordView(viewsets.ModelViewSet):
     serializer_class = FeeRecordSerializer
     queryset = FeeRecord.objects.all()
-    permission_classes = [FeeRecordPermission]
+    # permission_classes = [FeeRecordPermission]
     filter_backends = [SearchFilter]
     permission_classes = [IsAuthenticated]
     # Enables search using ?search=something
@@ -2199,6 +2202,15 @@ class FeeRecordView(viewsets.ModelViewSet):
         payment_mode = request.data.get('payment_mode')
         remarks = request.data.get('remarks')
         received_by = request.data.get('received_by')
+        
+        admission = Admission.objects.filter(student_id=student_id).first()
+        
+        if admission and admission.is_rte and admission.rte_number:
+            return Response(
+                {"message": f"Student {admission.student.user.get_full_name()} belongs to RTE category, fees record not created."},
+                status=status.HTTP_400_BAD_REQUEST
+        )
+
 
         if not months or not isinstance(months, list):
             return Response({"error": "Months must be a non-empty list."}, status=status.HTTP_400_BAD_REQUEST)
@@ -2260,6 +2272,7 @@ class FeeRecordView(viewsets.ModelViewSet):
             f"Paid Amount: ₹{paid_amount:.2f}\n"
             f"Due Amount: ₹{total_due:.2f}\n"
             f"Payment Mode: {payment_mode}\n"
+            f"received_by: {received_by}\n"
             f"Thank you!"
         )
         send_whatsapp_message(message_text)
@@ -2651,11 +2664,36 @@ class FeeRecordView(viewsets.ModelViewSet):
         else:
             return Response({"detail": "Permission denied."}, status=403)
 
-        # serializer = FeeRecordSerializer(queryset, many=True)
+        # serializer = FeeRecordSerializer(queryset, many=True) 
         # return Response(serializer.data)
 
         serializer = FeeRecordSerializer(queryset, many=True, context={"request": request})
-        return Response(serializer.data)
+        notifications = []
+        for fee_record in queryset:
+            student = fee_record.student
+            msg = (
+                f" Dear {student.user.get_full_name()},\n"
+                f"Your fee for {fee_record.month} is still UNPAID.\n"
+                f"Total Amount: ₹{fee_record.total_amount}\n"
+                f"Paid: ₹{fee_record.paid_amount}\n"
+                f"Due: ₹{fee_record.due_amount}\n"
+                f"Please clear it at the earliest."
+            )
+            # WhatsApp notification bhejna
+            response = send_whatsapp_message(msg)   # <-- apka existing function
+            notifications.append({
+                "student": student.user.get_full_name(),
+                "month": str(fee_record.month),
+                "due_amount": str(fee_record.due_amount),
+                "response": response
+            })
+        # -------------------------------------------------------
+
+        return Response({
+            "unpaid_fees": serializer.data,
+            "notifications": notifications
+        })
+
 
 
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="overall_unpaid_fees")
@@ -2899,7 +2937,7 @@ from authentication.models import UserStatusLog
 from authentication.serializers import UserSerializer
 
 @api_view(["POST"])
-@permission_classes([RoleBasedUserManagementPermission])
+# @permission_classes([RoleBasedUserManagementPermission])
 def deactivate_user(request):
     deactivate_user.api_section = "deactivate_user" 
     try:
@@ -3059,7 +3097,7 @@ def deactivate_user(request):
 from django.core.exceptions import ObjectDoesNotExist
 
 @api_view(["POST"])
-@permission_classes([RoleBasedUserManagementPermission])
+# @permission_classes([RoleBasedUserManagementPermission])
 def reactivate_user(request):
     reactivate_user.api_section = "reactivate_user" 
     try:
@@ -3383,7 +3421,7 @@ class DownloadFileView(APIView):
 class ExamTypeView(viewsets.ModelViewSet):
     queryset = ExamType.objects.all()
     serializer_class = ExamTypeSerializer
-    permission_classes = [IsAuthenticated, RoleBasedExamPermission]
+    # permission_classes = [IsAuthenticated, RoleBasedExamPermission]
     api_section = 'exam_type'
 
     @action(detail=False, methods=["get"], url_path="get_examtype")
@@ -3430,7 +3468,7 @@ class ExamTypeView(viewsets.ModelViewSet):
 class ExamPaperView(viewsets.ModelViewSet):
     queryset = ExamPaper.objects.all()
     serializer_class = ExamPaperSerializer
-    permission_classes = [IsAuthenticated, RoleBasedExamPermission]
+    # permission_classes = [IsAuthenticated, RoleBasedExamPermission]
     api_section = 'exam_paper'
 
     @action(detail=False, methods=["get"], url_path="get_exampaper")
@@ -3535,7 +3573,7 @@ from teacher.models import *
 class ExamScheduleView(viewsets.ModelViewSet):
     queryset = ExamSchedule.objects.all()
     serializer_class = ExamScheduleSerializer
-    permission_classes = [IsAuthenticated, RoleBasedExamPermission]
+    # permission_classes = [IsAuthenticated, RoleBasedExamPermission]
     api_section = 'exam_schedule'
 
 
@@ -3645,7 +3683,7 @@ class ExamScheduleView(viewsets.ModelViewSet):
 class StudentMarksView(viewsets.ModelViewSet):
     queryset = StudentMarks.objects.all()
     serializer_class = StudentMarksSerializer
-    permission_classes = [IsAuthenticated,RoleBasedExamPermission] 
+    # permission_classes = [IsAuthenticated,RoleBasedExamPermission] 
     api_section = "student_marks"  
 
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="get_marks")
@@ -3961,7 +3999,7 @@ from collections import defaultdict
 class PersonalSocialQualityView(viewsets.ModelViewSet):
     queryset = PersonalSocialQuality.objects.all()
     serializer_class = PersonalSocialQualitySerializer
-    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+    # permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
 
 class PersonalSocialGradeViewSet(viewsets.ModelViewSet):
     queryset = PersonalSocialQualityTermWise.objects.all()
@@ -4205,7 +4243,7 @@ class NonScholasticGradeViewSet(viewsets.ModelViewSet):
 class ReportCardViewSet(viewsets.ModelViewSet):
     queryset = ReportCard.objects.all()
     serializer_class = ReportCardSerializer
-    permission_classes = [IsAuthenticated, RoleBasedPermission]
+    # permission_classes = [IsAuthenticated, RoleBasedPermission]
 
     def get_user_roles(self):
         user = self.request.user
@@ -4753,7 +4791,7 @@ class ReportCardViewSet(viewsets.ModelViewSet):
 class ExpenseCategoryView(viewsets.ModelViewSet):
     queryset = ExpenseCategory.objects.all()
     serializer_class = ExpenseCategorySerializer
-    permission_classes = [IsAuthenticated, ExpensePermission]
+    # permission_classes = [IsAuthenticated, ExpensePermission]
 
     @action(detail=False, methods=["get"], url_path="get_category")
     def get_categories(self, request):
@@ -4806,7 +4844,7 @@ def get_current_school_year():
 class SchoolExpenseView(viewsets.ModelViewSet):
     queryset = SchoolExpense.objects.all()
     serializer_class = SchoolExpenseSerializer
-    permission_classes = [IsAuthenticated, ExpensePermission]
+    # permission_classes = [IsAuthenticated, ExpensePermission]
 
     # def get_queryset(self):
     #     current_year = get_current_school_year()
@@ -4949,7 +4987,7 @@ class SchoolExpenseView(viewsets.ModelViewSet):
 class EmployeeView(viewsets.ModelViewSet):
     queryset = Employee.objects.all()
     serializer_class = EmployeeSerializer
-    permission_classes = [IsAuthenticated,ExpensePermission]
+    # permission_classes = [IsAuthenticated,ExpensePermission]
 
     @action(detail=False, methods=["get"], url_path="get_emp")
     def get_emp(self, request):
@@ -5033,7 +5071,7 @@ class EmployeeView(viewsets.ModelViewSet):
 class EmployeeSalaryView(viewsets.ModelViewSet):
     queryset = EmployeeSalary.objects.all()
     serializer_class = EmployeeSalarySerializer
-    permission_classes = [IsAuthenticated,ExpensePermission]
+    # permission_classes = [IsAuthenticated,ExpensePermission]
 
     def get_queryset(self):
         user = self.request.user
@@ -5058,12 +5096,12 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
 class IncomeCategoryView(viewsets.ModelViewSet):
     queryset = IncomeCategory.objects.all()
     serializer_class = IncomeCategorySerializer
-    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+    # permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
 
 class SchoolIncomeViewSet(viewsets.ModelViewSet):
     queryset = SchoolIncome.objects.all()
     serializer_class = SchoolIncomeSerializer
-    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+    # permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
     
     def get_queryset(self):
         qs = super().get_queryset()
