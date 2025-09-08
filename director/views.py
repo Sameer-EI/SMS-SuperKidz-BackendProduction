@@ -2091,7 +2091,112 @@ class FeeRecordView(viewsets.ModelViewSet):
     # removed commented or unnecessary code from line 1906 - 2266
         # commented as of 26Aug25 at 04:34 PM
 
-    # Added as of 26Aug25 at 04:34 PM
+    
+    # Added as of 26Aug25 at 04:34 PM       # commented as of 07Sep25 at 12:43 AM
+    
+    # @action(detail=False, methods=["get"], url_path="fee-preview")
+    # def preview(self, request):
+    #     student_id = request.query_params.get("student_id")
+    #     month = request.query_params.get("month")
+
+    #     if not student_id or not month:
+    #         return Response({"detail": "student_id and month are required"}, status=400)
+
+    #     try:
+    #         student = Student.objects.get(id=student_id)
+    #     except Student.DoesNotExist:
+    #         return Response({"detail": "Student not found"}, status=404)
+
+    #     # Latest active year level
+    #     student_year_level = (
+    #         StudentYearLevel.objects
+    #         .filter(student=student)
+    #         .order_by("-year")
+    #         .first()
+    #     )
+    #     if not student_year_level:
+    #         return Response({"detail": "No year level found for this student."}, status=404)
+
+    #     # All year-level fees
+    #     year_level_fees = YearLevelFee.objects.filter(year_level=student_year_level.level)
+
+    #     # Paid fee records for this student & school year
+    #     paid_fees = FeeRecord.objects.filter(
+    #         student=student,
+    #         school_year__year=student_year_level.year
+    #     )
+
+    #     # Admission fees → only once per year
+    #     admission_paid_fee_ids = paid_fees.filter(
+    #         year_level_fees__fee_type__name__iexact="admission fee"
+    #     ).values_list("year_level_fees", flat=True)
+
+    #     # Tuition fees (monthly) → must match same month
+    #     monthly_paid_fee_ids = paid_fees.exclude(
+    #         year_level_fees__fee_type__name__iexact="admission fee"
+    #     ).filter(
+    #         month=month,
+    #         year_level_fees__fee_type__name__iexact="tuition fee"
+    #     ).values_list("year_level_fees", flat=True)
+
+    #     # Exam fees → must match same month
+    #     exam_paid_fee_ids = paid_fees.filter(
+    #         month=month,
+    #         year_level_fees__fee_type__name__iexact="exam fee"
+    #     ).values_list("year_level_fees", flat=True)
+
+    #     # Transport fees → must match same month
+    #     transport_paid_fee_ids = paid_fees.filter(
+    #         month=month,
+    #         year_level_fees__fee_type__name__iexact="transport fee"
+    #     ).values_list("year_level_fees", flat=True)
+
+    #     # Serialize fees
+    #     serializer = YearLevelFeeSerializer(year_level_fees, many=True, context={"student": student})
+    #     grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
+
+    #     today = date.today()
+
+    #     # --- Add status/late fee ---
+    #     for group in grouped_fees:
+    #         new_fees_list = []  # Create a new list to hold the modified fee dictionaries
+    #         for fee in group["fees"]:
+    #             fee_id = fee["id"]
+    #             fee_type = fee["fee_type"].lower()
+
+    #             # --- HANDLING ADMISSION, TUITION, EXAM, TRANSPORT ---
+    #             if (fee_type == "admission fee" and fee_id in admission_paid_fee_ids) or \
+    #             (fee_type == "tuition fee" and fee_id in monthly_paid_fee_ids) or \
+    #             (fee_type == "exam fee" and fee_id in exam_paid_fee_ids) or \
+    #             (fee_type == "transport fee" and fee_id in transport_paid_fee_ids):
+
+    #                 # Already Paid → minimal response
+    #                 new_fee = {
+    #                     "fee_type": fee_type.title(),
+    #                     "id": fee_id,
+    #                     "status": "Already Paid"
+    #                 }
+    #                 new_fees_list.append(new_fee)
+
+    #             else:
+    #                 # Pending → include amounts
+    #                 fee["amount"] = str(fee.get("amount", "0"))
+    #                 fee["final_amount"] = str(fee.get("final_amount", "0"))
+    #                 fee["status"] = "Pending"
+
+    #                 # Late Fee (only for Tuition Fee)
+    #                 if fee_type == "tuition fee" and today.day > 15:
+    #                     fee["late_fee"] = 25
+
+    #                 new_fees_list.append(fee)
+
+    #         group["fees"] = new_fees_list
+
+    #     return Response(grouped_fees)
+    
+    
+    # Added as of 07Sep25 at 12:44 AM
+    
     @action(detail=False, methods=["get"], url_path="fee-preview")
     def preview(self, request):
         student_id = request.query_params.get("student_id")
@@ -2191,6 +2296,10 @@ class FeeRecordView(viewsets.ModelViewSet):
             group["fees"] = new_fees_list
 
         return Response(grouped_fees)
+    
+   
+
+    
 
     
     @action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
