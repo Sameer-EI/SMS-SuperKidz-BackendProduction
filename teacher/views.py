@@ -404,12 +404,12 @@ from rest_framework import viewsets, status
 from rest_framework.response import Response
 from .models import TeacherYearLevel
 from .serializers import TeacherYearLevelSerializer
-# from director.permission import RoleBasedPermissionteacheryearlevel
+from director.permission import RoleBasedPermissionteacheryearlevel
 
 class TeacherYearLevelView(viewsets.ModelViewSet):
     serializer_class = TeacherYearLevelSerializer
     queryset = TeacherYearLevel.objects.all()
-    # permission_classes = [ RoleBasedPermissionteacheryearlevel]
+    permission_classes = [ RoleBasedPermissionteacheryearlevel]
 
     def get_queryset(self):
         # Permission class ke filter_queryset() ka use karo
