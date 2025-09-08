@@ -2127,12 +2127,11 @@ class FeeRecordView(viewsets.ModelViewSet):
         ).values_list("year_level_fees", flat=True)
 
         # Tuition fees (monthly) → must match same month
-        monthly_paid_fee_ids = paid_fees.exclude(
-            year_level_fees__fee_type__name__iexact="admission fee"
-        ).filter(
-            month=month,
-            year_level_fees__fee_type__name__iexact="tuition fee"
-        ).values_list("year_level_fees", flat=True)
+        monthly_paid_fee_ids = YearLevelFee.objects.filter(
+            feerecord__in=paid_fees,
+            feerecord__month__iexact=month,
+            fee_type__name__iexact="tuition fee"
+        ).values_list("id", flat=True)
 
         # Exam fees → must match same month
         exam_paid_fee_ids = paid_fees.filter(
@@ -5244,3 +5243,5 @@ class SchoolTurnOverViewSet(viewsets.ModelViewSet):
             instance.verified_at = timezone.now()
 
         instance.save(update_fields=["verified_by", "verified_at", "is_locked"])
+
+
