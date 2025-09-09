@@ -1108,18 +1108,6 @@ class FeeRecordSerializer(serializers.ModelSerializer):
 
         return data
     
-    
-    # def get_year_level_fees_grouped(self, obj):
-    #     grouped = defaultdict(list)
-    #     for fee in obj.year_level_fees.all():
-    #         year_level_name = fee.year_level.level_name
-    #         grouped[year_level_name].append({
-    #             "id": fee.id,
-    #             "fee_type": fee.fee_type.name,
-    #             "amount": str(fee.amount),
-    #         })
-        
-    #     return [{"year_level": yl, "fees": fees} for yl, fees in grouped.items()]
 
     def get_year_level_fees_grouped(self, obj):
         grouped = defaultdict(list)
@@ -1155,35 +1143,48 @@ class FeeRecordSerializer(serializers.ModelSerializer):
     
     ### ------------ conmmented as of 27Aug25 at 05:15 PM below one ---------- ###
     
+   
+    ### ------------ conmmented as of 27Aug25 at 05:15 PM above one ---------- ###
+    
+    
+    
+    ##### ------- updated validation -------  #### As of 27Aug25 at 05:14 PM below one
+    
+    
     # def validate(self, data):
     #     student = data.get('student')
     #     month = data.get('month')  # e.g., 'July'
     #     year_level_fees = data.get('year_level_fees', [])
     #     paid_amount = data.get('paid_amount', 0)
 
-    #     # if self.instance is None:
-    #     #     if FeeRecord.objects.filter(student=student, month=month).exists():
-    #     #         raise serializers.ValidationError(f"Fee already submitted for {month} for this student.")
-
     #     if self.instance is None:
     #         for fee in year_level_fees:
+    #             # Admission Fee Validation
     #             if "admission fee" in fee.fee_type.name.lower():
     #                 if FeeRecord.objects.filter(
     #                     student=student,
     #                     year_level_fees__fee_type__name__iexact="Admission Fee"
     #                 ).exists():
-    #                     # raise serializers.ValidationError(
-    #                     #     "Admission fee already paid for this student in this school year."
-    #                     # )
     #                     raise serializers.ValidationError({
-    #                     "admission_fee": "Admission fee already paid for this student in this school year."
-    #                 })              # corrected as 0f 27Aug25 at 04:53 PM
+    #                         "admission_fee": "Admission fee already paid for this student in this school year."
+    #                     })
 
-    #             if FeeRecord.objects.filter(student=student,month=month, year_level_fees=fee).exists():
-    #                 raise serializers.ValidationError(
-    #                     f"{fee.fee_type.name} of {month} is already submitted for {student}."
-    #                 )
-                
+    #             # Tuition Fee Validation   corrected here
+    #             if "tuition fee" in fee.fee_type.name.lower():
+    #                 if FeeRecord.objects.filter(
+    #                     student=student,
+    #                     month=month,
+    #                     year_level_fees__fee_type__name__iexact="Tuition Fee"
+    #                 ).exists():
+    #                     raise serializers.ValidationError({
+    #                         "tuition_fee": f"Tuition fee of {month} is already submitted for {student}."
+    #                     })
+
+    #             # Other fee types  structured response
+    #             if FeeRecord.objects.filter(student=student, month=month, year_level_fees=fee).exists():
+    #                 raise serializers.ValidationError({
+    #                     fee.fee_type.name.lower().replace(" ", "_"): f"{fee.fee_type.name} of {month} is already submitted for {student}."
+    #                 })
 
     #     if not year_level_fees:
     #         raise serializers.ValidationError("At least one year level fee must be selected.")
@@ -1198,7 +1199,6 @@ class FeeRecordSerializer(serializers.ModelSerializer):
     #     except FeeDiscount.DoesNotExist:
     #         discount = None
 
-        
     #     admission_discount = 0
     #     tuition_discount = 0
     #     if discount:
@@ -1215,19 +1215,6 @@ class FeeRecordSerializer(serializers.ModelSerializer):
     #     total = max(total - total_discount, 0)
     #     data['total_amount'] = total
 
-    #     # # caluculate total amount based on year level fee
-    #     # data['total_amount'] = total
-
-    #     # # calculate late fee, if submitted after 15th
-    #     # today = date.today()
-    #     # data['late_fee'] = 25 if today.day > 15 else 0
-
-    #     # #if late fee is applicable, add it to total amount
-
-    #     # if data['late_fee'] > 0:
-    #     #     total += data['late_fee']
-    #     #     data['total_amount'] = total
-
     #     # ---- Apply Late Fee ONLY for Tuition Fee ----
     #     today = date.today()
     #     late_fee = 0
@@ -1241,29 +1228,18 @@ class FeeRecordSerializer(serializers.ModelSerializer):
     #         data['late_fee'] = late_fee
     #         data['total_amount'] = total        
 
-    #     #paid amount should be equal or less than total amount
+    #     # paid amount should be equal or less than total amount
     #     if paid_amount > total:
-    #         raise serializers.ValidationError (
-    #                     f"Paid amount {paid_amount} cannot be greater than total amount {total}."
-    #                 )
+    #         raise serializers.ValidationError(
+    #             f"Paid amount {paid_amount} cannot be greater than total amount {total}."
+    #         )
         
     #     # calculate due amount
     #     due = total - paid_amount
     #     data['due_amount'] = due if due > 0 else 0
 
+    #     return data
 
-    #     # Determine payment status  commented as of 11June25
-    #     # data['payment_status'] = 'Paid' if data['due_amount'] == 0 else 'Unpaid'
-
-    #     return data                  
-    
-    ### ------------ conmmented as of 27Aug25 at 05:15 PM above one ---------- ###
-    
-    
-    
-    ##### ------- updated validation -------  #### As of 27Aug25 at 05:14 PM below one
-    
-    
     def validate(self, data):
         student = data.get('student')
         month = data.get('month')  # e.g., 'July'
@@ -1353,16 +1329,8 @@ class FeeRecordSerializer(serializers.ModelSerializer):
 
         return data
 
-
     
     ##### ------- updated validation -------  #### As of 27Aug25 at 05:14 PM above one
-    
-    
-    
-    
-    
-    
-    
     
     ### Added this as of 11June25 at 01:39 PM
     def create(self, validated_data):
