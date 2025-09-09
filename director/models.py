@@ -486,6 +486,8 @@ class OfficeStaff(models.Model):
     teacher = models.ManyToManyField("teacher.Teacher", blank=True, related_name="managed_by_staff")
     admissions = models.ManyToManyField(Admission, blank=True, related_name="handled_by_staff")
     is_active = models.BooleanField(default=True)
+    adhaar_no = models.BigIntegerField(null=True,blank=True)    # added as of 09Sep25
+    pan_no = models.CharField(max_length=50,null=True,blank=True)   # added as of 09Sep25
 
     objects = OfficeStaffManager()
 

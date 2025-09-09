@@ -1551,6 +1551,106 @@ class RazorpayConfirmPaymentSerializer(serializers.Serializer):
 
 
 # ********************OfficeStaffSerializer profile*******************************
+# class OfficeStaffSerializer(serializers.ModelSerializer):
+#     first_name = serializers.CharField(max_length=100, write_only=True)
+#     middle_name = serializers.CharField(max_length=100, write_only=True, required=False, allow_blank=True)
+#     last_name = serializers.CharField(max_length=100, write_only=True)
+#     password = serializers.CharField(max_length=100, write_only=True, required=False)
+#     email = serializers.EmailField(write_only=True)
+#     user_profile = serializers.ImageField(required=False, allow_null=True, write_only=True)
+
+#     student = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all(), many=True, required=False)
+#     teacher = serializers.PrimaryKeyRelatedField(queryset=Teacher.objects.all(), many=True, required=False)
+#     admissions = serializers.PrimaryKeyRelatedField(queryset=Admission.objects.all(), many=True, required=False)
+
+#     class Meta:
+#         model = OfficeStaff
+#         exclude = ["user"]
+
+#     def create(self, validated_data):
+#         user_data = {
+#             "first_name": validated_data.pop("first_name"),
+#             "middle_name": validated_data.pop("middle_name", ""),
+#             "last_name": validated_data.pop("last_name"),
+#             "password": validated_data.pop("password", None),
+#             "email": validated_data.pop("email"),
+#             "user_profile": validated_data.pop("user_profile", None),
+#         }
+
+#         student_data = validated_data.pop("student", [])
+#         teacher_data = validated_data.pop("teacher", [])
+#         admissions_data = validated_data.pop("admissions", [])
+
+#         try:
+#             role, _ = Role.objects.get_or_create(name="office_staff")
+#         except MultipleObjectsReturned:
+#             raise serializers.ValidationError("Multiple roles named 'office_staff' found.")
+
+#         user = User.objects.filter(email=user_data["email"]).first()
+
+#         if user:
+#             if not user.role.filter(name="office_staff").exists():
+#                 user.role.add(role)
+#                 user.save()
+#             else:
+#                 raise serializers.ValidationError("User with this email already exists and is an office staff.")
+#         else:
+#             user = User.objects.create_user(**user_data)
+#             user.role.add(role)
+#             user.save()
+
+#         office_staff = OfficeStaff.objects.create(user=user, **validated_data)
+#         office_staff.student.set(student_data)
+#         office_staff.teacher.set(teacher_data)
+#         office_staff.admissions.set(admissions_data)
+#         return office_staff
+
+#     def update(self, instance, validated_data):
+#         user = instance.user
+
+#         user.first_name = validated_data.pop("first_name", user.first_name)
+#         user.middle_name = validated_data.pop("middle_name", user.middle_name)
+#         user.last_name = validated_data.pop("last_name", user.last_name)
+#         user.email = validated_data.pop("email", user.email)
+#         if "password" in validated_data and validated_data["password"]:
+#             user.set_password(validated_data["password"])
+#         if "user_profile" in validated_data:
+#             user.user_profile = validated_data["user_profile"]
+
+#         user.save()
+
+#         instance.phone_no = validated_data.get("phone_no", instance.phone_no)
+#         instance.gender = validated_data.get("gender", instance.gender)
+#         instance.department = validated_data.get("department", instance.department)
+#         instance.save()
+
+#         if "student" in validated_data:
+#             instance.student.set(validated_data["student"])
+#         if "teacher" in validated_data:
+#             instance.teacher.set(validated_data["teacher"])
+#         if "admissions" in validated_data:
+#             instance.admissions.set(validated_data["admissions"])
+
+#         return instance
+
+#     def to_representation(self, instance):
+#         representation = super().to_representation(instance)
+#         representation.update({
+#             "first_name": instance.user.first_name,
+#             "middle_name": instance.user.middle_name,
+#             "last_name": instance.user.last_name,
+#             "email": instance.user.email,
+#             "user_profile": instance.user.user_profile.url if instance.user.user_profile else None,
+#         })
+
+#         # Remove relational fields from the output
+#         representation.pop("student", None)
+#         representation.pop("teacher", None)
+#         representation.pop("admissions", None)
+
+#         return representation
+
+
 class OfficeStaffSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(max_length=100, write_only=True)
     middle_name = serializers.CharField(max_length=100, write_only=True, required=False, allow_blank=True)
@@ -1622,6 +1722,8 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
         instance.phone_no = validated_data.get("phone_no", instance.phone_no)
         instance.gender = validated_data.get("gender", instance.gender)
         instance.department = validated_data.get("department", instance.department)
+        instance.adhaar_no = validated_data.get("adhaar_no", instance.adhaar_no)  # ✅ NEW
+        instance.pan_no = validated_data.get("pan_no", instance.pan_no)          # ✅ NEW
         instance.save()
 
         if "student" in validated_data:
@@ -1641,6 +1743,8 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
             "last_name": instance.user.last_name,
             "email": instance.user.email,
             "user_profile": instance.user.user_profile.url if instance.user.user_profile else None,
+            "adhaar_no": instance.adhaar_no,   # ✅ NEW
+            "pan_no": instance.pan_no,         # ✅ NEW
         })
 
         # Remove relational fields from the output
@@ -1649,6 +1753,10 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
         representation.pop("admissions", None)
 
         return representation
+
+
+
+
     
     
     
