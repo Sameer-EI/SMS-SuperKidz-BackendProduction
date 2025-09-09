@@ -47,114 +47,7 @@ class TeacherView(viewsets.ModelViewSet):
     #     return [IsAuthenticated()]
 
     
-    
-    # @action(detail=False, methods=['post'], url_path='assign-teacher-details')
-    # def assign_teacher_details(self, request):
-    #     teacher_id = request.data.get("teacher_id")
-    #     print(teacher_id)
-    #     yearlevel_id = request.data.get("yearlevel_id")
-    #     print(yearlevel_id)
-    #     subject_ids = request.data.get("subject_ids", [])
-    #     print(subject_ids)
-    #     period_ids = request.data.get("period_ids", [])
-    #     print(period_ids)
 
-    #     # Validate teacher
-    #     if not teacher_id:
-    #         return Response({"error": "teacher_id is required."}, status=status.HTTP_400_BAD_REQUEST)
-    #     try:
-    #         teacher = Teacher.objects.get(id=teacher_id)
-    #     except Teacher.DoesNotExist:
-    #         return Response({"error": "Invalid teacher_id."}, status=status.HTTP_404_NOT_FOUND)
-
-    #     # Validate year level
-    #     if not yearlevel_id:
-    #         return Response({"error": "yearlevel_id is required."}, status=status.HTTP_400_BAD_REQUEST)
-    #     try:
-    #         yearlevel = YearLevel.objects.get(id=yearlevel_id)
-    #     except YearLevel.DoesNotExist:
-    #         return Response({"error": "Invalid yearlevel_id."}, status=status.HTTP_404_NOT_FOUND)
-
-    #     # Validate subjects
-    #     if not subject_ids:
-    #         return Response({"error": "At least one subject_id is required."}, status=status.HTTP_400_BAD_REQUEST)
-    #     subjects = Subject.objects.filter(id__in=subject_ids)
-    #     if subjects.count() != len(subject_ids):
-    #         return Response({"error": "One or more invalid subject_ids."}, status=status.HTTP_400_BAD_REQUEST)
-
-    #     # Validate periods
-    #     if not period_ids:
-    #         return Response({"error": "At least one period_id is required."}, status=status.HTTP_400_BAD_REQUEST)
-    #     periods = Period.objects.filter(id__in=period_ids)
-    #     if periods.count() != len(period_ids):
-    #         return Response({"error": "One or more invalid period_ids."}, status=status.HTTP_400_BAD_REQUEST)
-
-    #     # Check teacher's current period load
-    #     existing_classperiods = ClassPeriod.objects.filter(teacher=teacher)
-    #     if existing_classperiods.count() + len(subject_ids) > 6:
-    #         return Response({"error": "Teacher cannot be assigned more than 6 periods."}, status=status.HTTP_400_BAD_REQUEST)
-
-    #     # Prevent duplicate assignments of the same subject to the same period
-    #     assigned = []
-    #     for subject in subjects:
-    #         # Ensure the teacher has only one period assigned for each subject
-    #         subject_period_assigned = ClassPeriod.objects.filter(teacher=teacher, subject=subject).exists()
-    #         if subject_period_assigned:
-    #             return Response(
-    #                 {"error": f"Teacher is already assigned {subject.subject_name} in a period."},
-    #                 status=status.HTTP_400_BAD_REQUEST
-    #             )
-    #         for period in periods:
-    #             #  New validation: Prevent teacher from being assigned two different subjects in the same period
-    #             period_conflict = ClassPeriod.objects.filter(
-    #                 teacher=teacher,
-    #                 start_time=period,
-    #                 end_time=period
-    #             ).exists()
-
-    #             if period_conflict:
-    #                 return Response(
-    #                     {"error": f"Teacher is already assigned another subject in period {period.name} ({period.start_period_time} - {period.end_period_time})."},
-    #                     status=status.HTTP_400_BAD_REQUEST
-    #                 )
-
-    #     if period_conflict:
-    #         return Response(
-    #             {"error": f"Teacher is already assigned another subject in period {period.name} ({period.start_period_time} - {period.end_period_time})."},
-    #             status=status.HTTP_400_BAD_REQUEST
-    #         )
-
-    #     for period in periods:
-    #         # Assign only one period for each subject per teacher
-    #         if not ClassPeriod.objects.filter(teacher=teacher, subject=subject).exists():
-    #             # Assign the teacher to the subject and period
-    #             cp = ClassPeriod.objects.create(
-    #                 teacher=teacher,
-    #                 subject=subject,
-    #                  year_level=yearlevel,
-    #                 term=Term.objects.first(),  
-    #                 start_time=period,  # Assign Period instance to start_time
-    #                 end_time=period,  # Assign Period instance to end_time
-    #                 classroom=ClassRoom.objects.first(),  # Using the first available classroom
-    #                 name=f"{subject.subject_name} - {period.name}"
-    #             )
-    #             assigned.append({
-    #                 "subject": subject.subject_name,
-    #                 "period": period.name,
-    #                 "time": f"{period.start_period_time} - {period.end_period_time}"
-    #             })
-    #             break  # Assign only one period per subject for the teacher
-
-    #     # Link teacher to year level
-    #     TeacherYearLevel.objects.get_or_create(teacher=teacher, yearlevel_id=yearlevel)
-
-    #     # Return detailed response
-    #     return Response({
-    #         "message": "Teacher assigned successfully.",
-    #         "teacher": f"{teacher.user.first_name} {teacher.user.last_name}",
-    #         "year_level": yearlevel.level_name,
-    #         "assigned_subjects_periods": assigned
-    #     }, status=status.HTTP_200_OK)
 
     
     @action(detail=False, methods=['post'], url_path='assign-teacher-details')
@@ -250,62 +143,7 @@ class TeacherView(viewsets.ModelViewSet):
         }, status=status.HTTP_200_OK)
 
    
-    # @action(detail=False, methods=['get'], url_path='all-teacher-assignments')
-    # def get_all_teacher_assignments(self, request):
-    #     from django.db.models import Prefetch
-
-    #     teachers = Teacher.objects.prefetch_related(
-    #         'year_levels',
-    #         Prefetch(
-    #             'assigned_periods',
-    #             queryset=ClassPeriod.objects.select_related(
-    #                 'subject', 'start_time', 'end_time'
-    #             ).order_by('start_time__start_period_time')  
-    #         )
-    #     ).select_related('user')
-
-    #     response_data = []
-
-    #     for teacher in teachers:
-    #         # Step 1: Build yearlevel map
-    #         yearlevel_map = {
-    #             yl.id: {
-    #                 "year_level_id": yl.id,
-    #                 "year_level_name": yl.level_name,
-    #                 "periods": []
-    #             }
-    #             for yl in teacher.year_levels.all()
-    #         }
-
-    #         # Step 2: Assign each period in sorted order (round-robin year_levels)
-    #         year_level_ids = list(yearlevel_map.keys())
-    #         if not year_level_ids:
-    #             continue  # skip if teacher has no assigned year level
-
-    #         index = 0
-    #         for period in teacher.assigned_periods.all():
-    #             assigned_year_level_id = year_level_ids[index % len(year_level_ids)]
-    #             yearlevel_map[assigned_year_level_id]["periods"].append({
-    #                 'period_id': period.id,
-    #                 'period_name': period.name,
-    #                 'start_time': period.start_time.start_period_time.strftime("%H:%M") if period.start_time else None,
-    #                 'end_time': period.end_time.end_period_time.strftime("%H:%M") if period.end_time else None,
-    #                 'subject_id': period.subject.id if period.subject else None,
-    #                 'subject_name': period.subject.subject_name if period.subject else None
-    #             })
-    #             index += 1
-
-    #         # Step 3: Build teacher assignment response
-    #         response_data.append({
-    #             'teacher_id': teacher.id,
-    #             'teacher_name': teacher.user.get_full_name() if teacher.user else str(teacher),
-    #             'total_assigned_periods': teacher.assigned_periods.count(),
-    #             'max_periods_allowed': 6,
-    #             'assignments': list(yearlevel_map.values())
-    #         })
-
-    #     return Response(response_data, status=status.HTTP_200_OK)
-
+    
     @action(detail=False, methods=['get'], url_path='all-teacher-assignments')
     def get_all_teacher_assignments(self, request):
         from django.db.models import Prefetch
@@ -803,6 +641,7 @@ class SubstituteAssignmentView(APIView):
                     f"Teacher {assignment.absent_teacher} is absent.\n"
                     f"Substitute assigned: {assignment.substitute_teacher}."
                 )
+                print(msg)
                 response = send_whatsapp_message(msg)
                 notifications.append({
                     "absent_teacher": str(assignment.absent_teacher),
@@ -811,6 +650,8 @@ class SubstituteAssignmentView(APIView):
                     "period": assignment.period,
                     "response": response
                 })
+                print(response)
+                print(notifications)
 
             return Response({
                 "assignments": serializer.data,
