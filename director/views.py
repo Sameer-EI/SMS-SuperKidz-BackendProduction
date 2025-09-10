@@ -4344,12 +4344,12 @@ class NonScholasticGradeViewSet(viewsets.ModelViewSet):
                 return Response({"error": "Not authorized to delete this grade."}, status=403)
 
         return Response({"error": "Not allowed for your role."}, status=403)
-
+from director.permission import RoleBasedPermission
 
 class ReportCardViewSet(viewsets.ModelViewSet):
     queryset = ReportCard.objects.all()
     serializer_class = ReportCardSerializer
-    # permission_classes = [IsAuthenticated, RoleBasedPermission]
+    permission_classes = [IsAuthenticated, RoleBasedPermission]
 
     def get_user_roles(self):
         user = self.request.user
