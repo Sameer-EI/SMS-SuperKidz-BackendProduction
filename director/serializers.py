@@ -1108,18 +1108,6 @@ class FeeRecordSerializer(serializers.ModelSerializer):
 
         return data
     
-    
-    # def get_year_level_fees_grouped(self, obj):
-    #     grouped = defaultdict(list)
-    #     for fee in obj.year_level_fees.all():
-    #         year_level_name = fee.year_level.level_name
-    #         grouped[year_level_name].append({
-    #             "id": fee.id,
-    #             "fee_type": fee.fee_type.name,
-    #             "amount": str(fee.amount),
-    #         })
-        
-    #     return [{"year_level": yl, "fees": fees} for yl, fees in grouped.items()]
 
     def get_year_level_fees_grouped(self, obj):
         grouped = defaultdict(list)
@@ -1155,35 +1143,48 @@ class FeeRecordSerializer(serializers.ModelSerializer):
     
     ### ------------ conmmented as of 27Aug25 at 05:15 PM below one ---------- ###
     
+   
+    ### ------------ conmmented as of 27Aug25 at 05:15 PM above one ---------- ###
+    
+    
+    
+    ##### ------- updated validation -------  #### As of 27Aug25 at 05:14 PM below one
+    
+    
     # def validate(self, data):
     #     student = data.get('student')
     #     month = data.get('month')  # e.g., 'July'
     #     year_level_fees = data.get('year_level_fees', [])
     #     paid_amount = data.get('paid_amount', 0)
 
-    #     # if self.instance is None:
-    #     #     if FeeRecord.objects.filter(student=student, month=month).exists():
-    #     #         raise serializers.ValidationError(f"Fee already submitted for {month} for this student.")
-
     #     if self.instance is None:
     #         for fee in year_level_fees:
+    #             # Admission Fee Validation
     #             if "admission fee" in fee.fee_type.name.lower():
     #                 if FeeRecord.objects.filter(
     #                     student=student,
     #                     year_level_fees__fee_type__name__iexact="Admission Fee"
     #                 ).exists():
-    #                     # raise serializers.ValidationError(
-    #                     #     "Admission fee already paid for this student in this school year."
-    #                     # )
     #                     raise serializers.ValidationError({
-    #                     "admission_fee": "Admission fee already paid for this student in this school year."
-    #                 })              # corrected as 0f 27Aug25 at 04:53 PM
+    #                         "admission_fee": "Admission fee already paid for this student in this school year."
+    #                     })
 
-    #             if FeeRecord.objects.filter(student=student,month=month, year_level_fees=fee).exists():
-    #                 raise serializers.ValidationError(
-    #                     f"{fee.fee_type.name} of {month} is already submitted for {student}."
-    #                 )
-                
+    #             # Tuition Fee Validation   corrected here
+    #             if "tuition fee" in fee.fee_type.name.lower():
+    #                 if FeeRecord.objects.filter(
+    #                     student=student,
+    #                     month=month,
+    #                     year_level_fees__fee_type__name__iexact="Tuition Fee"
+    #                 ).exists():
+    #                     raise serializers.ValidationError({
+    #                         "tuition_fee": f"Tuition fee of {month} is already submitted for {student}."
+    #                     })
+
+    #             # Other fee types  structured response
+    #             if FeeRecord.objects.filter(student=student, month=month, year_level_fees=fee).exists():
+    #                 raise serializers.ValidationError({
+    #                     fee.fee_type.name.lower().replace(" ", "_"): f"{fee.fee_type.name} of {month} is already submitted for {student}."
+    #                 })
 
     #     if not year_level_fees:
     #         raise serializers.ValidationError("At least one year level fee must be selected.")
@@ -1198,7 +1199,6 @@ class FeeRecordSerializer(serializers.ModelSerializer):
     #     except FeeDiscount.DoesNotExist:
     #         discount = None
 
-        
     #     admission_discount = 0
     #     tuition_discount = 0
     #     if discount:
@@ -1215,19 +1215,6 @@ class FeeRecordSerializer(serializers.ModelSerializer):
     #     total = max(total - total_discount, 0)
     #     data['total_amount'] = total
 
-    #     # # caluculate total amount based on year level fee
-    #     # data['total_amount'] = total
-
-    #     # # calculate late fee, if submitted after 15th
-    #     # today = date.today()
-    #     # data['late_fee'] = 25 if today.day > 15 else 0
-
-    #     # #if late fee is applicable, add it to total amount
-
-    #     # if data['late_fee'] > 0:
-    #     #     total += data['late_fee']
-    #     #     data['total_amount'] = total
-
     #     # ---- Apply Late Fee ONLY for Tuition Fee ----
     #     today = date.today()
     #     late_fee = 0
@@ -1241,29 +1228,18 @@ class FeeRecordSerializer(serializers.ModelSerializer):
     #         data['late_fee'] = late_fee
     #         data['total_amount'] = total        
 
-    #     #paid amount should be equal or less than total amount
+    #     # paid amount should be equal or less than total amount
     #     if paid_amount > total:
-    #         raise serializers.ValidationError (
-    #                     f"Paid amount {paid_amount} cannot be greater than total amount {total}."
-    #                 )
+    #         raise serializers.ValidationError(
+    #             f"Paid amount {paid_amount} cannot be greater than total amount {total}."
+    #         )
         
     #     # calculate due amount
     #     due = total - paid_amount
     #     data['due_amount'] = due if due > 0 else 0
 
+    #     return data
 
-    #     # Determine payment status  commented as of 11June25
-    #     # data['payment_status'] = 'Paid' if data['due_amount'] == 0 else 'Unpaid'
-
-    #     return data                  
-    
-    ### ------------ conmmented as of 27Aug25 at 05:15 PM above one ---------- ###
-    
-    
-    
-    ##### ------- updated validation -------  #### As of 27Aug25 at 05:14 PM below one
-    
-    
     def validate(self, data):
         student = data.get('student')
         month = data.get('month')  # e.g., 'July'
@@ -1353,16 +1329,8 @@ class FeeRecordSerializer(serializers.ModelSerializer):
 
         return data
 
-
     
     ##### ------- updated validation -------  #### As of 27Aug25 at 05:14 PM above one
-    
-    
-    
-    
-    
-    
-    
     
     ### Added this as of 11June25 at 01:39 PM
     def create(self, validated_data):
@@ -1583,6 +1551,106 @@ class RazorpayConfirmPaymentSerializer(serializers.Serializer):
 
 
 # ********************OfficeStaffSerializer profile*******************************
+# class OfficeStaffSerializer(serializers.ModelSerializer):
+#     first_name = serializers.CharField(max_length=100, write_only=True)
+#     middle_name = serializers.CharField(max_length=100, write_only=True, required=False, allow_blank=True)
+#     last_name = serializers.CharField(max_length=100, write_only=True)
+#     password = serializers.CharField(max_length=100, write_only=True, required=False)
+#     email = serializers.EmailField(write_only=True)
+#     user_profile = serializers.ImageField(required=False, allow_null=True, write_only=True)
+
+#     student = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all(), many=True, required=False)
+#     teacher = serializers.PrimaryKeyRelatedField(queryset=Teacher.objects.all(), many=True, required=False)
+#     admissions = serializers.PrimaryKeyRelatedField(queryset=Admission.objects.all(), many=True, required=False)
+
+#     class Meta:
+#         model = OfficeStaff
+#         exclude = ["user"]
+
+#     def create(self, validated_data):
+#         user_data = {
+#             "first_name": validated_data.pop("first_name"),
+#             "middle_name": validated_data.pop("middle_name", ""),
+#             "last_name": validated_data.pop("last_name"),
+#             "password": validated_data.pop("password", None),
+#             "email": validated_data.pop("email"),
+#             "user_profile": validated_data.pop("user_profile", None),
+#         }
+
+#         student_data = validated_data.pop("student", [])
+#         teacher_data = validated_data.pop("teacher", [])
+#         admissions_data = validated_data.pop("admissions", [])
+
+#         try:
+#             role, _ = Role.objects.get_or_create(name="office_staff")
+#         except MultipleObjectsReturned:
+#             raise serializers.ValidationError("Multiple roles named 'office_staff' found.")
+
+#         user = User.objects.filter(email=user_data["email"]).first()
+
+#         if user:
+#             if not user.role.filter(name="office_staff").exists():
+#                 user.role.add(role)
+#                 user.save()
+#             else:
+#                 raise serializers.ValidationError("User with this email already exists and is an office staff.")
+#         else:
+#             user = User.objects.create_user(**user_data)
+#             user.role.add(role)
+#             user.save()
+
+#         office_staff = OfficeStaff.objects.create(user=user, **validated_data)
+#         office_staff.student.set(student_data)
+#         office_staff.teacher.set(teacher_data)
+#         office_staff.admissions.set(admissions_data)
+#         return office_staff
+
+#     def update(self, instance, validated_data):
+#         user = instance.user
+
+#         user.first_name = validated_data.pop("first_name", user.first_name)
+#         user.middle_name = validated_data.pop("middle_name", user.middle_name)
+#         user.last_name = validated_data.pop("last_name", user.last_name)
+#         user.email = validated_data.pop("email", user.email)
+#         if "password" in validated_data and validated_data["password"]:
+#             user.set_password(validated_data["password"])
+#         if "user_profile" in validated_data:
+#             user.user_profile = validated_data["user_profile"]
+
+#         user.save()
+
+#         instance.phone_no = validated_data.get("phone_no", instance.phone_no)
+#         instance.gender = validated_data.get("gender", instance.gender)
+#         instance.department = validated_data.get("department", instance.department)
+#         instance.save()
+
+#         if "student" in validated_data:
+#             instance.student.set(validated_data["student"])
+#         if "teacher" in validated_data:
+#             instance.teacher.set(validated_data["teacher"])
+#         if "admissions" in validated_data:
+#             instance.admissions.set(validated_data["admissions"])
+
+#         return instance
+
+#     def to_representation(self, instance):
+#         representation = super().to_representation(instance)
+#         representation.update({
+#             "first_name": instance.user.first_name,
+#             "middle_name": instance.user.middle_name,
+#             "last_name": instance.user.last_name,
+#             "email": instance.user.email,
+#             "user_profile": instance.user.user_profile.url if instance.user.user_profile else None,
+#         })
+
+#         # Remove relational fields from the output
+#         representation.pop("student", None)
+#         representation.pop("teacher", None)
+#         representation.pop("admissions", None)
+
+#         return representation
+
+
 class OfficeStaffSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(max_length=100, write_only=True)
     middle_name = serializers.CharField(max_length=100, write_only=True, required=False, allow_blank=True)
@@ -1654,6 +1722,8 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
         instance.phone_no = validated_data.get("phone_no", instance.phone_no)
         instance.gender = validated_data.get("gender", instance.gender)
         instance.department = validated_data.get("department", instance.department)
+        instance.adhaar_no = validated_data.get("adhaar_no", instance.adhaar_no)  # ✅ NEW
+        instance.pan_no = validated_data.get("pan_no", instance.pan_no)          # ✅ NEW
         instance.save()
 
         if "student" in validated_data:
@@ -1673,6 +1743,8 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
             "last_name": instance.user.last_name,
             "email": instance.user.email,
             "user_profile": instance.user.user_profile.url if instance.user.user_profile else None,
+            "adhaar_no": instance.adhaar_no,   # ✅ NEW
+            "pan_no": instance.pan_no,         # ✅ NEW
         })
 
         # Remove relational fields from the output
@@ -1681,6 +1753,10 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
         representation.pop("admissions", None)
 
         return representation
+
+
+
+
     
     
     
