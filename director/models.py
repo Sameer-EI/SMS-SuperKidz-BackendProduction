@@ -478,7 +478,7 @@ class OfficeStaff(models.Model):
     phone_no = models.CharField(max_length=20)
     gender = models.CharField(max_length=20)
     user = models.OneToOneField("authentication.User", on_delete=models.SET_NULL, null=True)
-    phone_no = models.CharField(max_length=20,null=True, blank=True)
+    phone_no = models.CharField(max_length=20,null=True, blank=True)   # first mistake 
     gender = models.CharField(max_length=20,null=True, blank=True)
     department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True)
     date_joined = models.DateField(auto_now_add=True)
@@ -486,6 +486,8 @@ class OfficeStaff(models.Model):
     teacher = models.ManyToManyField("teacher.Teacher", blank=True, related_name="managed_by_staff")
     admissions = models.ManyToManyField(Admission, blank=True, related_name="handled_by_staff")
     is_active = models.BooleanField(default=True)
+    adhaar_no = models.BigIntegerField(null=True,blank=True)    # added as of 09Sep25
+    pan_no = models.CharField(max_length=50,null=True,blank=True)   # added as of 09Sep25
 
     objects = OfficeStaffManager()
 

@@ -133,14 +133,14 @@ def GuardianTypeView(request, pk=None):
 
 # 
 from django_filters.rest_framework import DjangoFilterBackend  
-from .filters import StudentFilter
+# from .filters import StudentFilter
 class StudentView(ModelViewSet):
     queryset = Student.objects.all()
     # queryset = Student.objects.filter(is_active=True)
     serializer_class = StudentSerializer
     
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_class = StudentFilter
+    # filterset_class = StudentFilter
 
     search_fields = [
         'user__email', 
@@ -290,7 +290,7 @@ class GuardianProfileView(viewsets.ModelViewSet):
             
             
     # **********************Jwt***************    
-    @action(detail=False, methods=['get', 'put', 'patch'], url_path='guardian_my_profile', permission_classes=[IsAuthenticated])
+    @action(detail=False, methods=['get', 'put', 'patch'], url_path='guardian_my_profile')
     def guardian_my_profile(self, request):
         user = request.user
 

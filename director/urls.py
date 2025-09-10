@@ -79,7 +79,7 @@ urlpatterns = [
     path('periods/', assigned_periods),
     path("fetch_upload_doc/",document_fetch_dashboard),
     path('', include(router.urls)),
-   
+
     
     # As of 25June25 at 12:35
     path('student-category-dashboard/', student_category, name='student-category'),
