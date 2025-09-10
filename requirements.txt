@@ -20,7 +20,7 @@ psycopg2-binary
 
 # Optional: for environment variables
 python-decouple
-=======
+
 asgiref==3.8.1
 certifi==2025.6.15
 channels==4.2.2
