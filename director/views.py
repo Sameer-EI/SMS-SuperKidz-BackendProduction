@@ -3579,7 +3579,7 @@ class ExamTypeView(viewsets.ModelViewSet):
 class ExamPaperView(viewsets.ModelViewSet):
     queryset = ExamPaper.objects.all()
     serializer_class = ExamPaperSerializer
-    # permission_classes = [IsAuthenticated, RoleBasedExamPermission]
+    permission_classes = [IsAuthenticated, RoleBasedExamPermission]
     api_section = 'exam_paper'
 
     @action(detail=False, methods=["get"], url_path="get_exampaper")
@@ -3684,7 +3684,7 @@ from teacher.models import *
 class ExamScheduleView(viewsets.ModelViewSet):
     queryset = ExamSchedule.objects.all()
     serializer_class = ExamScheduleSerializer
-    # permission_classes = [IsAuthenticated, RoleBasedExamPermission]
+    permission_classes = [IsAuthenticated, RoleBasedExamPermission]
     api_section = 'exam_schedule'
 
 
@@ -3794,7 +3794,7 @@ class ExamScheduleView(viewsets.ModelViewSet):
 class StudentMarksView(viewsets.ModelViewSet):
     queryset = StudentMarks.objects.all()
     serializer_class = StudentMarksSerializer
-    # permission_classes = [IsAuthenticated,RoleBasedExamPermission] 
+    permission_classes = [IsAuthenticated,RoleBasedExamPermission] 
     api_section = "student_marks"  
 
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="get_marks")
