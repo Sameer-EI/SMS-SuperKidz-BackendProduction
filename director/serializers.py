@@ -2281,7 +2281,6 @@ class SchoolExpenseSerializer(serializers.ModelSerializer):
         return obj.school_year.year_name if obj.school_year else None
 
     def validate(self, attrs):
-        #  Prevent changing payment_method in update
         if self.instance and "payment_method" in attrs:
             raise serializers.ValidationError(
                 {"payment_method": "Payment method cannot be changed once created."}
@@ -2339,8 +2338,7 @@ class SchoolExpenseSerializer(serializers.ModelSerializer):
                     {"expense_date": "Expense date is required for salary expenses."}
                 )
 
-            # expense_date se month name nikalo (1 → January, 8 → August etc.)
-            month_name = calendar.month_name[expense_date.month]
+            month_name = calendar.month_name[expense_date.month]  # (1 → January)
 
             qs = EmployeeSalary.objects.filter(
                 school_year=school_year,
@@ -2446,13 +2444,17 @@ class EmployeeSalarySerializer(serializers.ModelSerializer):
         model = EmployeeSalary
         fields = [
             "id", "user", "employee_name", "role", "gross_amount", "deductions", "net_amount",
-            "month", "school_year", "school_year_name", "payment_date", "payment_method",
+            "month","school_year_name", "payment_date", "payment_method",
             "paid_by", "paid_by_name", "remarks", "status", "created_at"]#, "razorpay_payment_id", "razorpay_order_id", "razorpay_signature"]
         extra_kwargs = {
             "net_amount": {"read_only": True},   
             "paid_by": {"read_only": True},
             "gross_amount": {"read_only": True},
-            "status": {"read_only": True},
+            "school_year": {"read_only": True},   
+            # "status": {"read_only": True},
+            # "payment_method": {"read_only": True},  
+            # "month": {"read_only": True},   #  month ab update nahi hoga
+
         }
 
     def get_school_year_name(self, obj):   
@@ -2465,6 +2467,24 @@ class EmployeeSalarySerializer(serializers.ModelSerializer):
         user = data.get("user") or getattr(self.instance, "user", None)
         month = data.get("month") or getattr(self.instance, "month", None)
         school_year = data.get("school_year") or getattr(self.instance, "school_year", None)
+
+        if school_year:
+            today = date.today()
+            if not (school_year.start_date <= today <= school_year.end_date):
+                raise serializers.ValidationError(
+                    {"school_year": "You can only create salary records for the current school year."}
+                )
+
+
+        if self.instance and "payment_method" in data:
+            raise serializers.ValidationError(
+                {"payment_method": "Payment method cannot be changed once created."}
+            )
+        if self.instance and "deductions" in data:
+            raise serializers.ValidationError({"deductions": "Deductions cannot be changed."})
+
+        if self.instance and "month" in data:
+            raise serializers.ValidationError({"month": "Month cannot be changed once created."})
 
         # #Future payment date check
         # if data.get('payment_date') and data['payment_date'] > date.today():
@@ -2514,34 +2534,88 @@ class EmployeeSalarySerializer(serializers.ModelSerializer):
         if qs.exists():
             raise serializers.ValidationError("Salary record for this employee for this month already exists.")
 
+        # deductions = data.get("deductions") or getattr(self.instance, "deductions", 0)
+        # gross_amount = getattr(user, "base_salary", 0)   
+        # data["gross_amount"] = gross_amount
+        # data["net_amount"] = gross_amount - deductions
+
+        # deductions = data.get("deductions") or getattr(self.instance, "deductions", 0)
+        # gross_amount = getattr(user, "base_salary", 0) if user else 0
+        # data["gross_amount"] = gross_amount
+        # data["net_amount"] = gross_amount - deductions
+        net_amount = data.get("net_amount", 0)
+        # print(net_amount)
+
         deductions = data.get("deductions") or getattr(self.instance, "deductions", 0)
-        gross_amount = getattr(user, "base_salary", 0)   
+        gross_amount = user.base_salary if user else 0
         data["gross_amount"] = gross_amount
         data["net_amount"] = gross_amount - deductions
+
+        # print(net_amount)
+        if data["net_amount"] <= 0 and data.get("payment_method") == "online":
+            raise serializers.ValidationError({
+                "net_amount": "Net amount must be greater than 0 for online payment."
+            })
+        print(net_amount)
 
         return data
 
     def create(self, validated_data):
         request_user = self.context["request"].user
+
+        # auto-assign current school year 
+        today = date.today()
+        try:
+            current_year = SchoolYear.objects.get(start_date__lte=today, end_date__gte=today)
+        except SchoolYear.DoesNotExist:
+            raise serializers.ValidationError({"school_year": "No active school year found."})
+
+        validated_data["school_year"] = current_year
+
         instance = super().create(validated_data)
 
         if instance.payment_method == "cash":
             instance.status = "paid"
             instance.paid_by = request_user
-
         elif instance.payment_method in ["cheque", "online"]:
-            instance.status = "pending"  
+            instance.status = "pending"
+
         instance.save()
         return instance
 
+
+    # def update(self, instance, validated_data):
+    #     request_user = self.context["request"].user
+    #     instance = super().update(instance, validated_data)
+    #     if "payment_method" in validated_data and validated_data["payment_method"] != instance.payment_method:
+    #         raise serializers.ValidationError(
+    #             {"payment_method": "Payment method cannot be changed once set."})
+
+    #     if instance.payment_method == "cheque" and instance.status == "paid" and not instance.paid_by:
+    #         instance.paid_by = request_user
+
+    #     if instance.payment_method == "online" and instance.status == "paid" and not instance.paid_by:
+    #         instance.paid_by = request_user
+
+    #     instance.save()
+    #     return instance
+
     def update(self, instance, validated_data):
         request_user = self.context["request"].user
-        instance = super().update(instance, validated_data)
 
-        if instance.payment_method == "cheque" and instance.status == "paid" and not instance.paid_by:
-            instance.paid_by = request_user
+        forbidden_fields = ["deductions", "month", "payment_method"]
+        for field in forbidden_fields:
+            if field in self.initial_data: 
+                raise serializers.ValidationError(
+                    {field: f"{field} cannot be updated once created."}
+                )
 
-        if instance.payment_method == "online" and instance.status == "paid" and not instance.paid_by:
+        allowed_fields = ["payment_date", "remarks", "status"]
+        for field in allowed_fields:
+            if field in validated_data:
+                setattr(instance, field, validated_data[field])
+
+        if instance.status == "paid" and not instance.paid_by:
             instance.paid_by = request_user
 
         instance.save()

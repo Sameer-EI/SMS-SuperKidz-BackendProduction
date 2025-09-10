@@ -8,7 +8,7 @@ from authentication.models import User
 # from authentication.models import User
 from student.models import Student, Guardian,StudentYearLevel
 from director.utils import * 
-from .utils import * 
+from director.utils import * 
 
 from teacher.models import Teacher 
 from django.utils.timezone import now
@@ -712,6 +712,10 @@ class SchoolExpense(models.Model):
     created_by = models.ForeignKey("authentication.User", on_delete=models.SET_NULL, null=True, blank=True, related_name='created_expenses') 
     created_at = models.DateTimeField(auto_now_add=True)# 
 
+    razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)
+    razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
+    razorpay_signature = models.CharField(max_length=255, blank=True, null=True)
+
     def __str__(self): 
         return f"{self.category.name} - ₹{self.amount} on {self.expense_date}" 
     
@@ -743,6 +747,10 @@ class EmployeeSalary(models.Model):
     remarks = models.TextField(null=True, blank=True)
     status = models.CharField(max_length=20,choices=[('paid', 'Paid'), ('pending', 'Pending')],default='pending')
     created_at = models.DateTimeField(auto_now=True)
+
+    razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
+    razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)
+    razorpay_signature = models.CharField(max_length=255, blank=True, null=True)
 
     def __str__(self):
         return f"{self.user.user.first_name} {self.month} - {self.net_amount}"

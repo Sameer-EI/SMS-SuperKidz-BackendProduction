@@ -4792,6 +4792,10 @@ class SchoolExpenseView(viewsets.ModelViewSet):
         if month:
             queryset = queryset.filter(expense_date__month=month)
 
+        status = self.request.query_params.get("status")
+        if status:
+            queryset = queryset.filter(status=status)
+
         return queryset
 
 
@@ -4832,7 +4836,7 @@ class SchoolExpenseView(viewsets.ModelViewSet):
         )
 
         if payment_method == "cash":
-            expense.status = "paid"
+            expense.status = "approved"
             expense.approved_by = user
             expense.save()
             return Response(SchoolExpenseSerializer(expense).data, status=status.HTTP_201_CREATED)
@@ -4844,89 +4848,80 @@ class SchoolExpenseView(viewsets.ModelViewSet):
 
         elif payment_method == "online":
             # Call initiate_expense_payment function
-            return self.initiate_expense_payment(request, expense=expense)
+            # return self.initiate_expense_payment(request, expense=expense)
+            return Response({"message": "Use initiate-expense-payment API for online payments."},
+                        status=status.HTTP_400_BAD_REQUEST)
 
         return Response({"error": "Invalid payment method"}, status=status.HTTP_400_BAD_REQUEST)
     
     
     @action(detail=False, methods=["post"], url_path="initiate-expense-payment")
-    def initiate_expense_payment(self, request, expense=None):
-        # Agar create() me online payment select hua hai to yaha se Razorpay order create hoga.
+    def initiate_expense_payment(self, request):
+        serializer = self.get_serializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
 
-        if not expense:  
-            serializer = self.get_serializer(data=request.data, context={"request": request})
-            serializer.is_valid(raise_exception=True)
-            user = request.user
-            expense = SchoolExpense.objects.create(
-                category=serializer.validated_data["category"],
-                school_year=serializer.validated_data["school_year"],
-                amount=serializer.validated_data["amount"],
-                description=serializer.validated_data.get("description"),
-                expense_date=serializer.validated_data["expense_date"],
-                payment_method="online",
-                status="pending",
-                created_by=user,
-                attachment=serializer.validated_data.get("attachment")
-
-            )
+        expense = serializer.save(
+            created_by=request.user,
+            status="pending",
+            payment_method="online"
+        )
 
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-        order = client.order.create({
-            "amount": int(expense.amount * 100),  # convert ₹ to paise
+        razorpay_order = client.order.create({
+            "amount": int(expense.amount * 100),
             "currency": "INR",
             "payment_capture": "1",
             "receipt": f"EXP-{expense.id}"
         })
 
+        expense.razorpay_order_id = razorpay_order["id"]
+        expense.save()
+
         return Response({
             "expense_id": expense.id,
-            "razorpay_order_id": order["id"],
-            "amount": float(expense.amount),
+            "razorpay_order_id": razorpay_order["id"],
+            "razorpay_key": settings.RAZORPAY_KEY_ID,
+            "amount": str(expense.amount),
             "currency": "INR",
-            "receipt": f"EXP-{expense.id}"
-        }, status=status.HTTP_200_OK)
+            "status": expense.status
+        }, status=status.HTTP_201_CREATED)
+
+
 
     @action(detail=False, methods=["post"], url_path="confirm-expense-payment")
     def confirm_expense_payment(self, request):
-        # Razorpay se payment success ke baad signature verify karke expense ko 'paid' mark karega.
-        
         data = request.data
-        required_fields = ["razorpay_payment_id", "razorpay_order_id", "razorpay_signature", "expense_id"]
-        missing = [f for f in required_fields if f not in data]
-
+        required = ["razorpay_payment_id", "razorpay_order_id", "razorpay_signature", "expense_id"]
+        missing = [f for f in required if f not in data]
         if missing:
-            return Response({"error": f"Missing required fields: {', '.join(missing)}"}, status=400)
+            return Response({"error": f"Missing fields: {', '.join(missing)}"}, status=400)
+
+        try:
+            expense = SchoolExpense.objects.get(id=data["expense_id"], razorpay_order_id=data["razorpay_order_id"])
+        except SchoolExpense.DoesNotExist:
+            return Response({"error": "Expense not found or order mismatch"}, status=404)
 
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
         try:
             client.utility.verify_payment_signature({
                 "razorpay_order_id": data["razorpay_order_id"],
                 "razorpay_payment_id": data["razorpay_payment_id"],
-                "razorpay_signature": data["razorpay_signature"]
+                "razorpay_signature": data["razorpay_signature"],
             })
         except razorpay.errors.SignatureVerificationError:
-            return Response({"error": "Payment verification failed"}, status=400)
+            return Response({"error": "Payment verification failed."}, status=400)
 
-
-        try:
-            expense = SchoolExpense.objects.get(id=data["expense_id"])
-        except SchoolExpense.DoesNotExist:
-            return Response({"error": "Expense not found"}, status=404)
-
-        expense.status = "paid"
-        expense.approved_by = request.user
-
+        expense.status = "approved"
         expense.razorpay_payment_id = data["razorpay_payment_id"]
-        expense.razorpay_order_id = data["razorpay_order_id"]
         expense.razorpay_signature = data["razorpay_signature"]
-
+        expense.approved_by = request.user
         expense.save()
 
-
         return Response({
-            "message": "Expense payment confirmed.",
+            "message": "Expense payment confirmed",
             "expense": SchoolExpenseSerializer(expense).data
-        }, status=200)
+        })
+
 
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop("partial", False)
@@ -4975,8 +4970,6 @@ class EmployeeView(viewsets.ModelViewSet):
     serializer_class = EmployeeSerializer
     permission_classes = [IsAuthenticated,EmployeePermission]
 
-
-    # http://127.0.0.1:8000/d/Employee/get_emp/?role=office staff or http://127.0.0.1:8000/d/Employee/get_emp/?role=teacher
     @action(detail=False, methods=["get"], url_path="get_emp")
     def get_emp(self, request):
         role = request.query_params.get("role")
@@ -5116,89 +5109,97 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
 
         return queryset
 
+
+    #     salary = EmployeeSalary.objects.create(
+    #         user=serializer.validated_data["user"],
+    #         school_year=serializer.validated_data["school_year"],
+    #         month=serializer.validated_data["month"],
+    #         deductions=serializer.validated_data.get("deductions", 0),
+    #         gross_amount=serializer.validated_data.get("gross_amount", 0),
+    #         net_amount=serializer.validated_data.get("net_amount", 0),
+    #         payment_date=serializer.validated_data["payment_date"],
+    #         payment_method=payment_method,
+    #         remarks=serializer.validated_data.get("remarks"),
+    #     )
+
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
 
         user = request.user
-        payment_method = serializer.validated_data.get("payment_method")
-        net_amount = serializer.validated_data.get("net_amount")
+        salary = serializer.save()   
 
-        if not payment_method:
-            return Response({"error": "payment_method is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        salary = EmployeeSalary.objects.create(
-            user=serializer.validated_data["user"],
-            school_year=serializer.validated_data["school_year"],
-            month=serializer.validated_data["month"],
-            deductions=serializer.validated_data.get("deductions", 0),
-            gross_amount=serializer.validated_data.get("gross_amount", 0),
-            net_amount=serializer.validated_data.get("net_amount", 0),
-            payment_date=serializer.validated_data["payment_date"],
-            payment_method=payment_method,
-            remarks=serializer.validated_data.get("remarks"),
-        )
+        payment_method = salary.payment_method
 
         if payment_method == "cash":
             salary.status = "paid"
             salary.paid_by = user
             salary.save()
             return Response(EmployeeSalarySerializer(salary).data, status=status.HTTP_201_CREATED)
-
+        
         elif payment_method == "cheque":
             salary.status = "pending"
             salary.save()
             return Response(EmployeeSalarySerializer(salary).data, status=status.HTTP_201_CREATED)
 
         elif payment_method == "online":
-            return self.initiate_salary_payment(request, salary=salary)
+            return Response(
+                {"message": "Use initiate-salary-payment API for online payments."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        else:
+            return Response({"error": "Invalid payment method"}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response({"error": "Invalid payment method"}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(EmployeeSalarySerializer(salary).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["post"], url_path="initiate-salary-payment")
-    def initiate_salary_payment(self, request, salary=None):
-        # Razorpay order create for online salary payment.
-        if not salary:
-            serializer = self.get_serializer(data=request.data, context={"request": request})
-            serializer.is_valid(raise_exception=True)
-            salary = EmployeeSalary.objects.create(
-                user=serializer.validated_data["user"],
-                school_year=serializer.validated_data["school_year"],
-                month=serializer.validated_data["month"],
-                deductions=serializer.validated_data.get("deductions", 0),
-                gross_amount=serializer.validated_data.get("gross_amount", 0),
-                net_amount=serializer.validated_data.get("net_amount", 0),
-                payment_date=serializer.validated_data["payment_date"],
-                payment_method="online",
-                remarks=serializer.validated_data.get("remarks"),
-                status="pending",
+    def initiate_salary_payment(self, request):
+        serializer = self.get_serializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+
+        salary = serializer.save(
+            status="pending",
+            payment_method="online"
+        )
+        if salary.net_amount <= 0:
+            return Response(
+                {"error": "Net amount must be greater than 0 for online payment."},
+                status=status.HTTP_400_BAD_REQUEST
             )
 
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-        order = client.order.create({
-            "amount": int(salary.net_amount * 100),  # ₹ to paise
+        razorpay_order = client.order.create({
+            "amount": int(salary.net_amount * 100),
             "currency": "INR",
             "payment_capture": "1",
             "receipt": f"EMP-SAL-{salary.id}"
         })
 
+        salary.razorpay_order_id = razorpay_order["id"]
+        salary.save()
+
         return Response({
             "salary_id": salary.id,
-            "razorpay_order_id": order["id"],
-            "amount": float(salary.net_amount),
+            "razorpay_order_id": razorpay_order["id"],
+            "razorpay_key": settings.RAZORPAY_KEY_ID,
+            "net_amount": str(salary.net_amount),
             "currency": "INR",
-            "receipt": f"EMP-SAL-{salary.id}"
-        }, status=status.HTTP_200_OK)
+            "status": salary.status
+        }, status=status.HTTP_201_CREATED)
+
 
     @action(detail=False, methods=["post"], url_path="confirm-salary-payment")
     def confirm_salary_payment(self, request):
-        # Razorpay confirmation API for online salary payment.
         data = request.data
         required_fields = ["razorpay_payment_id", "razorpay_order_id", "razorpay_signature", "salary_id"]
         missing = [f for f in required_fields if f not in data]
-
         if missing:
             return Response({"error": f"Missing required fields: {', '.join(missing)}"}, status=400)
+
+        try:
+            salary = EmployeeSalary.objects.get(id=data["salary_id"], razorpay_order_id=data["razorpay_order_id"])
+        except EmployeeSalary.DoesNotExist:
+            return Response({"error": "Salary record not found or order mismatch"}, status=404)
 
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
         try:
@@ -5208,25 +5209,22 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
                 "razorpay_signature": data["razorpay_signature"]
             })
         except razorpay.errors.SignatureVerificationError:
-            return Response({"error": "Payment verification failed"}, status=400)
-
-        try:
-            salary = EmployeeSalary.objects.get(id=data["salary_id"])
-        except EmployeeSalary.DoesNotExist:
-            return Response({"error": "Salary record not found"}, status=404)
+            return Response({"error": "Payment verification failed."}, status=400)
 
         salary.status = "paid"
         salary.paid_by = request.user
-        salary.razorpay_payment_id = data.get("razorpay_payment_id")
-        salary.razorpay_order_id = data.get("razorpay_order_id")
-        salary.razorpay_signature = data.get("razorpay_signature")
+        salary.razorpay_payment_id = data["razorpay_payment_id"]
+        salary.razorpay_order_id = data["razorpay_order_id"]   
+        salary.razorpay_signature = data["razorpay_signature"]
         salary.save()
 
         return Response({
-            "message": "Salary payment confirmed.",
+            "message": "Salary payment confirmed",
             "salary": EmployeeSalarySerializer(salary).data
-        }, status=200)
-    
+        })
+
+
+
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop("partial", False)
         instance = self.get_object()
