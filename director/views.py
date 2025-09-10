@@ -4,14 +4,9 @@ from rest_framework.response import Response
 from django.db.models import Count
 from collections import OrderedDict
 from attendance.models import StudentAttendance
-# from director.permission import *
+from director.permission import *
 from director.utils import calculate_subject_summary
 from rest_framework.exceptions import ValidationError
-from director.permission import IsDirectororOfficeStaff
-
-
-
-# from director.permission import IsDirector
 from .serializers import *
 from rest_framework import filters
 from .models import *
