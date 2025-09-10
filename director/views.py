@@ -4,10 +4,10 @@ from rest_framework.response import Response
 from django.db.models import Count
 from collections import OrderedDict
 from attendance.models import StudentAttendance
-# from director.permission import *
+from director.permission import *
 from director.utils import calculate_subject_summary
 from rest_framework.exceptions import ValidationError
-from director.permission import IsDirectororOfficeStaff
+# from director.permission import IsDirectororOfficeStaff
 
 
 
@@ -4354,7 +4354,7 @@ class NonScholasticGradeViewSet(viewsets.ModelViewSet):
 class ReportCardViewSet(viewsets.ModelViewSet):
     queryset = ReportCard.objects.all()
     serializer_class = ReportCardSerializer
-    # permission_classes = [IsAuthenticated, RoleBasedPermission]
+    permission_classes = [IsAuthenticated, RoleBasedPermission]
 
     def get_user_roles(self):
         user = self.request.user
@@ -5207,12 +5207,12 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
 class IncomeCategoryView(viewsets.ModelViewSet):
     queryset = IncomeCategory.objects.all()
     serializer_class = IncomeCategorySerializer
-    # permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
 
 class SchoolIncomeViewSet(viewsets.ModelViewSet):
     queryset = SchoolIncome.objects.all()
     serializer_class = SchoolIncomeSerializer
-    # permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
     
     def get_queryset(self):
         qs = super().get_queryset()

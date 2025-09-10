@@ -194,8 +194,8 @@ def LoginView(request):
 
             response_data = {
                     "Message": "User logged in successfully",
-                    "Access Token": access,
-                    "Refresh Token": refresh_token,
+                    "access": access,
+                    "refresh": refresh_token,
                     "User ID": user.id,
                     "Roles": role_names,
                     "name": full_name,
