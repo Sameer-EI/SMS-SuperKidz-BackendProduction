@@ -9,9 +9,6 @@ from director.utils import calculate_subject_summary
 from rest_framework.exceptions import ValidationError
 from director.permission import IsDirectororOfficeStaff, IsDirector, RoleBasedExamPermission, RoleBasedPermission
 
-
-
-# from director.permission import IsDirector
 from .serializers import *
 from rest_framework import filters
 from .models import *
