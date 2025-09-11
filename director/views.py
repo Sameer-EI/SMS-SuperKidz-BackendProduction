@@ -4,14 +4,11 @@ from rest_framework.response import Response
 from django.db.models import Count
 from collections import OrderedDict
 from attendance.models import StudentAttendance
-# from director.permission import *
+from director.permission import *
 from director.utils import calculate_subject_summary
 from rest_framework.exceptions import ValidationError
 from director.permission import IsDirectororOfficeStaff, IsDirector, RoleBasedExamPermission, RoleBasedPermission
 
-
-
-# from director.permission import IsDirector
 from .serializers import *
 from rest_framework import filters
 from .models import *
@@ -4349,7 +4346,7 @@ class NonScholasticGradeViewSet(viewsets.ModelViewSet):
                 return Response({"error": "Not authorized to delete this grade."}, status=403)
 
         return Response({"error": "Not allowed for your role."}, status=403)
-
+from director.permission import RoleBasedPermission
 
 class ReportCardViewSet(viewsets.ModelViewSet):
     queryset = ReportCard.objects.all()
@@ -4902,48 +4899,7 @@ class ReportCardViewSet(viewsets.ModelViewSet):
 class ExpenseCategoryView(viewsets.ModelViewSet):
     queryset = ExpenseCategory.objects.all()
     serializer_class = ExpenseCategorySerializer
-    # permission_classes = [IsAuthenticated, ExpensePermission]
-
-    @action(detail=False, methods=["get"], url_path="get_category")
-    def get_categories(self, request):
-        categories = self.get_queryset()
-        serializer = self.get_serializer(categories, many=True)
-        return Response(serializer.data)
-
-    @action(detail=False, methods=["post"], url_path="create_category")
-    def create_category(self, request):
-        name = request.data.get("name")
-        if not name:
-            return Response({"error": "Name is required."}, status=400)
-
-        category, created = ExpenseCategory.objects.get_or_create(name=name)
-        serializer = self.get_serializer(category)
-        message = "Category created successfully." if created else "Category already exists."
-        return Response({"message": message, "data": serializer.data}, status=201 if created else 200)
-    
-
-    @action(detail=False, methods=["put"], url_path="update_category")
-    def update_category(self, request):
-        try:
-            exam_type = ExpenseCategory.objects.get(id=request.data.get("id"))
-        except ExpenseCategory.DoesNotExist:
-            return Response({"error": "ExpenseCategory not found"}, status=404)
-
-        serializer = self.get_serializer(exam_type, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response({"message": "category updated successfully", "data": serializer.data})
-        return Response(serializer.errors, status=400)
-
-    @action(detail=False, methods=["delete"], url_path="delete_category")
-    def delete_category(self, request):
-        try:
-            exam_type = ExpenseCategory.objects.get(id=request.data.get("id"))
-            exam_type.delete()
-            return Response({"message": "category deleted successfully."})
-        except ExpenseCategory.DoesNotExist:
-            return Response({"error": "category not found"}, status=404)
-
+    permission_classes = [IsAuthenticated, ExpensePermission]
 
 def get_current_school_year():
     today = date.today()
@@ -4977,6 +4933,13 @@ class SchoolExpenseView(viewsets.ModelViewSet):
         category_id = self.request.query_params.get("category")
         if category_id:
             queryset = queryset.filter(category_id=category_id)
+        month = self.request.query_params.get("month")
+        if month:
+            queryset = queryset.filter(expense_date__month=month)
+
+        status = self.request.query_params.get("status")
+        if status:
+            queryset = queryset.filter(status=status)
 
         return queryset
 
@@ -4993,72 +4956,120 @@ class SchoolExpenseView(viewsets.ModelViewSet):
         #     "data": serializer.data
         # })
 
-
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
+        serializer = self.get_serializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
 
-        roles = [role.name.lower() for role in request.user.role.all()]
+        user = request.user
 
-        approved_by = None
-        status_value = "pending"
+        payment_method = serializer.validated_data.get("payment_method")   # safe access
+        amount = serializer.validated_data.get("amount")
 
-        if "director" in roles:
-            approved_by = request.user
-            status_value = "approved"
-
-        elif "office staff" in roles:
-            approved_by = None
-            status_value = "pending"
+        if not payment_method:
+            return Response({"error": "payment_method is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         expense = SchoolExpense.objects.create(
-            category=serializer.validated_data.get("category"),
-            school_year=serializer.validated_data.get("school_year"),
-            amount=serializer.validated_data.get("amount"),
+            category=serializer.validated_data["category"],
+            school_year=serializer.validated_data["school_year"],
+            amount=amount,
             description=serializer.validated_data.get("description"),
-            expense_date=serializer.validated_data.get("expense_date"),
-            payment_method=serializer.validated_data.get("payment_method"),
-            created_by=request.user,
-            approved_by=approved_by,
-            status=status_value,
+            expense_date=serializer.validated_data["expense_date"],
+            payment_method=payment_method,
+            created_by=user,
+            attachment=serializer.validated_data.get("attachment")
+
         )
 
+        if payment_method == "cash":
+            expense.status = "approved"
+            expense.approved_by = user
+            expense.save()
+            return Response(SchoolExpenseSerializer(expense).data, status=status.HTTP_201_CREATED)
+
+        elif payment_method == "cheque":
+            expense.status = "pending"  
+            expense.save()
+            return Response(SchoolExpenseSerializer(expense).data, status=status.HTTP_201_CREATED)
+
+        elif payment_method == "online":
+            # Call initiate_expense_payment function
+            # return self.initiate_expense_payment(request, expense=expense)
+            return Response({"message": "Use initiate-expense-payment API for online payments."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({"error": "Invalid payment method"}, status=status.HTTP_400_BAD_REQUEST)
+    
+    
+    @action(detail=False, methods=["post"], url_path="initiate-expense-payment")
+    def initiate_expense_payment(self, request):
+        serializer = self.get_serializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+
+        expense = serializer.save(
+            created_by=request.user,
+            status="pending",
+            payment_method="online"
+        )
+
+        client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+        razorpay_order = client.order.create({
+            "amount": int(expense.amount * 100),
+            "currency": "INR",
+            "payment_capture": "1",
+            "receipt": f"EXP-{expense.id}"
+        })
+
+        expense.razorpay_order_id = razorpay_order["id"]
+        expense.save()
+
         return Response({
-            "message": "Expense created successfully",
-            "data": SchoolExpenseSerializer(expense).data
+            "expense_id": expense.id,
+            "razorpay_order_id": razorpay_order["id"],
+            "razorpay_key": settings.RAZORPAY_KEY_ID,
+            "amount": str(expense.amount),
+            "currency": "INR",
+            "status": expense.status
+        }, status=status.HTTP_201_CREATED)
+
+
+
+    @action(detail=False, methods=["post"], url_path="confirm-expense-payment")
+    def confirm_expense_payment(self, request):
+        data = request.data
+        required = ["razorpay_payment_id", "razorpay_order_id", "razorpay_signature", "expense_id"]
+        missing = [f for f in required if f not in data]
+        if missing:
+            return Response({"error": f"Missing fields: {', '.join(missing)}"}, status=400)
+
+        try:
+            expense = SchoolExpense.objects.get(id=data["expense_id"], razorpay_order_id=data["razorpay_order_id"])
+        except SchoolExpense.DoesNotExist:
+            return Response({"error": "Expense not found or order mismatch"}, status=404)
+
+        client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+        try:
+            client.utility.verify_payment_signature({
+                "razorpay_order_id": data["razorpay_order_id"],
+                "razorpay_payment_id": data["razorpay_payment_id"],
+                "razorpay_signature": data["razorpay_signature"],
+            })
+        except razorpay.errors.SignatureVerificationError:
+            return Response({"error": "Payment verification failed."}, status=400)
+
+        expense.status = "approved"
+        expense.razorpay_payment_id = data["razorpay_payment_id"]
+        expense.razorpay_signature = data["razorpay_signature"]
+        expense.approved_by = request.user
+        expense.save()
+
+        return Response({
+            "message": "Expense payment confirmed",
+            "expense": SchoolExpenseSerializer(expense).data
         })
 
 
-    # ===============================
-    # def update(self, request, *args, **kwargs):
-    #     partial = kwargs.pop('partial', False)
-    #     instance = self.get_object()
-    #     serializer = self.get_serializer(instance, data=request.data, partial=partial)
-    #     serializer.is_valid(raise_exception=True)
-
-    #     roles = [role.name.lower() for role in request.user.role.all()]
-
-    #     if "status" in serializer.validated_data:
-    #         if "director" not in roles:
-    #             return Response(
-    #                 {"error": "Only Director can update expense status."},
-    #                 status=status.HTTP_403_FORBIDDEN
-    #             )
-    #         else:
-    #             instance.status = serializer.validated_data["status"]
-    #             instance.approved_by = request.user  
-
-    #     serializer.validated_data.pop("status", None)  
-
-    #     self.perform_update(serializer)
-
-    #     return Response({
-    #         "message": "Expense updated successfully",
-    #         "data": self.get_serializer(instance).data
-    #     })
-    # ========================
     def update(self, request, *args, **kwargs):
-        partial = kwargs.pop('partial', False)
+        partial = kwargs.pop("partial", False)
         instance = self.get_object()
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
@@ -5071,13 +5082,16 @@ class SchoolExpenseView(viewsets.ModelViewSet):
                     {"error": "Only Director can update expense status."},
                     status=status.HTTP_403_FORBIDDEN
                 )
-            else:
-                instance.status = serializer.validated_data["status"]
-                instance.approved_by = request.user   
 
-        serializer.validated_data.pop("approved_by", None)
+            instance.status = serializer.validated_data["status"]
+            instance.approved_by = request.user
+            serializer.validated_data.pop("status", None)
 
-        self.perform_update(serializer)
+
+        # Update remaining fields
+        for attr, value in serializer.validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
 
         return Response({
             "message": "Expense updated successfully",
@@ -5085,7 +5099,8 @@ class SchoolExpenseView(viewsets.ModelViewSet):
         })
 
 
-    def destroy(self, request):
+
+    def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         instance.delete()
         return Response(
@@ -5098,25 +5113,44 @@ class SchoolExpenseView(viewsets.ModelViewSet):
 class EmployeeView(viewsets.ModelViewSet):
     queryset = Employee.objects.all()
     serializer_class = EmployeeSerializer
-    # permission_classes = [IsAuthenticated,ExpensePermission]
+    permission_classes = [IsAuthenticated,EmployeePermission]
 
     @action(detail=False, methods=["get"], url_path="get_emp")
     def get_emp(self, request):
-        emp = self.get_queryset()
-        serializer = self.get_serializer(emp, many=True)
+        role = request.query_params.get("role")
+        emp_id = request.query_params.get("id")   
+
+        if emp_id:
+            try:
+                employee = Employee.objects.get(pk=emp_id)
+            except Employee.DoesNotExist:
+                return Response({"error": "Employee not found"}, status=404)
+
+            serializer = EmployeeSerializer(employee)
+            return Response(serializer.data)
+
+        if role:
+            role_lower = role.lower()
+            if role_lower == "teacher":
+                all_teachers = User.objects.filter(role__name__iexact="teacher")
+                employees_users = Employee.objects.values_list('user', flat=True)
+                users_to_return = all_teachers.exclude(id__in=employees_users)
+
+            elif role_lower == "office staff":
+                all_staff = User.objects.filter(role__name__iexact="office staff")
+                employees_users = Employee.objects.values_list('user', flat=True)
+                users_to_return = all_staff.exclude(id__in=employees_users)
+
+            else:
+                users_to_return = User.objects.none()
+                
+            serializer = UserSerializer(users_to_return, many=True)
+            return Response(serializer.data)
+
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset.distinct(), many=True)
         return Response(serializer.data)
 
-    # @action(detail=False, methods=["post"], url_path="create_emp")
-    # def create_emp(self, request):
-    #     user = request.data.get("user")
-    #     if not user:
-    #         return Response({"error": "user is required."}, status=400)
-
-    #     category, created = Employee.objects.get_or_create(user=user)
-    #     serializer = self.get_serializer(category)
-    #     message = "Employee salary created successfully." if created else "Employee salary already exists."
-    #     return Response({"message": message, "data": serializer.data}, status=201 if created else 200)
-    
 
     @action(detail=False, methods=["post"], url_path="create_emp")
     def create_emp(self, request):
@@ -5124,41 +5158,45 @@ class EmployeeView(viewsets.ModelViewSet):
         if not user_id:
             return Response({"error": "user is required."}, status=400)
 
-        employee, created = Employee.objects.get_or_create(
-            user_id=user_id,
-            defaults={
-                "joining_date": request.data.get("joining_date"),
-                "base_salary": request.data.get("base_salary"),
-            }
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "Invalid user id."}, status=400)
+
+        roles = [r.name.lower() for r in user.role.all()]
+        if not any(r in ["teacher", "office staff"] for r in roles):
+            return Response(
+                {"error": "Only Teacher or Office Staff can be assigned as employee."},
+                status=400
+            )
+
+        if Employee.objects.filter(user=user).exists():
+            return Response({"error": "Employee already exists."}, status=400)
+
+        employee = Employee.objects.create(
+            user=user,
+            joining_date=request.data.get("joining_date"),
+            base_salary=request.data.get("base_salary"),
         )
+
         serializer = self.get_serializer(employee)
-        message = "Employee created successfully." if created else "Employee already exists."
-        return Response({"message": message, "data": serializer.data}, status=201 if created else 200)
+        return Response({"message": "Employee created successfully.", "data": serializer.data}, status=201)
 
 
-    @action(detail=False, methods=["put"], url_path="update_emp")
-    # def update_emp(self, request):
-    #     try:
-    #         employee = Employee.objects.get(id=request.data.get("id"))
-    #     except Employee.DoesNotExist:
-    #         return Response({"error": "Employee not found"}, status=404)
-
-    #     serializer = self.get_serializer(employee, data=request.data, partial=True)
-    #     if serializer.is_valid():
-    #         serializer.save()
-    #         return Response({"message": "Employee updated successfully", "data": serializer.data})
-    #     return Response(serializer.errors, status=400)
-
-
+    # @action(detail=False, methods=["put"], url_path="update_emp")
     def update_emp(self, request):
         user_id = request.data.get("user")
-        joining_date = request.data.get("joining_date")
+        # joining_date = request.data.get("joining_date")
 
-        if not user_id or not joining_date:
-            return Response({"error": "user and joining_date are required."}, status=400)
+        # if not user_id or not joining_date:
+        #     return Response({"error": "user and joining_date are required."}, status=400)
+        if not user_id :
+            return Response({"error": "user are required."}, status=400)
 
         try:
-            employee = Employee.objects.get(user_id=user_id, joining_date=joining_date)
+            # employee = Employee.objects.get(user_id=user_id, joining_date=joining_date)
+            employee = Employee.objects.get(user_id=user_id)
+
         except Employee.DoesNotExist:
             return Response({"error": "Employee not found with this user and joining_date"}, status=404)
 
@@ -5169,40 +5207,194 @@ class EmployeeView(viewsets.ModelViewSet):
         return Response(serializer.errors, status=400)
 
 
-    @action(detail=False, methods=["delete"], url_path="delete_emp")
-    def delete_emp(self, request):
-        try:
-            employee = Employee.objects.get(id=request.data.get("id"))
-            employee.delete()
-            return Response({"message": "Employee deleted successfully."})
-        except Employee.DoesNotExist:
-            return Response({"error": "Employee not found"}, status=404)
+    # @action(detail=False, methods=["delete"], url_path="delete_emp")
+    # def delete_emp(self, request):
+    #     try:
+    #         employee = Employee.objects.get(id=request.data.get("id"))
+    #         employee.delete()
+    #         return Response({"message": "Employee deleted successfully."})
+    #     except Employee.DoesNotExist:
+    #         return Response({"error": "Employee not found"}, status=404)
 
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        instance.delete()
+        return Response(
+            {"message": "Employee deleted successfully"},
+            status=status.HTTP_200_OK
+        )
 
 class EmployeeSalaryView(viewsets.ModelViewSet):
     queryset = EmployeeSalary.objects.all()
     serializer_class = EmployeeSalarySerializer
-    # permission_classes = [IsAuthenticated,ExpensePermission]
+    permission_classes = [IsAuthenticated, ExpensePermission]
+    api_section = "employee_salary"
 
     def get_queryset(self):
         user = self.request.user
+        queryset = EmployeeSalary.objects.all()
 
         if hasattr(user, "employee"):
-            return EmployeeSalary.objects.filter(user=user.employee)
-        return EmployeeSalary.objects.all()
+            queryset = queryset.filter(user=user.employee)
 
-    def perform_create(self, serializer):
-        instance = serializer.save()
-        if instance.status == "paid":
-            instance.paid_by = self.request.user
-            instance.save()
+        school_year_id = self.request.query_params.get("school_year")
+        month = self.request.query_params.get("month")
+        employee_id = self.request.query_params.get("user")
+        status = self.request.query_params.get("status")
 
-    def perform_update(self, serializer):
-        instance = serializer.save()
-        if instance.status == "paid":
-            instance.paid_by = self.request.user
-            instance.save()
+        if school_year_id:
+            queryset = queryset.filter(school_year_id=school_year_id)
+        if month:
+            queryset = queryset.filter(month=month)
+        if employee_id:
+            queryset = queryset.filter(user_id=employee_id)
+        if status:
+            queryset = queryset.filter(status=status)
 
+        return queryset
+
+
+    #     salary = EmployeeSalary.objects.create(
+    #         user=serializer.validated_data["user"],
+    #         school_year=serializer.validated_data["school_year"],
+    #         month=serializer.validated_data["month"],
+    #         deductions=serializer.validated_data.get("deductions", 0),
+    #         gross_amount=serializer.validated_data.get("gross_amount", 0),
+    #         net_amount=serializer.validated_data.get("net_amount", 0),
+    #         payment_date=serializer.validated_data["payment_date"],
+    #         payment_method=payment_method,
+    #         remarks=serializer.validated_data.get("remarks"),
+    #     )
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+
+        user = request.user
+        salary = serializer.save()   
+
+        payment_method = salary.payment_method
+
+        if payment_method == "cash":
+            salary.status = "paid"
+            salary.paid_by = user
+            salary.save()
+            return Response(EmployeeSalarySerializer(salary).data, status=status.HTTP_201_CREATED)
+        
+        elif payment_method == "cheque":
+            salary.status = "pending"
+            salary.save()
+            return Response(EmployeeSalarySerializer(salary).data, status=status.HTTP_201_CREATED)
+
+        elif payment_method == "online":
+            return Response(
+                {"message": "Use initiate-salary-payment API for online payments."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        else:
+            return Response({"error": "Invalid payment method"}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(EmployeeSalarySerializer(salary).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["post"], url_path="initiate-salary-payment")
+    def initiate_salary_payment(self, request):
+        serializer = self.get_serializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+
+        salary = serializer.save(
+            status="pending",
+            payment_method="online"
+        )
+        if salary.net_amount <= 0:
+            return Response(
+                {"error": "Net amount must be greater than 0 for online payment."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+        razorpay_order = client.order.create({
+            "amount": int(salary.net_amount * 100),
+            "currency": "INR",
+            "payment_capture": "1",
+            "receipt": f"EMP-SAL-{salary.id}"
+        })
+
+        salary.razorpay_order_id = razorpay_order["id"]
+        salary.save()
+
+        return Response({
+            "salary_id": salary.id,
+            "razorpay_order_id": razorpay_order["id"],
+            "razorpay_key": settings.RAZORPAY_KEY_ID,
+            "net_amount": str(salary.net_amount),
+            "currency": "INR",
+            "status": salary.status
+        }, status=status.HTTP_201_CREATED)
+
+
+    @action(detail=False, methods=["post"], url_path="confirm-salary-payment")
+    def confirm_salary_payment(self, request):
+        data = request.data
+        required_fields = ["razorpay_payment_id", "razorpay_order_id", "razorpay_signature", "salary_id"]
+        missing = [f for f in required_fields if f not in data]
+        if missing:
+            return Response({"error": f"Missing required fields: {', '.join(missing)}"}, status=400)
+
+        try:
+            salary = EmployeeSalary.objects.get(id=data["salary_id"], razorpay_order_id=data["razorpay_order_id"])
+        except EmployeeSalary.DoesNotExist:
+            return Response({"error": "Salary record not found or order mismatch"}, status=404)
+
+        client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+        try:
+            client.utility.verify_payment_signature({
+                "razorpay_order_id": data["razorpay_order_id"],
+                "razorpay_payment_id": data["razorpay_payment_id"],
+                "razorpay_signature": data["razorpay_signature"]
+            })
+        except razorpay.errors.SignatureVerificationError:
+            return Response({"error": "Payment verification failed."}, status=400)
+
+        salary.status = "paid"
+        salary.paid_by = request.user
+        salary.razorpay_payment_id = data["razorpay_payment_id"]
+        salary.razorpay_order_id = data["razorpay_order_id"]   
+        salary.razorpay_signature = data["razorpay_signature"]
+        salary.save()
+
+        return Response({
+            "message": "Salary payment confirmed",
+            "salary": EmployeeSalarySerializer(salary).data
+        })
+
+
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+
+        roles = [role.name.lower() for role in request.user.role.all()]
+
+        if "status" in serializer.validated_data:
+            if "director" not in roles:
+                return Response({"error": "Only Director can update salary status."}, status=status.HTTP_403_FORBIDDEN)
+
+            instance.status = serializer.validated_data["status"]
+            instance.paid_by = request.user
+            serializer.validated_data.pop("status", None)
+
+        # Update remaining fields
+        for attr, value in serializer.validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        return Response({
+            "message": "Salary updated successfully",
+            "data": self.get_serializer(instance).data
+        })
 
 class IncomeCategoryView(viewsets.ModelViewSet):
     queryset = IncomeCategory.objects.all()

@@ -36,7 +36,8 @@ SECRET_KEY = "django-insecure-(kcrb)#75z(_7h4s7qu3^iw-!6#o7t0_plu87x$=zok%rmr=w^
 
 DEBUG = True
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = ['smsproject1.pythonanywhere.com','*']
+
 
 CORS_ALLOW_ALL_ORIGINS = True
 
