@@ -261,7 +261,7 @@ class GuardianSerializer(serializers.ModelSerializer):
             "designation": instance.designation,
             "user_profile": user.user_profile.url if user.user_profile else None,
         })
-        return rep
+        return rep              # added
 
 
 
