@@ -1744,8 +1744,8 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
             "last_name": instance.user.last_name,
             "email": instance.user.email,
             "user_profile": instance.user.user_profile.url if instance.user.user_profile else None,
-            "adhaar_no": instance.adhaar_no,   # ✅ NEW
-            "pan_no": instance.pan_no,         # ✅ NEW
+            "adhaar_no": instance.adhaar_no,   #  added as of 09Sep25
+            "pan_no": instance.pan_no,         #  added as of 09Sep25
         })
 
         # Remove relational fields from the output

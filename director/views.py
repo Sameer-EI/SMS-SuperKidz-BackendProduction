@@ -7,6 +7,8 @@ from attendance.models import StudentAttendance
 from director.permission import *
 from director.utils import calculate_subject_summary
 from rest_framework.exceptions import ValidationError
+from director.permission import IsDirectororOfficeStaff, IsDirector, RoleBasedExamPermission, RoleBasedPermission
+
 from .serializers import *
 from rest_framework import filters
 from .models import *
@@ -3574,7 +3576,7 @@ class ExamTypeView(viewsets.ModelViewSet):
 class ExamPaperView(viewsets.ModelViewSet):
     queryset = ExamPaper.objects.all()
     serializer_class = ExamPaperSerializer
-    # permission_classes = [IsAuthenticated, RoleBasedExamPermission]
+    permission_classes = [IsAuthenticated, RoleBasedExamPermission]
     api_section = 'exam_paper'
 
     @action(detail=False, methods=["get"], url_path="get_exampaper")
@@ -3680,7 +3682,7 @@ from django.db.models import Q
 class ExamScheduleView(viewsets.ModelViewSet):
     queryset = ExamSchedule.objects.all()
     serializer_class = ExamScheduleSerializer
-    # permission_classes = [IsAuthenticated, RoleBasedExamPermission]
+    permission_classes = [IsAuthenticated, RoleBasedExamPermission]
     api_section = 'exam_schedule'
 
 
@@ -3857,7 +3859,7 @@ class ExamScheduleView(viewsets.ModelViewSet):
 class StudentMarksView(viewsets.ModelViewSet):
     queryset = StudentMarks.objects.all()
     serializer_class = StudentMarksSerializer
-    # permission_classes = [IsAuthenticated,RoleBasedExamPermission] 
+    permission_classes = [IsAuthenticated,RoleBasedExamPermission] 
     api_section = "student_marks"  
 
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="get_marks")
@@ -4417,6 +4419,7 @@ from director.permission import RoleBasedPermission
 class ReportCardViewSet(viewsets.ModelViewSet):
     queryset = ReportCard.objects.all()
     serializer_class = ReportCardSerializer
+    permission_classes = [IsAuthenticated, RoleBasedPermission]
     permission_classes = [IsAuthenticated, RoleBasedPermission]
 
     def get_user_roles(self):
@@ -5465,12 +5468,12 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
 class IncomeCategoryView(viewsets.ModelViewSet):
     queryset = IncomeCategory.objects.all()
     serializer_class = IncomeCategorySerializer
-    # permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
 
 class SchoolIncomeViewSet(viewsets.ModelViewSet):
     queryset = SchoolIncome.objects.all()
     serializer_class = SchoolIncomeSerializer
-    # permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
     
     def get_queryset(self):
         qs = super().get_queryset()
