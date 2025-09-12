@@ -1,3 +1,7 @@
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> bcd5e13b876131e0ae700183a45e4055ac097fd1
 # Core
 django>=5.0
 djangorestframework
@@ -53,7 +57,15 @@ holidays>=0.28,<0.29
 
 
 # pip freeze > requirements.txt
+<<<<<<< HEAD
+# pip install -r requirements.txt
+<<<<<<< HEAD
+>>>>>>> 9a5bf02c74b562d44209ec8552e9f1129a9165b3
+=======
+=======
 # pip install -r requirements.txt   # install project dependencies
 # type requirements.txt             # lisy required dependencies
 # .\.venv\Scripts\activate          # activate environment
+>>>>>>> d49eb48200a1a1c1ca99b9334545a8c68fb2c256
 
+>>>>>>> bcd5e13b876131e0ae700183a45e4055ac097fd1

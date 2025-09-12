@@ -7,6 +7,8 @@ from attendance.models import StudentAttendance
 from director.permission import *
 from director.utils import calculate_subject_summary
 from rest_framework.exceptions import ValidationError
+from director.permission import IsDirectororOfficeStaff, IsDirector, RoleBasedExamPermission, RoleBasedPermission
+
 from .serializers import *
 from rest_framework import filters
 from .models import *
@@ -3574,7 +3576,7 @@ class ExamTypeView(viewsets.ModelViewSet):
 class ExamPaperView(viewsets.ModelViewSet):
     queryset = ExamPaper.objects.all()
     serializer_class = ExamPaperSerializer
-    # permission_classes = [IsAuthenticated, RoleBasedExamPermission]
+    permission_classes = [IsAuthenticated, RoleBasedExamPermission]
     api_section = 'exam_paper'
 
     @action(detail=False, methods=["get"], url_path="get_exampaper")
@@ -3676,10 +3678,11 @@ class ExamPaperView(viewsets.ModelViewSet):
         return Response({"message": "Successfully deleted paper(s)."})
 
 from teacher.models import *
+from django.db.models import Q
 class ExamScheduleView(viewsets.ModelViewSet):
     queryset = ExamSchedule.objects.all()
     serializer_class = ExamScheduleSerializer
-    # permission_classes = [IsAuthenticated, RoleBasedExamPermission]
+    permission_classes = [IsAuthenticated, RoleBasedExamPermission]
     api_section = 'exam_schedule'
 
 
@@ -3711,35 +3714,102 @@ class ExamScheduleView(viewsets.ModelViewSet):
 
         return list(grouped_data.values())
     
+    
+
+
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="get_timetable")
     def get_timetable(self, request):
         user = request.user
         role_names = [role.name.lower() for role in user.role.all()]
 
         if "director" in role_names:
-            queryset = ExamSchedule.objects.select_related("class_name", "term__year", "exam_type", "subject").all()
+            queryset = ExamSchedule.objects.select_related(
+                "class_name", "term__year", "exam_type", "subject"
+            ).all()
 
         elif "teacher" in role_names or "office staff" in role_names:
             teacher = Teacher.objects.filter(user=user).first()
             if not teacher:
                 return Response({"error": "Teacher not found"}, status=400)
-            assigned_class_ids = TeacherYearLevel.objects.filter(teacher=teacher).values_list('year_level_id', flat=True)
-            queryset = ExamSchedule.objects.select_related("class_name", "term__year", "exam_type", "subject").filter(class_name_id__in=assigned_class_ids)
+            assigned_class_ids = TeacherYearLevel.objects.filter(
+                teacher=teacher
+            ).values_list("year_level_id", flat=True)
+            queryset = ExamSchedule.objects.select_related(
+                "class_name", "term__year", "exam_type", "subject"
+            ).filter(class_name_id__in=assigned_class_ids)
 
         elif "student" in role_names:
             student = Student.objects.filter(user=user).first()
             student_class = StudentYearLevel.objects.filter(student=student).last()
             if not student_class:
                 return Response({"error": "Student class not found"}, status=400)
-            queryset = ExamSchedule.objects.select_related("class_name", "term__year", "exam_type", "subject").filter(class_name=student_class.level)
+            queryset = ExamSchedule.objects.select_related(
+                "class_name", "term__year", "exam_type", "subject"
+            ).filter(class_name=student_class.level)
 
         else:
             return Response({"error": "Access Denied"}, status=403)
+
+        # 🔹 Apply filters from query params
+        class_name = request.query_params.get("class_name")
+        school_year = request.query_params.get("school_year")
+        subject = request.query_params.get("subject")
+        exam_type = request.query_params.get("exam_type")
+
+        if class_name:
+            queryset = queryset.filter(class_name__level_name__iexact=class_name)
+        if school_year:
+            queryset = queryset.filter(term__year__year_name__iexact=school_year)
+        # if subject:
+        #     queryset = queryset.filter(subject__name__iexact=subject)
+        if subject:
+            queryset = queryset.filter(subject__subject_name__iexact=subject)
+
+        if exam_type:
+            queryset = queryset.filter(exam_type__name__iexact=exam_type)
 
         if not queryset.exists():
             return Response([])
 
         return Response(self.format_exam_schedule(queryset))
+
+
+
+
+
+
+
+
+    
+    # @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="get_timetable")
+    # def get_timetable(self, request):
+    #     user = request.user
+    #     role_names = [role.name.lower() for role in user.role.all()]
+
+    #     if "director" in role_names:
+    #         queryset = ExamSchedule.objects.select_related("class_name", "term__year", "exam_type", "subject").all()
+
+    #     elif "teacher" in role_names or "office staff" in role_names:
+    #         teacher = Teacher.objects.filter(user=user).first()
+    #         if not teacher:
+    #             return Response({"error": "Teacher not found"}, status=400)
+    #         assigned_class_ids = TeacherYearLevel.objects.filter(teacher=teacher).values_list('year_level_id', flat=True)
+    #         queryset = ExamSchedule.objects.select_related("class_name", "term__year", "exam_type", "subject").filter(class_name_id__in=assigned_class_ids)
+
+    #     elif "student" in role_names:
+    #         student = Student.objects.filter(user=user).first()
+    #         student_class = StudentYearLevel.objects.filter(student=student).last()
+    #         if not student_class:
+    #             return Response({"error": "Student class not found"}, status=400)
+    #         queryset = ExamSchedule.objects.select_related("class_name", "term__year", "exam_type", "subject").filter(class_name=student_class.level)
+
+    #     else:
+    #         return Response({"error": "Access Denied"}, status=403)
+
+    #     if not queryset.exists():
+    #         return Response([])
+
+    #     return Response(self.format_exam_schedule(queryset))
 
 
 
@@ -3789,7 +3859,7 @@ class ExamScheduleView(viewsets.ModelViewSet):
 class StudentMarksView(viewsets.ModelViewSet):
     queryset = StudentMarks.objects.all()
     serializer_class = StudentMarksSerializer
-    # permission_classes = [IsAuthenticated,RoleBasedExamPermission] 
+    permission_classes = [IsAuthenticated,RoleBasedExamPermission] 
     api_section = "student_marks"  
 
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="get_marks")
@@ -4349,6 +4419,7 @@ from director.permission import RoleBasedPermission
 class ReportCardViewSet(viewsets.ModelViewSet):
     queryset = ReportCard.objects.all()
     serializer_class = ReportCardSerializer
+    permission_classes = [IsAuthenticated, RoleBasedPermission]
     permission_classes = [IsAuthenticated, RoleBasedPermission]
 
     def get_user_roles(self):
@@ -5397,12 +5468,12 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
 class IncomeCategoryView(viewsets.ModelViewSet):
     queryset = IncomeCategory.objects.all()
     serializer_class = IncomeCategorySerializer
-    # permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
 
 class SchoolIncomeViewSet(viewsets.ModelViewSet):
     queryset = SchoolIncome.objects.all()
     serializer_class = SchoolIncomeSerializer
-    # permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
     
     def get_queryset(self):
         qs = super().get_queryset()

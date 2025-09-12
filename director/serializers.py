@@ -323,7 +323,7 @@ class DirectorProfileSerializer(serializers.ModelSerializer):
 
 
 
-# ***************chnag varilable name *****************************
+# # ***************chnag varilable name *****************************
 class AdmissionSerializer(serializers.ModelSerializer):
     # enrollment_no = serializers.ReadOnlyField()
     # Use SerializerMethodField to output nested student and guardian data
@@ -951,6 +951,7 @@ class AdmissionSerializer(serializers.ModelSerializer):
 
 #         instance.save()
 #         return instance
+
 
 
 
@@ -2077,8 +2078,8 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
             "last_name": instance.user.last_name,
             "email": instance.user.email,
             "user_profile": instance.user.user_profile.url if instance.user.user_profile else None,
-            "adhaar_no": instance.adhaar_no,   # ✅ NEW
-            "pan_no": instance.pan_no,         # ✅ NEW
+            "adhaar_no": instance.adhaar_no,   #  added as of 09Sep25
+            "pan_no": instance.pan_no,         #  added as of 09Sep25
         })
 
         # Remove relational fields from the output
@@ -2459,6 +2460,83 @@ class ExamScheduleSerializer(serializers.Serializer):
             "exam_type": exam_type.name,
             "papers": result
         }
+
+
+
+# class ExamScheduleSerializer(serializers.ModelSerializer):
+#     # Read-only fields for display
+#     class_name = serializers.CharField(source="class_name.level_name", read_only=True)
+#     school_year = serializers.CharField(source="term.year.year_name", read_only=True)
+#     exam_type = serializers.CharField(source="exam_type.name", read_only=True)
+#     subject = serializers.CharField(source="subject.subject_name", read_only=True)
+
+#     # Write-only IDs for create/update
+#     class_name_id = serializers.IntegerField(write_only=True)
+#     school_year_id = serializers.IntegerField(write_only=True)
+#     exam_type_id = serializers.IntegerField(write_only=True)
+#     subject_id = serializers.IntegerField(write_only=True)
+
+#     class Meta:
+#         model = ExamSchedule
+#         fields = [
+#             "id",
+#             # read-only
+#             "class_name",
+#             "school_year",
+#             "exam_type",
+#             "subject",
+#             # write-only IDs
+#             "class_name_id",
+#             "school_year_id",
+#             "exam_type_id",
+#             "subject_id",
+#             # normal fields (jo model me exist karte hain)
+#             "exam_date",
+#             "start_time",
+#             "end_time",
+#         ]
+
+#     def create(self, validated_data):
+#         class_name = YearLevel.objects.get(id=validated_data.pop("class_name_id"))
+#         term = Term.objects.get(id=validated_data.pop("school_year_id"))
+#         exam_type = ExamType.objects.get(id=validated_data.pop("exam_type_id"))
+#         subject = Subject.objects.get(id=validated_data.pop("subject_id"))
+
+#         return ExamSchedule.objects.create(
+#             class_name=class_name,
+#             term=term,
+#             exam_type=exam_type,
+#             subject=subject,
+#             **validated_data
+#         )
+
+#     def update(self, instance, validated_data):
+#         if "class_name_id" in validated_data:
+#             instance.class_name = YearLevel.objects.get(
+#                 id=validated_data.pop("class_name_id")
+#             )
+#         if "school_year_id" in validated_data:
+#             instance.term = Term.objects.get(id=validated_data.pop("school_year_id"))
+#         if "exam_type_id" in validated_data:
+#             instance.exam_type = ExamType.objects.get(
+#                 id=validated_data.pop("exam_type_id")
+#             )
+#         if "subject_id" in validated_data:
+#             instance.subject = Subject.objects.get(
+#                 id=validated_data.pop("subject_id")
+#             )
+
+#         for attr, value in validated_data.items():
+#             setattr(instance, attr, value)
+
+#         instance.save()
+#         return instance
+
+
+
+
+
+
 
 class ExamTypeSerializer(serializers.ModelSerializer):
     class Meta:
