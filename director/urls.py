@@ -48,7 +48,7 @@ router.register(r'Expense-Category', ExpenseCategoryView)
 router.register(r'School-Expense', SchoolExpenseView)
 router.register(r'Employee',EmployeeView,basename=Employee)
 router.register(r'Employee-salary',EmployeeSalaryView)
-
+router.register(r'school-turnover',SchoolTurnOverViewSet,basename='school-turnover')
 
 urlpatterns = [
     path("year-levels/", YearLevelView),
@@ -79,7 +79,7 @@ urlpatterns = [
     path('periods/', assigned_periods),
     path("fetch_upload_doc/",document_fetch_dashboard),
     path('', include(router.urls)),
-   
+
     
     # As of 25June25 at 12:35
     path('student-category-dashboard/', student_category, name='student-category'),

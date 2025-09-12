@@ -506,20 +506,21 @@ class BulkHolidayAttendanceViewSet(ViewSet):
                 continue
 
         # Get all user phone numbers (students, teachers, staff, guardians)
-        phone_numbers = list(
-            User.objects.filter(is_active=True)
-            .exclude(phone_number__isnull=True)
-            .exclude(phone_number__exact="")
-            .values_list('phone_number', flat=True)
-        )
+        # phone_numbers = list(                 # commented as of 07Sep25 at 12:34 PM
+        #     User.objects.filter(is_active=True)
+        #     .exclude(phone_number__isnull=True)
+        #     .exclude(phone_number__exact="")
+        #     .values_list('phone_number', flat=True)
+        # )
 
         # Send WhatsApp Notification to all users
         message_text = f"📢 Notice: {title} holiday has been declared from {start_date} to {end_date}."
-        if phone_numbers:
-            send_whatsapp_message(message_text, phone_numbers)
+        # if phone_numbers:                     # commented as of 07Sep25 at 12:34 PM
+            # send_whatsapp_message(message_text, phone_numbers)    {len(phone_numbers)}
+        send_whatsapp_message(message_text)
 
         return Response({
-            "message": f"{count} holiday attendance records created. Notifications sent to {len(phone_numbers)} users."
+            "message": f"{count} holiday attendance records created. Notifications sent to users."
         }, status=201)
 
 
@@ -578,13 +579,7 @@ class SchoolEventViewSet(ModelViewSet):
         # Save the new event
         event = serializer.save()
 
-        # Get all active users with phone numbers
-        phone_numbers = list(
-            User.objects.filter(is_active=True)
-            .exclude(phone_number__isnull=True)
-            .exclude(phone_number__exact="")
-            .values_list('phone_number', flat=True)
-        )
+
 
         # Prepare message
         message_text = (
@@ -594,9 +589,8 @@ class SchoolEventViewSet(ModelViewSet):
             f"Details: {event.description if hasattr(event, 'description') else 'No additional details'}"
         )
 
-        # Send WhatsApp to all users
-        if phone_numbers:
-            send_whatsapp_message(message_text, phone_numbers)
+
+        send_whatsapp_message(message_text)
 
     
 class MonthlyCalendarView(APIView):
@@ -644,7 +638,7 @@ class SendWhatsAppView(APIView):
 
         verified_numbers = [
             '+918102637122',
-            #'+918109145639'
+            '+918109145639'
             #'+919111499689'
         ]
 

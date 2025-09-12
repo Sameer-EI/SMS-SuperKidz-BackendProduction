@@ -311,3 +311,220 @@ class ErrorLogViewSet(viewsets.ReadOnlyModelViewSet):
 class UserStatusLogView(viewsets.ModelViewSet):
     queryset = UserStatusLog.objects.all()
     serializer_class = UserStatusLogSerializer
+    
+    
+# ------- Added as of 03Sep25 at 11:59 PM ------- #
+# *********** LoggedInUsersView ******** #
+
+# from django.contrib.sessions.models import Session
+# from django.utils import timezone
+# from rest_framework import viewsets, status
+# from rest_framework.decorators import action
+# from rest_framework.response import Response
+# from django.contrib.auth import get_user_model
+
+# from authentication.permissions import LoggedInUsersPermissions
+
+# User = get_user_model()
+
+# class LoggedInUsersView(viewsets.ViewSet):
+#     permission_classes = [LoggedInUsersPermissions]
+    
+#     @action(detail=False, methods=['get'], url_path='')
+#     def active_users(self, request):
+#         """
+#         Custom action to get all logged-in users
+#         """
+#         # Get all active sessions
+#         sessions = Session.objects.filter(expire_date__gte=timezone.now())
+        
+#         logged_in_users = []
+#         user_ids = set()
+        
+#         for session in sessions:
+#             session_data = session.get_decoded()
+            
+#             # Check if user is authenticated in this session
+#             if '_auth_user_id' in session_data:
+#                 user_id = session_data['_auth_user_id']
+                
+#                 # Avoid duplicates
+#                 if user_id not in user_ids:
+#                     user_ids.add(user_id)
+                    
+#                     try:
+#                         user = User.objects.get(id=user_id, is_active=True)
+                        
+#                         # Get user roles
+#                         roles = [role.name for role in user.role.all()]
+                        
+#                         # Build full name
+#                         full_name = f"{user.first_name} {user.middle_name or ''} {user.last_name}".strip()
+                        
+#                         # Build profile URL
+#                         profile_url = None
+#                         if user.user_profile:
+#                             profile_url = request.build_absolute_uri(user.user_profile.url)
+                        
+#                         logged_in_users.append({
+#                             'id': user.id,
+#                             'email': user.email,
+#                             'first_name': user.first_name,
+#                             'middle_name': user.middle_name,
+#                             'last_name': user.last_name,
+#                             'full_name': full_name,
+#                             'roles': roles,
+#                             'last_login': user.last_login,
+#                             'user_profile': profile_url,
+#                         })
+#                     except User.DoesNotExist:
+#                         pass
+        
+#         return Response({
+#             'count': len(logged_in_users),
+#             'users': logged_in_users
+#         }, status=status.HTTP_200_OK)
+
+
+
+
+# with permissions working fine
+from django.contrib.sessions.models import Session
+from django.utils import timezone
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from django.contrib.auth import get_user_model
+
+from authentication.permissions import LoggedInUsersPermissions
+
+User = get_user_model()
+
+class LoggedInUsersAPIView(APIView):
+    permission_classes = [LoggedInUsersPermissions]
+    
+    def get(self, request):
+        """
+        Get all logged-in users
+        """
+        # Get all active sessions
+        sessions = Session.objects.filter(expire_date__gte=timezone.now())
+        
+        logged_in_users = []
+        user_ids = set()
+        
+        for session in sessions:
+            session_data = session.get_decoded()
+            
+            # Check if user is authenticated in this session
+            if '_auth_user_id' in session_data:
+                user_id = session_data['_auth_user_id']
+                
+                # Avoid duplicates
+                if user_id not in user_ids:
+                    user_ids.add(user_id)
+                    
+                    try:
+                        user = User.objects.get(id=user_id, is_active=True)
+                        
+                        # Get user roles
+                        roles = [role.name for role in user.role.all()]
+                        
+                        # Build full name
+                        full_name = f"{user.first_name} {user.middle_name or ''} {user.last_name}".strip()
+                        
+                        # Build profile URL
+                        profile_url = None
+                        if user.user_profile:
+                            profile_url = request.build_absolute_uri(user.user_profile.url)
+                        
+                        logged_in_users.append({
+                            'id': user.id,
+                            'email': user.email,
+                            'first_name': user.first_name,
+                            'middle_name': user.middle_name,
+                            'last_name': user.last_name,
+                            'full_name': full_name,
+                            'roles': roles,
+                            'last_login': user.last_login,
+                            'user_profile': profile_url,
+                        })
+                    except User.DoesNotExist:
+                        pass
+        
+        return Response({
+            'count': len(logged_in_users),
+            'users': logged_in_users
+        }, status=status.HTTP_200_OK)
+        
+        
+        
+# without permissions
+# from django.contrib.sessions.models import Session
+# from django.utils import timezone
+# from rest_framework.views import APIView
+# from rest_framework.response import Response
+# from rest_framework import status
+# from django.contrib.auth import get_user_model
+
+# User = get_user_model()
+
+# class LoggedInUsersAPIView(APIView):
+#     """
+#     API to get all currently logged-in users
+#     No permission required - accessible to anyone
+#     """
+    
+#     def get(self, request):
+#         """
+#         Get all logged-in users
+#         """
+#         # Get all active sessions
+#         sessions = Session.objects.filter(expire_date__gte=timezone.now())
+        
+#         logged_in_users = []
+#         user_ids = set()
+        
+#         for session in sessions:
+#             session_data = session.get_decoded()
+            
+#             # Check if user is authenticated in this session
+#             if '_auth_user_id' in session_data:
+#                 user_id = session_data['_auth_user_id']
+                
+#                 # Avoid duplicates
+#                 if user_id not in user_ids:
+#                     user_ids.add(user_id)
+                    
+#                     try:
+#                         user = User.objects.get(id=user_id, is_active=True)
+                        
+#                         # Get user roles
+#                         roles = [role.name for role in user.role.all()]
+                        
+#                         # Build full name
+#                         full_name = f"{user.first_name} {user.middle_name or ''} {user.last_name}".strip()
+                        
+#                         # Build profile URL
+#                         profile_url = None
+#                         if user.user_profile:
+#                             profile_url = request.build_absolute_uri(user.user_profile.url)
+                        
+#                         logged_in_users.append({
+#                             'id': user.id,
+#                             'email': user.email,
+#                             'first_name': user.first_name,
+#                             'middle_name': user.middle_name,
+#                             'last_name': user.last_name,
+#                             'full_name': full_name,
+#                             'roles': roles,
+#                             'last_login': user.last_login,
+#                             'user_profile': profile_url,
+#                         })
+#                     except User.DoesNotExist:
+#                         pass
+        
+#         return Response({
+#             'count': len(logged_in_users),
+#             'users': logged_in_users
+#         }, status=status.HTTP_200_OK)
