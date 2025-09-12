@@ -92,6 +92,125 @@ def ChangePasswordView(request):
 # from rest_framework.permissions import IsAdminUser 
 
 
+# @api_view(["POST"])
+# def LoginView(request):
+#     if request.method == "POST":
+#         email = request.data.get("email")
+#         password = request.data.get("password")
+
+#         serializer = LoginSerializers(data=request.data, context={'request': request})
+
+#         if serializer.is_valid():
+#             # Check if user exists and is inactive
+#             try:
+#                 user = User.objects.all_including_inactive().get(email=email)
+#                 if not user.is_active:
+#                     return Response(
+#                         {"Message": "Your account is inactive"},
+#                         status=status.HTTP_400_BAD_REQUEST
+#                     )
+#             except User.DoesNotExist:
+#                 return Response(
+#                     {"Message": "User no longer exists"},
+#                     status=status.HTTP_400_BAD_REQUEST
+#                 )
+            
+#             # authenticating only the active users
+#             user = authenticate(email=email, password=password)
+#             if user is None:
+#                 return Response(
+#                     {"Message": "Invalid Credentials"},
+#                     status=status.HTTP_400_BAD_REQUEST,
+#                 )
+            
+#             #******** This wont work cuz authenticate treat the user.is_active =False as None *********
+#             # if not user.is_active:
+#             #     return Response({"Message": "Your account is inactive"}, status=status.HTTP_400_BAD_REQUEST)
+                
+#             refresh = RefreshToken.for_user(user)
+#             access = str(refresh.access_token)
+#             refresh_token = str(refresh)
+
+#             user_roles = user.role.all()
+#             role_names = [role.name for role in user_roles]
+
+#             # Build full name
+#             full_name = f"{user.first_name} {user.middle_name or ''} {user.last_name}".strip()
+
+#             # Build user_profile URL
+#             profile_url = None
+#             if user.user_profile:
+#                 request = request  # from outer scope
+#                 profile_url = request.build_absolute_uri(user.user_profile.url)
+
+
+#             # Assuming only one role per user
+#             role_name = role_names[0] if role_names else None
+
+#             role_id = None
+#             role_key = None
+
+#             if role_name == "teacher":
+#                 try:
+#                     teacher = Teacher.objects.get(user=user)
+#                     role_id = teacher.id
+#                     role_key = "teacher_id"
+#                 except Teacher.DoesNotExist:
+#                     pass
+
+#             elif role_name == "student":
+#                 try:
+#                     student = Student.objects.get(user=user)
+#                     role_id = student.id
+#                     role_key = "student_id"
+#                 except Student.DoesNotExist:
+#                     pass
+
+#             elif role_name == "guardian":
+#                 try:
+#                     guardian = Guardian.objects.get(user=user)
+#                     role_id = guardian.id
+#                     role_key = "guardian_id"
+#                 except Guardian.DoesNotExist:
+#                     pass
+
+#             elif role_name == "director":
+#                 try:
+#                     director = Director.objects.get(user=user)
+#                     role_id = director.id
+#                     role_key = "director_id"
+#                 except Director.DoesNotExist:
+#                     pass
+#             elif role_name=='office staff':
+#                 try:
+#                   staf=OfficeStaff.objects.get(user=user)
+#                   role_id=staf.id
+#                   role_key="staff_id"
+#                 except OfficeStaff.DoesNotExist:
+#                     pass
+#             # elif role_name=='Deactivated User':
+#             #     return Response({"message": "Your account has been deactivated"})
+
+
+#             response_data = {
+#                     "Message": "User logged in successfully",
+#                     "Access Token": access,
+#                     "Refresh Token": refresh_token,
+#                     "User ID": user.id,
+#                     "Roles": role_names,
+#                     "name": full_name,
+#                     "user_profile": profile_url or None,
+#                 }
+
+#             if role_key:
+#                 response_data[role_key] = role_id
+
+#             return Response(response_data, status=status.HTTP_200_OK)
+
+#         else:
+#             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
 @api_view(["POST"])
 def LoginView(request):
     if request.method == "POST":
@@ -194,8 +313,8 @@ def LoginView(request):
 
             response_data = {
                     "Message": "User logged in successfully",
-                    "Access Token": access,
-                    "Refresh Token": refresh_token,
+                    "access": access,
+                    "refresh": refresh_token,
                     "User ID": user.id,
                     "Roles": role_names,
                     "name": full_name,
@@ -209,6 +328,8 @@ def LoginView(request):
 
         else:
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
 
 
 
