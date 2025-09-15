@@ -36,7 +36,8 @@ SECRET_KEY = "django-insecure-(kcrb)#75z(_7h4s7qu3^iw-!6#o7t0_plu87x$=zok%rmr=w^
 
 DEBUG = True
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = ['smsproject1.pythonanywhere.com','*']
+
 
 CORS_ALLOW_ALL_ORIGINS = True
 
@@ -57,7 +58,7 @@ INSTALLED_APPS = [
     'attendance',
     'corsheaders',
     'rest_framework_simplejwt',
-    'rest_framework_simplejwt.token_blacklist',
+    'rest_framework_simplejwt.token_blacklist',         # comment this as of 10Sep25 at 03:30 PM to check refresh
     'django_filters',
 ]
 
@@ -193,12 +194,17 @@ from datetime import timedelta
 
 
 SIMPLE_JWT = {
-    # "ACCESS_TOKEN_LIFETIME": timedelta(days=1),
-    # "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
+    "ACCESS_TOKEN_LIFETIME": timedelta(days=1),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    # "ACCESS_TOKEN_LIFETIME": timedelta(minutes=1),
+    # "REFRESH_TOKEN_LIFETIME": timedelta(minutes=60),
+    
+    # # Place them here
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
+    
+    #  "ROTATE_REFRESH_TOKENS": False,          #/ added this as of 10Sep25 at 03:30 PM to check refresh
+    # "BLACKLIST_AFTER_ROTATION": False,        #/ added this as of 10Sep25 at 03:30 PM to check refresh
     "UPDATE_LAST_LOGIN": True,
 
     "ALGORITHM": "HS256",
