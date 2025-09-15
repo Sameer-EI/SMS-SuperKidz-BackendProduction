@@ -6,13 +6,12 @@ from django.db import models
 from authentication.models import User
 
 # from authentication.models import User
-from student.models import Student, Guardian,StudentYearLevel
+from student.models import *
 from director.utils import * 
-from director.utils import * 
+from .utils import * 
 
-from teacher.models import Teacher 
+from teacher.models import * 
 from django.utils.timezone import now
-from student.models import Student, Guardian, StudentYearLevel
 
 
 
@@ -474,9 +473,6 @@ class OfficeStaffManager(models.Manager):
         return super().get_queryset()
 
 class OfficeStaff(models.Model):
-    user = models.OneToOneField("authentication.User", on_delete=models.SET_NULL, null=True, related_name="office_staff")
-    phone_no = models.CharField(max_length=20)
-    gender = models.CharField(max_length=20)
     user = models.OneToOneField("authentication.User", on_delete=models.SET_NULL, null=True)
     phone_no = models.CharField(max_length=20,null=True, blank=True)   # first mistake 
     gender = models.CharField(max_length=20,null=True, blank=True)
@@ -756,6 +752,8 @@ class EmployeeSalary(models.Model):
 
     def __str__(self):
         return f"{self.user.user.first_name} {self.month} - {self.net_amount}"
+    class Meta:
+        unique_together = ['user', 'month', 'school_year']
 
 # --------------------------------------------income---------------------------------------------
 

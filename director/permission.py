@@ -120,8 +120,8 @@ class ExpensePermission(BasePermission):
         api_section = getattr(view, "api_section", None)
 
         # Teacher → sirf read-only access
-        if "teacher" in roles and api_section == "employee_salary":
-            return view.action in ["list", "retrieve"]
+        # if "teacher" in roles and api_section == "employee_salary":
+        #     return view.action in ["list", "retrieve"]
 
         # Director & Office Staff → full CRUD
         if any(r in roles for r in ["director", "office staff"]):

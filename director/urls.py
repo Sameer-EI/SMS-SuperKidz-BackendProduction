@@ -51,6 +51,7 @@ router.register(r'Employee-salary',EmployeeSalaryView)
 router.register(r'school-turnover',SchoolTurnOverViewSet,basename='school-turnover')
 
 urlpatterns = [
+    path('download-file/', DownloadFileView.as_view()), 
     path("year-levels/", YearLevelView),
     path("year-level/<int:id>/", YearLevelView),
     

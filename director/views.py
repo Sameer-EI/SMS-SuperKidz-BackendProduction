@@ -3716,10 +3716,10 @@ class ExamScheduleView(viewsets.ModelViewSet):
         user = request.user
         role_names = [role.name.lower() for role in user.role.all()]
 
-        if "director" in role_names:
+        if "director" in role_names or "office staff" in role_names:
             queryset = ExamSchedule.objects.select_related("class_name", "term__year", "exam_type", "subject").all()
 
-        elif "teacher" in role_names or "office staff" in role_names:
+        elif "teacher" in role_names:
             teacher = Teacher.objects.filter(user=user).first()
             if not teacher:
                 return Response({"error": "Teacher not found"}, status=400)
@@ -5270,8 +5270,24 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         user = request.user
-        salary = serializer.save()   
+        # salary = serializer.save()   
+        today = date.today()
+        try:
+            current_year = SchoolYear.objects.get(start_date__lte=today, end_date__gte=today)
+        except SchoolYear.DoesNotExist:
+            raise serializers.ValidationError({"school_year": "No active school year found."})
 
+        user = serializer.validated_data["user"]
+        month = serializer.validated_data["month"]
+
+        # DB-level duplicate check
+        if EmployeeSalary.objects.filter(user=user, month=month, school_year=current_year).exists():
+            return Response(
+                {"error": "Salary record for this employee, month and school year already exists."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        salary = serializer.save(school_year=current_year)
         payment_method = salary.payment_method
 
         if payment_method == "cash":

@@ -2428,6 +2428,7 @@ class SchoolExpenseSerializer(serializers.ModelSerializer):
 
             total_salary = qs.aggregate(total=Sum("net_amount"))["total"] or 0
             attrs["amount"] = total_salary
+            print("total_salary : ",total_salary)
 
         if "amount" in attrs and attrs["amount"] <= 0:
             raise serializers.ValidationError({"amount": "Amount must be a positive number."})
@@ -2436,13 +2437,13 @@ class SchoolExpenseSerializer(serializers.ModelSerializer):
         # if attrs.get('expense_date') and attrs['expense_date'] > date.today():
         #     raise serializers.ValidationError({"expense_date": "Expense date cannot be in the future."})
 
-        # school_year = attrs.get("school_year") or (self.instance.school_year if self.instance else None)
-        # if school_year:
-        #     today = date.today()
-        #     if not (school_year.start_date <= today <= school_year.end_date):
-        #         raise serializers.ValidationError(
-        #             {"school_year": "You can only create expenses for the current school year."}
-        #         )
+        school_year = attrs.get("school_year") or (self.instance.school_year if self.instance else None)
+        if school_year:
+            today = date.today()
+            if not (school_year.start_date <= today <= school_year.end_date):
+                raise serializers.ValidationError(
+                    {"school_year": "You can only create expenses for the current school year."}
+                )
 
         # expense_date = attrs.get('expense_date') or (self.instance.expense_date if self.instance else None)
         # school_year = attrs.get("school_year") or (self.instance.school_year if self.instance else None)
@@ -2544,6 +2545,14 @@ class EmployeeSalarySerializer(serializers.ModelSerializer):
         month = data.get("month") or getattr(self.instance, "month", None)
         school_year = data.get("school_year") or getattr(self.instance, "school_year", None)
 
+        qs = EmployeeSalary.objects.filter(user=user, month=month, school_year=school_year)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+
+        if qs.exists():
+            raise serializers.ValidationError("Salary record for this employee for this month already exists.")
+
+
         if school_year:
             today = date.today()
             if not (school_year.start_date <= today <= school_year.end_date):
@@ -2603,29 +2612,25 @@ class EmployeeSalarySerializer(serializers.ModelSerializer):
                 )
 
 
-        qs = EmployeeSalary.objects.filter(user=user, month=month, school_year=school_year)
-        if self.instance:
-            qs = qs.exclude(pk=self.instance.pk)
+        # qs = EmployeeSalary.objects.filter(user=user, month=month, school_year=school_year)
+        # if self.instance:
+        #     qs = qs.exclude(pk=self.instance.pk)
 
-        if qs.exists():
-            raise serializers.ValidationError("Salary record for this employee for this month already exists.")
+        # if qs.exists():
+        #     raise serializers.ValidationError("Salary record for this employee for this month already exists.")
 
-        # deductions = data.get("deductions") or getattr(self.instance, "deductions", 0)
-        # gross_amount = getattr(user, "base_salary", 0)   
-        # data["gross_amount"] = gross_amount
-        # data["net_amount"] = gross_amount - deductions
-
-        # deductions = data.get("deductions") or getattr(self.instance, "deductions", 0)
-        # gross_amount = getattr(user, "base_salary", 0) if user else 0
-        # data["gross_amount"] = gross_amount
-        # data["net_amount"] = gross_amount - deductions
         net_amount = data.get("net_amount", 0)
-        # print(net_amount)
 
         deductions = data.get("deductions") or getattr(self.instance, "deductions", 0)
         gross_amount = user.base_salary if user else 0
         data["gross_amount"] = gross_amount
         data["net_amount"] = gross_amount - deductions
+
+        if deductions > gross_amount:
+            raise serializers.ValidationError({
+                "deductions": f"Deductions ({deductions}) cannot exceed gross salary ({gross_amount})."
+            })
+
 
         # print(net_amount)
         if data["net_amount"] <= 0 and data.get("payment_method") == "online":
