@@ -20,7 +20,7 @@ urlpatterns = [
     path("change_password/", views.ChangePasswordView),
     path("login/", views.LoginView),
     path("logout/", views.LogOutView),
-    path('refreshtoken/',TokenRefreshView.as_view(),name='token_refresh'),
+    path('refresh/',TokenRefreshView.as_view(),name='token_refresh'),
     path("otp/", views.SendOtpView),
     path("reset_password/", views.ForgotPasswordView),
     path('', include(router.urls)), 
