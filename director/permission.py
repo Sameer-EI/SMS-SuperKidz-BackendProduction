@@ -1,6 +1,6 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 from rest_framework.response import Response
-
+from rest_framework import permissions
 
 class RoleBasedExamPermission(BasePermission):
     def has_permission(self, request, view):
@@ -111,19 +111,48 @@ class IsDirector(BasePermission):
 
 # --------------------- Expense 
 class ExpensePermission(BasePermission):
-
     def has_permission(self, request, view):
         user = request.user
         if not user.is_authenticated:
             return False
 
         roles = [role.name.lower() for role in user.role.all()]
-        return any(r in roles for r in ['director', 'office staff'])# Allow only director and office staff for all methods
+        api_section = getattr(view, "api_section", None)
+
+        # Teacher → sirf read-only access
+        # if "teacher" in roles and api_section == "employee_salary":
+        #     return view.action in ["list", "retrieve"]
+
+        # Director & Office Staff → full CRUD
+        if any(r in roles for r in ["director", "office staff"]):
+            return True
+
+        return False
 
     def has_object_permission(self, request, view, obj):
         return self.has_permission(request, view)
 
+
+class EmployeePermission(permissions.BasePermission):
     
+    # Director -> Full access Office Staff -> Read-only Others -> No access
+    
+
+    def has_permission(self, request, view):
+        user = request.user
+
+        if not user.is_authenticated:
+            return False
+
+        # Director -> always allow
+        if user.role.filter(name__iexact="director").exists():
+            return True
+
+        # Office staff -> sirf GET (read-only)
+        if user.role.filter(name__iexact="office staff").exists():
+            return request.method in permissions.SAFE_METHODS
+
+        return False
 # RBA for termination and reactivation of the user
 class RoleBasedUserManagementPermission(BasePermission):
     """

@@ -1,3 +1,7 @@
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> bcd5e13b876131e0ae700183a45e4055ac097fd1
 # Core
 django>=5.0
 djangorestframework
@@ -20,7 +24,7 @@ psycopg2-binary
 
 # Optional: for environment variables
 python-decouple
-=======
+
 asgiref==3.8.1
 certifi==2025.6.15
 channels==4.2.2
@@ -46,10 +50,22 @@ setuptools==80.9.0
 sqlparse==0.5.3
 tzdata==2025.2
 urllib3==2.4.0
-twilio==8.13.1
-holidays==0.28.1
+twilio>=8.13.0,<9.0.0
+
+holidays>=0.28,<0.29
+
 
 
 # pip freeze > requirements.txt
+<<<<<<< HEAD
 # pip install -r requirements.txt
+<<<<<<< HEAD
+>>>>>>> 9a5bf02c74b562d44209ec8552e9f1129a9165b3
+=======
+=======
+# pip install -r requirements.txt   # install project dependencies
+# type requirements.txt             # lisy required dependencies
+# .\.venv\Scripts\activate          # activate environment
+>>>>>>> d49eb48200a1a1c1ca99b9334545a8c68fb2c256
 
+>>>>>>> bcd5e13b876131e0ae700183a45e4055ac097fd1

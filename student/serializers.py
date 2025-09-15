@@ -217,6 +217,8 @@ class GuardianSerializer(serializers.ModelSerializer):
 
         return guardian
 
+    
+
     def update(self, instance, validated_data):
         user = instance.user
 
@@ -228,9 +230,17 @@ class GuardianSerializer(serializers.ModelSerializer):
         if password:
             user.set_password(password)
         user.email = validated_data.get('email', user.email)
-        user_profile = validated_data.get('user_profile', None)
-        if user_profile is not None:
-            user.user_profile = user_profile
+
+        #  Handle profile image (empty string OR null)
+        if 'user_profile' in validated_data:
+            user_profile = validated_data.get('user_profile')
+            if not user_profile:  # covers "" and None
+                if user.user_profile:
+                    user.user_profile.delete(save=False)  # delete from media folder
+                user.user_profile = None
+            else:
+                user.user_profile = user_profile
+
         user.save()
 
         # Update guardian fields
@@ -261,7 +271,7 @@ class GuardianSerializer(serializers.ModelSerializer):
             "designation": instance.designation,
             "user_profile": user.user_profile.url if user.user_profile else None,
         })
-        return rep
+        return rep              # added
 
 
 

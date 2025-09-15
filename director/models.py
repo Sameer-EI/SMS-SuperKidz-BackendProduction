@@ -6,13 +6,12 @@ from django.db import models
 from authentication.models import User
 
 # from authentication.models import User
-from student.models import Student, Guardian,StudentYearLevel
+from student.models import *
 from director.utils import * 
 from .utils import * 
 
-from teacher.models import Teacher 
+from teacher.models import * 
 from django.utils.timezone import now
-from student.models import Student, Guardian, StudentYearLevel
 
 
 
@@ -474,11 +473,8 @@ class OfficeStaffManager(models.Manager):
         return super().get_queryset()
 
 class OfficeStaff(models.Model):
-    user = models.OneToOneField("authentication.User", on_delete=models.SET_NULL, null=True, related_name="office_staff")
-    phone_no = models.CharField(max_length=20)
-    gender = models.CharField(max_length=20)
     user = models.OneToOneField("authentication.User", on_delete=models.SET_NULL, null=True)
-    phone_no = models.CharField(max_length=20,null=True, blank=True)
+    phone_no = models.CharField(max_length=20,null=True, blank=True)   # first mistake 
     gender = models.CharField(max_length=20,null=True, blank=True)
     department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True)
     date_joined = models.DateField(auto_now_add=True)
@@ -486,6 +482,8 @@ class OfficeStaff(models.Model):
     teacher = models.ManyToManyField("teacher.Teacher", blank=True, related_name="managed_by_staff")
     admissions = models.ManyToManyField(Admission, blank=True, related_name="handled_by_staff")
     is_active = models.BooleanField(default=True)
+    adhaar_no = models.BigIntegerField(null=True,blank=True)    # added as of 09Sep25
+    pan_no = models.CharField(max_length=50,null=True,blank=True)   # added as of 09Sep25
 
     objects = OfficeStaffManager()
 
@@ -712,6 +710,10 @@ class SchoolExpense(models.Model):
     created_by = models.ForeignKey("authentication.User", on_delete=models.SET_NULL, null=True, blank=True, related_name='created_expenses') 
     created_at = models.DateTimeField(auto_now_add=True)# 
 
+    razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)
+    razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
+    razorpay_signature = models.CharField(max_length=255, blank=True, null=True)
+
     def __str__(self): 
         return f"{self.category.name} - ₹{self.amount} on {self.expense_date}" 
     
@@ -744,8 +746,14 @@ class EmployeeSalary(models.Model):
     status = models.CharField(max_length=20,choices=[('paid', 'Paid'), ('pending', 'Pending')],default='pending')
     created_at = models.DateTimeField(auto_now=True)
 
+    razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
+    razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)
+    razorpay_signature = models.CharField(max_length=255, blank=True, null=True)
+
     def __str__(self):
         return f"{self.user.user.first_name} {self.month} - {self.net_amount}"
+    class Meta:
+        unique_together = ['user', 'month', 'school_year']
 
 # --------------------------------------------income---------------------------------------------
 
