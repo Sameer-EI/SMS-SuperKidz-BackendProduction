@@ -1,3 +1,4 @@
+from calendar import month
 from django.forms import DateField, ValidationError
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -1745,73 +1746,6 @@ class FileView(viewsets.ModelViewSet):
 
 
 
-# from rest_framework import viewsets, status
-# from rest_framework.response import Response
-# from django.db import transaction
-# from .models import Document, File
-# from .serializers import DocumentSerializer
-
-# class DocumentView(viewsets.ModelViewSet):
-#     queryset = Document.objects.prefetch_related('files', 'document_types')
-#     serializer_class = DocumentSerializer
-
-#     @transaction.atomic
-#     def create(self, request, *args, **kwargs):
-#         # Validate files
-#         files = request.FILES.getlist('files')
-#         if not files:
-#             return Response({"error": "Files required"}, status=status.HTTP_400_BAD_REQUEST)
-
-#         # Get and validate document types
-#         doc_types = request.data.getlist('document_types', []) or [request.data.get('document_types')]
-#         doc_types = [dt for dt in doc_types if dt and str(dt).isdigit()]  # Filter valid numeric types
-#         if not doc_types:
-#             return Response({"error": "Valid document types required"}, status=status.HTTP_400_BAD_REQUEST)
-
-#         # Prepare data with null handling for empty strings
-#         data = {
-#             'document_types': doc_types,
-#             'identities': request.data.get('identities'),
-#             **{f: int(request.data[f]) if request.data.get(f) and str(request.data[f]).isdigit() else None 
-#                for f in ['student', 'teacher', 'guardian', 'office_staff']}
-#         }
-
-#         # Find existing document
-#         existing = self._find_existing_document(data)
-        
-#         # Create or update document
-#         if existing:
-#             serializer = self.get_serializer(existing, data=data, partial=True)
-#             existing.files.all().delete()
-#             action = 'replaced'
-#         else:
-#             serializer = self.get_serializer(data=data)
-#             action = 'created'
-
-#         serializer.is_valid(raise_exception=True)
-#         doc = serializer.save()
-
-#         # Save all uploaded files
-#         for file in files:
-#             File.objects.create(document=doc, file=file)
-
-#         return Response({
-#             'status': action,
-#             'document': self.get_serializer(doc, context={'request': request}).data
-#         }, status=status.HTTP_201_CREATED)
-
-#     def _find_existing_document(self, data):
-#         """Helper method to find existing document matching criteria"""
-#         filter_params = {
-#             'identities': data.get('identities'),
-#             **{f: data.get(f) for f in ['student', 'teacher', 'guardian', 'office_staff'] 
-#                if data.get(f) is not None}
-#         }
-        
-#         for doc in Document.objects.filter(**filter_params).prefetch_related('document_types'):
-#             if set(doc.document_types.values_list('id', flat=True)) == set(map(int, data['document_types'])):
-#                 return doc
-#         return None
 
 
 
@@ -1921,6 +1855,10 @@ class FeeTypeView(viewsets.ModelViewSet):
     serializer_class = FeeTypeSerializer
 
 
+    
+from rest_framework import status
+from rest_framework.response import Response
+
 class YearLevelFeeView(viewsets.ModelViewSet):
     serializer_class = YearLevelFeeSerializer
 
@@ -1931,18 +1869,35 @@ class YearLevelFeeView(viewsets.ModelViewSet):
             qs = qs.filter(id=fee_id)
         return qs
 
-    # def get_queryset(self):           # just commneted as of 27june25 at 02:47 PM
-    #     return YearLevelFee.objects.select_related('year_level', 'fee_type')
-    
-    # def get_queryset(self):         # GET /api/year-level-fee/?id=3
-    #     queryset = YearLevelFee.objects.select_related('year_level', 'fee_type')
-    #     fee_id = self.request.query_params.get('id', None)
+    # ADDITION: upsert functionality
+    def create(self, request, *args, **kwargs):
+            year_level_id = request.data.get('year_level')
+            fee_type_id = request.data.get('fee_type')
 
-    #     if fee_id is not None:
-    #         queryset = queryset.filter(id=fee_id)
+            # Make a copy of request data
+            defaults = request.data.copy()
 
-    #     return queryset
-    
+            # Remove foreign keys (they are handled separately)
+            defaults.pop('year_level', None)
+            defaults.pop('fee_type', None)
+
+            # Remove any extra fields that are not in the model
+            allowed_fields = {f.name for f in YearLevelFee._meta.get_fields()}
+            defaults = {k: v for k, v in defaults.items() if k in allowed_fields}
+
+            # Upsert
+            instance, created = YearLevelFee.objects.update_or_create(
+                year_level_id=year_level_id,
+                fee_type_id=fee_type_id,
+                defaults=defaults
+            )
+
+            serializer = self.get_serializer(instance)
+            if created:
+                return Response(serializer.data, status=status.HTTP_201_CREATED)
+            else:
+                return Response(serializer.data, status=status.HTTP_200_OK)
+
 
     def list(self, request, *args, **kwargs):       # GET /api/year-level-fee/
         queryset = self.get_queryset()
@@ -1958,8 +1913,7 @@ class YearLevelFeeView(viewsets.ModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
         return Response(grouped_fees[0] if grouped_fees else {})
-    
-    
+
 
 from twilio.rest import Client 
 
@@ -2086,109 +2040,7 @@ class FeeRecordView(viewsets.ModelViewSet):
     
         return qs.distinct()
 
-    # removed commented or unnecessary code from line 1906 - 2266
-        # commented as of 26Aug25 at 04:34 PM
-
-    # Added as of 26Aug25 at 04:34 PM
-    # @action(detail=False, methods=["get"], url_path="fee-preview")
-    # def preview(self, request):
-    #     student_id = request.query_params.get("student_id")
-    #     month = request.query_params.get("month")
-
-    #     if not student_id or not month:
-    #         return Response({"detail": "student_id and month are required"}, status=400)
-
-    #     try:
-    #         student = Student.objects.get(id=student_id)
-    #     except Student.DoesNotExist:
-    #         return Response({"detail": "Student not found"}, status=404)
-
-    #     # Latest active year level
-    #     student_year_level = (
-    #         StudentYearLevel.objects
-    #         .filter(student=student)
-    #         .order_by("-year")
-    #         .first()
-    #     )
-    #     if not student_year_level:
-    #         return Response({"detail": "No year level found for this student."}, status=404)
-
-    #     # All year-level fees
-    #     year_level_fees = YearLevelFee.objects.filter(year_level=student_year_level.level)
-
-    #     # Paid fee records for this student & school year
-    #     paid_fees = FeeRecord.objects.filter(
-    #         student=student,
-    #         school_year__year=student_year_level.year
-    #     )
-
-    #     # Admission fees → only once per year
-    #     admission_paid_fee_ids = paid_fees.filter(
-    #         year_level_fees__fee_type__name__iexact="admission fee"
-    #     ).values_list("year_level_fees", flat=True)
-
-    #     # Tuition fees (monthly) → must match same month
-    #     monthly_paid_fee_ids = YearLevelFee.objects.filter(
-    #         feerecord__in=paid_fees,
-    #         feerecord__month__iexact=month,
-    #         fee_type__name__iexact="tuition fee"
-    #     ).values_list("id", flat=True)
-
-    #     # Exam fees → must match same month
-    #     exam_paid_fee_ids = paid_fees.filter(
-    #         month=month,
-    #         year_level_fees__fee_type__name__iexact="exam fee"
-    #     ).values_list("year_level_fees", flat=True)
-
-    #     # Transport fees → must match same month
-    #     transport_paid_fee_ids = paid_fees.filter(
-    #         month=month,
-    #         year_level_fees__fee_type__name__iexact="transport fee"
-    #     ).values_list("year_level_fees", flat=True)
-
-    #     # Serialize fees
-    #     serializer = YearLevelFeeSerializer(year_level_fees, many=True, context={"student": student})
-    #     grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
-
-    #     today = date.today()
-
-    #     # --- Add status/late fee ---
-    #     for group in grouped_fees:
-    #         new_fees_list = []  # Create a new list to hold the modified fee dictionaries
-    #         for fee in group["fees"]:
-    #             fee_id = fee["id"]
-    #             fee_type = fee["fee_type"].lower()
-
-    #             # --- HANDLING ADMISSION, TUITION, EXAM, TRANSPORT ---
-    #             if (fee_type == "admission fee" and fee_id in admission_paid_fee_ids) or \
-    #             (fee_type == "tuition fee" and fee_id in monthly_paid_fee_ids) or \
-    #             (fee_type == "exam fee" and fee_id in exam_paid_fee_ids) or \
-    #             (fee_type == "transport fee" and fee_id in transport_paid_fee_ids):
-
-    #                 # Already Paid → minimal response
-    #                 new_fee = {
-    #                     "fee_type": fee_type.title(),
-    #                     "id": fee_id,
-    #                     "status": "Already Paid"
-    #                 }
-    #                 new_fees_list.append(new_fee)
-
-    #             else:
-    #                 # Pending → include amounts
-    #                 fee["amount"] = str(fee.get("amount", "0"))
-    #                 fee["final_amount"] = str(fee.get("final_amount", "0"))
-    #                 fee["status"] = "Pending"
-
-    #                 # Late Fee (only for Tuition Fee)
-    #                 if fee_type == "tuition fee" and today.day > 15:
-    #                     fee["late_fee"] = 25
-
-    #                 new_fees_list.append(fee)
-
-    #         group["fees"] = new_fees_list
-
-    #     return Response(grouped_fees)
-
+    
     @action(detail=False, methods=["get"], url_path="fee-preview")
     def preview(self, request):
         student_id = request.query_params.get("student_id")
@@ -2308,38 +2160,6 @@ class FeeRecordView(viewsets.ModelViewSet):
                 new_fees_list.append(new_fee)
             group["fees"] = new_fees_list
 
-            # # Calculate totals per group (year_level)
-            # tuition_fee = next((f for f in new_fees_list if "tuition fee" in f["fee_type"].lower()), None)
-            # non_tuition_fees = [f for f in new_fees_list if "tuition fee" not in f["fee_type"].lower()]
-
-            # # Tuition
-            # tuition_total = float(tuition_fee.get("final_amount", 0)) if tuition_fee else 0
-            # tuition_paid = float(tuition_fee.get("paid_amount", 0)) if tuition_fee else 0
-            # tuition_due = tuition_total - tuition_paid
-
-            # # Non-tuition
-            # non_tuition_total = sum(float(f.get("final_amount", 0)) for f in non_tuition_fees)
-            # non_tuition_paid = sum(float(f.get("paid_amount", f.get("final_amount", 0))) for f in non_tuition_fees)
-
-            # # Combine totals
-            # group_total_amount = tuition_total + non_tuition_total
-            # group_paid_amount = tuition_paid + non_tuition_paid
-            # group_due_amount = tuition_due  # only tuition can have due
-
-            # # Payment status
-            # if tuition_due > 0:
-            #     if tuition_paid > 0:
-            #         group_status = "Partially Paid"
-            #     else:
-            #         group_status = "Unpaid"
-            # else:
-            #     group_status = "Paid"
-
-            # # Optionally, store totals in group dict
-            # group["total_amount"] = str(group_total_amount)
-            # group["paid_amount"] = str(group_paid_amount)
-            # group["due_amount"] = str(group_due_amount)
-            # group["payment_status"] = group_status
 
 
         return Response(grouped_fees)
@@ -2435,7 +2255,11 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         return Response(combined_response, status=status.HTTP_200_OK)
     
+ 
+   
+
     
+
     ### Razorpay custom views
     # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/initiate-payment/
     ### using custom view 

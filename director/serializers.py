@@ -1118,12 +1118,46 @@ class ClassPeriodSerializer(serializers.ModelSerializer):
 
 # Added as of 06June25 at 02:50 PM
 
-class FeeTypeSerializer(serializers.ModelSerializer):
-    # name = serializers.SerializerMethodField()
+# class FeeTypeSerializer(serializers.ModelSerializer):
+#     # name = serializers.SerializerMethodField()
     
-    class Meta:
-        model = FeeType
-        fields = ['id', 'name']
+#     class Meta:
+#         model = FeeType
+#         fields = ['id', 'name']
+
+
+# class YearLevelFeeSerializer(serializers.ModelSerializer):
+#     year_level_name = serializers.SerializerMethodField()
+#     fee_type_name = serializers.SerializerMethodField()
+#     year_level_id = serializers.IntegerField(source='year_level.id', read_only=True)
+#     final_amount = serializers.SerializerMethodField()
+#     # original_amount = serializers.DecimalField(source="amount", max_digits=8, decimal_places=2, read_only=True)
+
+
+#     class Meta:
+#         model = YearLevelFee
+#         fields = ['id', 'year_level', 'fee_type', 'year_level_name', 'fee_type_name', 'amount',
+#             'final_amount', 'year_level_id']
+
+#     def get_year_level_name(self, obj):
+#         return obj.year_level.level_name
+
+#     def get_fee_type_name(self, obj):
+#         return obj.fee_type.name
+
+
+class FeeTypeSerializer(serializers.ModelSerializer):
+        class Meta:
+         model = FeeType
+         fields = ['id', 'name']
+
+    # ADDITION: handle create or update to avoid duplicates
+def create(self, validated_data):
+        instance, created = FeeType.objects.update_or_create(
+            name=validated_data.get("name"),  # field to check for duplicates
+            defaults=validated_data           # data to update if exists
+        )
+        return instance
 
 
 class YearLevelFeeSerializer(serializers.ModelSerializer):
@@ -1133,11 +1167,10 @@ class YearLevelFeeSerializer(serializers.ModelSerializer):
     final_amount = serializers.SerializerMethodField()
     # original_amount = serializers.DecimalField(source="amount", max_digits=8, decimal_places=2, read_only=True)
 
-
     class Meta:
         model = YearLevelFee
         fields = ['id', 'year_level', 'fee_type', 'year_level_name', 'fee_type_name', 'amount',
-            'final_amount', 'year_level_id']
+                  'final_amount', 'year_level_id']
 
     def get_year_level_name(self, obj):
         return obj.year_level.level_name
