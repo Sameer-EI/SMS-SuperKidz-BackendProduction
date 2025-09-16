@@ -268,6 +268,7 @@ def LoginView(request):
 
             role_id = None
             role_key = None
+            year_level_data = None
 
             if role_name == "teacher":
                 try:
@@ -282,6 +283,15 @@ def LoginView(request):
                     student = Student.objects.get(user=user)
                     role_id = student.id
                     role_key = "student_id"
+
+                    student_year_level = student.student_year_levels.order_by('-year_id').first()
+
+                    if student_year_level:
+                        year_level_data = {
+                            "id": student_year_level.level.id,
+                            "name": student_year_level.level.level_name
+                        }
+
                 except Student.DoesNotExist:
                     pass
 
@@ -323,6 +333,9 @@ def LoginView(request):
 
             if role_key:
                 response_data[role_key] = role_id
+
+            if year_level_data:
+                response_data["year_level"] = year_level_data
 
             return Response(response_data, status=status.HTTP_200_OK)
 
