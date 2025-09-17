@@ -2005,21 +2005,6 @@ class FeeRecordSerializer(serializers.ModelSerializer):
         data['late_fee'] = late_fee
 
         # Tuition due calculation
-        # if tuition_fee_obj:
-        #     existing_tuition = FeeRecord.objects.filter(
-        #         student=student,
-        #         month=month,
-        #         year_level_fees=tuition_fee_obj
-        #     ).order_by("-id").first()
-
-        #     paid_so_far = existing_tuition.paid_amount if existing_tuition else 0
-        #     tuition_final_amount = tuition_fee_obj.amount - (discount.tuition_fee_discount if discount else 0)
-        #     remaining_due = max(tuition_final_amount - paid_so_far, 0)
-
-        #     # Only count the portion of paid_amount that goes to tuition
-        #     tuition_payment = min(paid_amount, remaining_due)
-        #     tuition_due = remaining_due - tuition_payment
-        # Tuition due calculation
         if tuition_fee_obj:
             tuition_final_amount = tuition_fee_obj.amount - (discount.tuition_fee_discount if discount else 0)
             existing_tuition = FeeRecord.objects.filter(
@@ -2029,6 +2014,17 @@ class FeeRecordSerializer(serializers.ModelSerializer):
             ).order_by("-id").first()
             paid_so_far = existing_tuition.paid_amount if existing_tuition else 0
             remaining_due = max(tuition_final_amount - paid_so_far, 0)
+            if today.day > 15:
+                late_fee = 25
+                remaining_due += late_fee
+            # print("paid_so_far:",paid_so_far)
+            # print("remaining_due:",remaining_due)
+
+            if existing_tuition:
+                data['total_amount'] = remaining_due
+            else:
+                data['total_amount'] = tuition_final_amount + (25 if today.day > 15 else 0)
+
 
             # Check if non-tuition fees are in the same payment
             non_tuition_present = any("tuition fee" not in f.fee_type.name.lower() for f in year_level_fees)
@@ -2045,12 +2041,39 @@ class FeeRecordSerializer(serializers.ModelSerializer):
                 tuition_payment = min(paid_amount, remaining_due)
 
             tuition_due = remaining_due - tuition_payment
+            # print("tuition_due:",tuition_due)
+
+            if FeeRecord.objects.filter(
+                student=student,
+                month=month,
+                year_level_fees=tuition_fee_obj,
+                payment_status="Paid"
+            ).exists():
+                raise serializers.ValidationError({
+                    "tuition_fee": f"Tuition fee for {month} is already fully paid."
+                })
+
+            # Must pay exact due (not less / not more)
+            if existing_tuition:
+                # calc remaining
+                remaining_due = max(tuition_final_amount - existing_tuition.paid_amount, 0)
+                if today.day > 15:
+                    late_fee = 25
+                    remaining_due += late_fee
+
+                # force total_amount to equal remaining_due
+                data["total_amount"] = remaining_due
+
+                # must pay exact remaining due if clearing
+                if paid_amount != remaining_due:
+                    raise serializers.ValidationError({
+                        "tuition_fee": f"You must pay the exact due amount: {remaining_due}."
+                    })
+
         else:
             tuition_due = 0
 
-        # else:
-        #     tuition_due = 0
-
+    
         # Set final totals
         data['total_amount'] = total_amount
         data['due_amount'] = tuition_due
