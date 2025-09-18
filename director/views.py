@@ -2285,8 +2285,8 @@ class FeeRecordView(viewsets.ModelViewSet):
                         new_fee["final_amount"] = str(fee.get("final_amount", "0"))
                         new_fee["status"] = "Pending"
 
-                    # Late fee logic
-                    if today.day > 15:
+                    # Apply late fee only if today is past 15th and fee isn't fully paid
+                    if today.day > 15 and new_fee["status"] in ["Partially Paid", "Pending"]:
                         new_fee["late_fee"] = 25
 
                 # EXAM
@@ -2307,40 +2307,6 @@ class FeeRecordView(viewsets.ModelViewSet):
 
                 new_fees_list.append(new_fee)
             group["fees"] = new_fees_list
-
-            # # Calculate totals per group (year_level)
-            # tuition_fee = next((f for f in new_fees_list if "tuition fee" in f["fee_type"].lower()), None)
-            # non_tuition_fees = [f for f in new_fees_list if "tuition fee" not in f["fee_type"].lower()]
-
-            # # Tuition
-            # tuition_total = float(tuition_fee.get("final_amount", 0)) if tuition_fee else 0
-            # tuition_paid = float(tuition_fee.get("paid_amount", 0)) if tuition_fee else 0
-            # tuition_due = tuition_total - tuition_paid
-
-            # # Non-tuition
-            # non_tuition_total = sum(float(f.get("final_amount", 0)) for f in non_tuition_fees)
-            # non_tuition_paid = sum(float(f.get("paid_amount", f.get("final_amount", 0))) for f in non_tuition_fees)
-
-            # # Combine totals
-            # group_total_amount = tuition_total + non_tuition_total
-            # group_paid_amount = tuition_paid + non_tuition_paid
-            # group_due_amount = tuition_due  # only tuition can have due
-
-            # # Payment status
-            # if tuition_due > 0:
-            #     if tuition_paid > 0:
-            #         group_status = "Partially Paid"
-            #     else:
-            #         group_status = "Unpaid"
-            # else:
-            #     group_status = "Paid"
-
-            # # Optionally, store totals in group dict
-            # group["total_amount"] = str(group_total_amount)
-            # group["paid_amount"] = str(group_paid_amount)
-            # group["due_amount"] = str(group_due_amount)
-            # group["payment_status"] = group_status
-
 
         return Response(grouped_fees)
     
