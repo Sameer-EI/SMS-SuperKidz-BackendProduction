@@ -2474,8 +2474,8 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
         instance.phone_no = validated_data.get("phone_no", instance.phone_no)
         instance.gender = validated_data.get("gender", instance.gender)
         instance.department = validated_data.get("department", instance.department)
-        instance.adhaar_no = validated_data.get("adhaar_no", instance.adhaar_no)  # ✅ NEW
-        instance.pan_no = validated_data.get("pan_no", instance.pan_no)          # ✅ NEW
+        instance.adhaar_no = validated_data.get("adhaar_no", instance.adhaar_no)  #  added as of 09Sep25
+        instance.pan_no = validated_data.get("pan_no", instance.pan_no)          #  added as of 09Sep25
         instance.save()
 
         if "student" in validated_data:
