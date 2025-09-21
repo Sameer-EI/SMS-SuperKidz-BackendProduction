@@ -217,6 +217,7 @@ class Department(models.Model):
 class Subject(models.Model):
     department = models.ForeignKey(Department, on_delete=models.DO_NOTHING)
     subject_name = models.CharField(max_length=250, null=False)
+    year_levels = models.ManyToManyField("YearLevel", related_name="subjects")
 
     def __str__(self):
         return f"{self.department} - {self.subject_name}"
