@@ -111,7 +111,7 @@ class subjectSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Subject
-        fields = ['id', 'subject_name', 'department', 'department_name'] 
+        fields = ['id', 'subject_name', 'department', 'department_name','year_levels'] 
 
     def get_department_name(self, obj):
         return obj.department.department_name if obj.department else None
