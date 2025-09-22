@@ -572,17 +572,105 @@ class TeacherAttendanceGetAPI(APIView):
             return Response(serializer.data)
         return Response(serializer.errors, status=400)
 
-class SubstituteAssignmentView(APIView):
-    def get(self, request):
-        assignments = SubstituteAssignment.objects.all()
-        serializer = SubstituteAssignmentSerializer(assignments, many=True)
-        return Response(serializer.data)
+# class SubstituteAssignmentView(APIView):
+#     def get(self, request):
+#         assignments = SubstituteAssignment.objects.all()
+#         serializer = SubstituteAssignmentSerializer(assignments, many=True)
+#         return Response(serializer.data)
 
+#     def post(self, request):
+#         data = request.data
+#         print(data)
+
+#         # Single dict -> wrap in list for iteration
+#         if isinstance(data, dict):
+#             data = [data]
+#             many = False
+#         else:
+#             many = True
+
+#         errors = []
+#         for item in data:
+#             absent_teacher = item.get("absent_teacher")
+#             period = item.get("period")
+#             date = item.get("date")
+
+#             if SubstituteAssignment.objects.filter(
+#                 absent_teacher=absent_teacher,
+#                 period=period,
+#                 date=date
+#             ).exists():
+#                 errors.append(
+#                     f"Duplicate found: Teacher {absent_teacher} already has substitute "
+#                     f"for {period} on {date}"
+#                 )
+
+#         if errors:
+#             return Response({"errors": errors}, status=status.HTTP_400_BAD_REQUEST)
+
+#         # If single dict, unwrap data again before serializer
+#         serializer_data = data if many else data[0]
+
+#         serializer = SubstituteAssignmentSerializer(data=serializer_data, many=many)
+#         if serializer.is_valid():
+#             assignments = serializer.save()
+
+#             # ✅ Notification Part
+#             notifications = []
+#             if many:
+#                 for assignment in assignments:
+#                     msg = (
+#                         f"📢 Notification:\n"
+#                         f"On {assignment.date}, period {assignment.period},\n"
+#                         f"Teacher {assignment.absent_teacher} is absent.\n"
+#                         f"Substitute assigned: {assignment.substitute_teacher}."
+#                     )
+#                     response = send_whatsapp_message(msg)  # <-- your WhatsApp fn
+#                     notifications.append({
+#                         "absent_teacher": str(assignment.absent_teacher),
+#                         "substitute_teacher": str(assignment.substitute_teacher),
+#                         "date": str(assignment.date),
+#                         "period": assignment.period,
+#                         "response": response
+#                     })
+#             else:
+#                 assignment = assignments
+#                 msg = (
+#                     f" Notification:\n"
+#                     f"On {assignment.date},  {assignment.period},\n"
+#                     f"Teacher {assignment.absent_teacher} is absent.\n"
+#                     f"Substitute assigned: {assignment.substitute_teacher}."
+#                 )
+#                 print(msg)
+#                 response = send_whatsapp_message(msg)
+#                 notifications.append({
+#                     "absent_teacher": str(assignment.absent_teacher),
+#                     "substitute_teacher": str(assignment.substitute_teacher),
+#                     "date": str(assignment.date),
+#                     "period": assignment.period,
+#                     "response": response
+#                 })
+#                 print(response)
+#                 print(notifications)
+
+#             return Response({
+#                 "assignments": serializer.data,
+#                 "notifications": notifications
+#             }, status=status.HTTP_201_CREATED)
+
+#         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+from django.core.cache import cache
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.views import APIView
+from datetime import timedelta
+
+class SubstituteAssignmentView(APIView):
     def post(self, request):
         data = request.data
-        print(data)
 
-        # Single dict -> wrap in list for iteration
         if isinstance(data, dict):
             data = [data]
             many = False
@@ -608,24 +696,44 @@ class SubstituteAssignmentView(APIView):
         if errors:
             return Response({"errors": errors}, status=status.HTTP_400_BAD_REQUEST)
 
-        # If single dict, unwrap data again before serializer
         serializer_data = data if many else data[0]
-
         serializer = SubstituteAssignmentSerializer(data=serializer_data, many=many)
+
         if serializer.is_valid():
             assignments = serializer.save()
 
-            # ✅ Notification Part
             notifications = []
-            if many:
-                for assignment in assignments:
+
+            # ✅ Rate limit: allow only one msg in 10 minutes
+            last_sent = cache.get("last_notification_time")
+            now = timezone.now()
+
+            if not last_sent or (now - last_sent).total_seconds() >= 60:  # 60s = 1 min
+                if many:
+                    for assignment in assignments:
+                        msg = (
+                            f"📢 Notification:\n"
+                            f"On {assignment.date}, period {assignment.period},\n"
+                            f"Teacher {assignment.absent_teacher} is absent.\n"
+                            f"Substitute assigned: {assignment.substitute_teacher}."
+                        )
+                        response = send_whatsapp_message(msg)
+                        notifications.append({
+                            "absent_teacher": str(assignment.absent_teacher),
+                            "substitute_teacher": str(assignment.substitute_teacher),
+                            "date": str(assignment.date),
+                            "period": assignment.period,
+                            "response": response
+                        })
+                else:
+                    assignment = assignments
                     msg = (
                         f"📢 Notification:\n"
-                        f"On {assignment.date}, period {assignment.period},\n"
+                        f"On {assignment.date}, {assignment.period},\n"
                         f"Teacher {assignment.absent_teacher} is absent.\n"
                         f"Substitute assigned: {assignment.substitute_teacher}."
                     )
-                    response = send_whatsapp_message(msg)  # <-- your WhatsApp fn
+                    response = send_whatsapp_message(msg)
                     notifications.append({
                         "absent_teacher": str(assignment.absent_teacher),
                         "substitute_teacher": str(assignment.substitute_teacher),
@@ -633,25 +741,14 @@ class SubstituteAssignmentView(APIView):
                         "period": assignment.period,
                         "response": response
                     })
+
+                # update cache time
+                cache.set("last_notification_time", now, timeout=600)
+
             else:
-                assignment = assignments
-                msg = (
-                    f" Notification:\n"
-                    f"On {assignment.date},  {assignment.period},\n"
-                    f"Teacher {assignment.absent_teacher} is absent.\n"
-                    f"Substitute assigned: {assignment.substitute_teacher}."
-                )
-                print(msg)
-                response = send_whatsapp_message(msg)
                 notifications.append({
-                    "absent_teacher": str(assignment.absent_teacher),
-                    "substitute_teacher": str(assignment.substitute_teacher),
-                    "date": str(assignment.date),
-                    "period": assignment.period,
-                    "response": response
+                    "message": "⏳ Rate limit: A message was already sent in the last 10 minutes."
                 })
-                print(response)
-                print(notifications)
 
             return Response({
                 "assignments": serializer.data,
@@ -659,5 +756,6 @@ class SubstituteAssignmentView(APIView):
             }, status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 

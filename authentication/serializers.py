@@ -186,6 +186,7 @@ class UserSerializer(serializers.ModelSerializer):
 
         #multiple roles assign
         user.role.set(roles)
+        student = None
 
         for role in roles:
             role_name = role.name.lower()

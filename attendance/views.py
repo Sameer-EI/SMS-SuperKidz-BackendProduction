@@ -638,8 +638,9 @@ class SendWhatsAppView(APIView):
 
         verified_numbers = [
             '+918102637122',
-            '+918109145639'
+            '+918109145639',
             #'+919111499689'
+            '+918871984531'
         ]
 
         message_text = " This message is sent from Mecaps SMS Dev Team."
