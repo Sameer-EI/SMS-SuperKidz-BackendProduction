@@ -2137,8 +2137,8 @@ class FeeRecordView(viewsets.ModelViewSet):
                         new_fee["final_amount"] = str(fee.get("final_amount", "0"))
                         new_fee["status"] = "Pending"
 
-                    # Late fee logic
-                    if today.day > 15:
+                    # Apply late fee only if today is past 15th and fee isn't fully paid
+                    if today.day > 15 and new_fee["status"] in ["Partially Paid", "Pending"]:
                         new_fee["late_fee"] = 25
 
                 # EXAM
@@ -2160,8 +2160,11 @@ class FeeRecordView(viewsets.ModelViewSet):
                 new_fees_list.append(new_fee)
             group["fees"] = new_fees_list
 
+<<<<<<< HEAD
 
 
+=======
+>>>>>>> e781143b4d2e84f9458137469651acf86e7c1ac0
         return Response(grouped_fees)
     
    
