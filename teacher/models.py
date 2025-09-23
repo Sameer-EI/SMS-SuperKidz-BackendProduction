@@ -20,6 +20,7 @@ class Teacher(models.Model):
     adhaar_no = models.BigIntegerField(null=True,blank=True)
     pan_no = models.CharField(max_length=50,null=True,blank=True)
     qualification = models.CharField(max_length=250,null=True,blank=True)
+    joining_date = models.DateField(auto_now_add=True,null=True,blank=True)  #added as of 19Sep25 at 03:00 PM
     is_active = models.BooleanField(default=True)
 
     year_levels = models.ManyToManyField('director.YearLevel', through='TeacherYearLevel')

@@ -112,7 +112,7 @@ class subjectSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Subject
-        fields = ['id', 'subject_name', 'department', 'department_name'] 
+        fields = ['id', 'subject_name', 'department', 'department_name','year_levels'] 
 
     def get_department_name(self, obj):
         return obj.department.department_name if obj.department else None
@@ -2475,8 +2475,8 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
         instance.phone_no = validated_data.get("phone_no", instance.phone_no)
         instance.gender = validated_data.get("gender", instance.gender)
         instance.department = validated_data.get("department", instance.department)
-        instance.adhaar_no = validated_data.get("adhaar_no", instance.adhaar_no)  # ✅ NEW
-        instance.pan_no = validated_data.get("pan_no", instance.pan_no)          # ✅ NEW
+        instance.adhaar_no = validated_data.get("adhaar_no", instance.adhaar_no)  #  added as of 09Sep25
+        instance.pan_no = validated_data.get("pan_no", instance.pan_no)          #  added as of 09Sep25
         instance.save()
 
         if "student" in validated_data:
