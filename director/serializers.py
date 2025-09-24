@@ -22,6 +22,7 @@ from django.db.models import Sum
 import calendar
 from django.core.exceptions import ValidationError
 import os
+from dateutil.relativedelta import relativedelta
 
 class YearLevelSerializer(serializers.ModelSerializer):   # coomented as of 05June25 at 01:36 AM
     class Meta:
@@ -3472,6 +3473,19 @@ class EmployeeSerializer(serializers.ModelSerializer):
     def validate(self, data):
         if data.get('base_salary', 0) <= 0:
             raise serializers.ValidationError({"base_salary": "Amount must be a positive number."})
+        
+        # Joining date check
+        joining_date = data.get("joining_date")
+        today = date.today()
+        two_months_ago = today - relativedelta(months=2)  # This will take the date of last 2 months
+
+        if joining_date > today:
+            raise serializers.ValidationError({"joining_date": "Future date is not allowed."})
+        if joining_date < two_months_ago:
+            raise serializers.ValidationError({"joining_date": "Joining date cannot be older than 2 months."})
+
+
+
         return data
 
 
