@@ -15,6 +15,134 @@ import holidays
 from director.views import send_whatsapp_message
 
 
+# class MultipleAttendanceViewSet1(ModelViewSet):
+#     queryset = StudentAttendance.objects.all()
+#     serializer_class = StudentAttendanceSerializer
+
+#     def create(self, request, *args, **kwargs):
+#         data = request.data
+
+#         # Validate marked_at
+#         try:
+#             marked_at_str = data.get("marked_at")
+#             marked_at = datetime.strptime(marked_at_str, "%Y-%m-%d").date() if marked_at_str else date.today()
+#             if marked_at > date.today():
+#                 return Response({"error": "You cannot mark attendance for a future date."}, status=status.HTTP_400_BAD_REQUEST)
+#         except ValueError:
+#             return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+
+#         # Validate teacher
+#         teacher_id = data.get("teacher_id")
+#         if not teacher_id:
+#             return Response({"error": "teacher_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+#         try:
+#             teacher = Teacher.objects.get(id=teacher_id)
+#         except Teacher.DoesNotExist:
+#             return Response({"error": "Invalid teacher_id."}, status=status.HTTP_404_NOT_FOUND)
+
+#         # Validate year level
+#         year_level_id = data.get("year_level_id")
+#         if not year_level_id:
+#             return Response({"error": "year_level_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+#         # Validate presence of at least one status
+#         allowed_statuses = {'P', 'A', 'L'}
+#         all_student_ids = []
+#         status_provided = False
+
+#         for status_code in allowed_statuses:
+#             student_ids = data.get(status_code, [])
+#             if student_ids:
+#                 if not isinstance(student_ids, list):
+#                     return Response({
+#                         "error": f"Value for status '{status_code}' must be a list of student IDs."
+#                     }, status=status.HTTP_400_BAD_REQUEST)
+
+#                 # Validate all IDs are integers
+#                 for sid in student_ids:
+#                     if not isinstance(sid, int):
+#                         return Response({
+#                             "error": f"All student IDs under status '{status_code}' must be integers."
+#                         }, status=status.HTTP_400_BAD_REQUEST)
+
+#                 status_provided = True
+#                 all_student_ids.extend(student_ids)
+
+#         if not status_provided:
+#             return Response({
+#                 "error": "At least one attendance status ('P', 'A', or 'L') with student IDs must be provided."
+#             }, status=status.HTTP_400_BAD_REQUEST)
+
+#         # Check if attendance already exists
+#         already_marked_ids = StudentAttendance.objects.filter(
+#             student_id__in=all_student_ids,
+#             marked_at=marked_at
+#         ).values_list("student_id", flat=True)
+
+#         if already_marked_ids:
+#             return Response({
+#                 "error": "Attendance for one or more students already exists on this date.",
+#                 "student_ids": list(already_marked_ids)
+#             }, status=status.HTTP_400_BAD_REQUEST)
+
+#         # Validate student assignments
+#         invalid_students = []
+#         for sid in all_student_ids:
+#             try:
+#                 student = Student.objects.get(id=sid)
+#             except Student.DoesNotExist:
+#                 invalid_students.append(sid)
+#                 continue
+
+#             if not student.student_year_levels.filter(level_id=year_level_id).exists():
+#                 invalid_students.append(sid)
+
+#         if invalid_students:
+#             return Response({
+#                 "error": "Some students are not assigned to the given year level or do not exist.",
+#                 "student_ids": invalid_students
+#             }, status=status.HTTP_400_BAD_REQUEST)
+
+#         # Create attendance records
+#         created_records = []
+#         absent_leave_students = []  # store absent or leave students for notification
+
+#         for status_code in allowed_statuses:
+#             for sid in data.get(status_code, []):
+#                 student = Student.objects.get(id=sid)
+#                 attendance = StudentAttendance.objects.create(
+#                     student=student,
+#                     status=status_code,
+#                     marked_at=marked_at,
+#                     teacher=teacher,
+#                     year_level_id=year_level_id
+#                 )
+#                 created_records.append(attendance)
+
+#                 # Collect absent or leave for notification
+#                 if status_code in ["A", "L"]:
+#                     absent_leave_students.append(student)
+
+#         # === Send Notification for Absent / Leave Students ===
+#         for student in absent_leave_students:
+#             student_name = f"{student.user.first_name} {student.user.last_name}"
+#             msg = (
+#                 f"Dear Parent,\n\n"
+#                 f"{student_name} was marked as Absent "
+#                 f"on {marked_at.strftime('%d-%m-%Y')}.\n"
+#                 f"Kindly ensure regular attendance.\n\n"
+#                 f"Regards,\nSchool Management"
+#             )
+#             send_whatsapp_message(msg)
+
+#         serializer = self.get_serializer(created_records, many=True)
+#         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+
+from utils.email_notifications import send_email_notification
+
 class MultipleAttendanceViewSet1(ModelViewSet):
     queryset = StudentAttendance.objects.all()
     serializer_class = StudentAttendanceSerializer
@@ -124,20 +252,36 @@ class MultipleAttendanceViewSet1(ModelViewSet):
                 if status_code in ["A", "L"]:
                     absent_leave_students.append(student)
 
-        # === Send Notification for Absent / Leave Students ===
+        # === Send Email Notification for Absent / Leave Students ===
         for student in absent_leave_students:
             student_name = f"{student.user.first_name} {student.user.last_name}"
-            msg = (
+            message_text = (
                 f"Dear Parent,\n\n"
-                f"{student_name} was marked as Absent "
+                f"{student_name} was marked as Absent/Leave "
                 f"on {marked_at.strftime('%d-%m-%Y')}.\n"
                 f"Kindly ensure regular attendance.\n\n"
                 f"Regards,\nSchool Management"
             )
-            send_whatsapp_message(msg)
+            # Print to terminal for debugging
+            print("---- Attendance Notification ----")
+            print(message_text)
+            print("--------------------------------")
+
+            student_email = getattr(student.user, "email", None)
+            if student_email:
+                email_response = send_email_notification(
+                    subject="Attendance Notification",
+                    message=message_text,
+                    recipients=[student_email]
+                )
+                print("Email send response:", email_response)
+            else:
+                print(f"No email found for student: {student_name} (ID: {student.id})")
 
         serializer = self.get_serializer(created_records, many=True)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
 
 class AttendanceReportViewSet(ReadOnlyModelViewSet):
     serializer_class = StudentAttendanceSerializer
@@ -455,6 +599,86 @@ class TeacherYearLevelList(APIView):
             for l in levels
         ]
         return Response(data)
+# class BulkHolidayAttendanceViewSet(ViewSet):
+#     def list(self, request):
+#         holidays = Holiday.objects.all().order_by('-start_date')
+#         serializer = HolidaySerializer(holidays, many=True)
+#         return Response(serializer.data)
+
+#     def create(self, request):
+#         start_date_str = request.data.get('start_date')
+#         end_date_str = request.data.get('end_date')
+#         title = request.data.get('title', 'Unnamed Holiday')
+
+#         if not start_date_str or not end_date_str:
+#             return Response({"error": "Start and end date are required."}, status=400)
+
+#         try:
+#             start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+#             end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+#         except ValueError:
+#             return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=400)
+
+#         if start_date > end_date:
+#             return Response({"error": "Start date must be before end date."}, status=400)
+
+#         # Create Holiday
+#         Holiday.objects.create(
+#             title=title,
+#             start_date=start_date,
+#             end_date=end_date
+#         )
+
+#         # Mark Holiday Attendance for all Students
+#         students = Student.objects.all()
+#         dates = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
+#         count = 0
+
+#         for student in students:
+#             try:
+#                 syl = StudentYearLevel.objects.get(student=student)
+#                 for date in dates:
+#                     if not StudentAttendance.objects.filter(student=student, marked_at=date).exists():
+#                         StudentAttendance.objects.create(
+#                             student=student,
+#                             status='H',
+#                             marked_at=date,
+#                             year_level=syl.level
+#                         )
+#                         count += 1
+#             except StudentYearLevel.DoesNotExist:
+#                 continue
+
+#         # Get all user phone numbers (students, teachers, staff, guardians)
+#         # phone_numbers = list(                 # commented as of 07Sep25 at 12:34 PM
+#         #     User.objects.filter(is_active=True)
+#         #     .exclude(phone_number__isnull=True)
+#         #     .exclude(phone_number__exact="")
+#         #     .values_list('phone_number', flat=True)
+#         # )
+
+#         # Send WhatsApp Notification to all users
+#         message_text = f"📢 Notice: {title} holiday has been declared from {start_date} to {end_date}."
+#         # if phone_numbers:                     # commented as of 07Sep25 at 12:34 PM
+#             # send_whatsapp_message(message_text, phone_numbers)    {len(phone_numbers)}
+#         send_whatsapp_message(message_text)
+
+#         return Response({
+#             "message": f"{count} holiday attendance records created. Notifications sent to users."
+#         }, status=201)
+
+
+from rest_framework.viewsets import ViewSet
+from rest_framework.response import Response
+from datetime import datetime, timedelta
+from django.contrib.auth import get_user_model
+
+from .models import Holiday, Student, StudentYearLevel, StudentAttendance
+from .serializers import HolidaySerializer
+from utils.email_notifications import send_email_notification
+User = get_user_model()
+
+
 class BulkHolidayAttendanceViewSet(ViewSet):
     def list(self, request):
         holidays = Holiday.objects.all().order_by('-start_date')
@@ -479,7 +703,7 @@ class BulkHolidayAttendanceViewSet(ViewSet):
             return Response({"error": "Start date must be before end date."}, status=400)
 
         # Create Holiday
-        Holiday.objects.create(
+        holiday = Holiday.objects.create(
             title=title,
             start_date=start_date,
             end_date=end_date
@@ -505,23 +729,45 @@ class BulkHolidayAttendanceViewSet(ViewSet):
             except StudentYearLevel.DoesNotExist:
                 continue
 
-        # Get all user phone numbers (students, teachers, staff, guardians)
-        # phone_numbers = list(                 # commented as of 07Sep25 at 12:34 PM
-        #     User.objects.filter(is_active=True)
-        #     .exclude(phone_number__isnull=True)
-        #     .exclude(phone_number__exact="")
-        #     .values_list('phone_number', flat=True)
-        # )
+        # ---------------------- EMAIL NOTIFICATION ----------------------
+        # Collect all active student emails
+        student_emails = list(
+            User.objects.filter(
+                is_active=True,
+                student__isnull=False   # only users linked to students
+            )
+            .exclude(email__isnull=True)
+            .exclude(email__exact="")
+            .values_list("email", flat=True)
+        )
 
-        # Send WhatsApp Notification to all users
+        if student_emails:
+            subject = f"📢 Holiday Notice: {title}"
+            message = (
+                f"Dear Student,\n\n"
+                f"This is to inform you that a holiday titled '{title}' "
+                f"has been declared from {start_date} to {end_date}.\n\n"
+                f"Enjoy your break!\n\nRegards,\nSchool Administration"
+            )
+
+            email_response = send_email_notification(
+                subject=subject,
+                message=message,
+                recipients=student_emails
+            )
+        else:
+            email_response = {"status": "failed", "reason": "No student emails found"}
+
+        # ---------------------- WHATSAPP NOTIFICATION ----------------------
         message_text = f"📢 Notice: {title} holiday has been declared from {start_date} to {end_date}."
-        # if phone_numbers:                     # commented as of 07Sep25 at 12:34 PM
-            # send_whatsapp_message(message_text, phone_numbers)    {len(phone_numbers)}
         send_whatsapp_message(message_text)
 
         return Response({
-            "message": f"{count} holiday attendance records created. Notifications sent to users."
+            "message": f"{count} holiday attendance records created. Notifications sent to students.",
+            "email_response": email_response
         }, status=201)
+
+
 
 
 class FetchIndianHolidaysView(APIView):
