@@ -1484,6 +1484,12 @@ class CountryView(viewsets.ModelViewSet):
 class subjectView(viewsets.ModelViewSet):
     queryset = Subject.objects.all()
     serializer_class = subjectSerializer
+    def get_queryset(self):
+        qs = super().get_queryset()
+        year_id = self.request.query_params.get('year_level')
+        if year_id:
+            qs = qs.filter(year_levels__id=year_id)
+        return qs
 
 
 # ===============State===================

@@ -217,6 +217,7 @@ class Department(models.Model):
 class Subject(models.Model):
     department = models.ForeignKey(Department, on_delete=models.DO_NOTHING)
     subject_name = models.CharField(max_length=250, null=False)
+    year_levels = models.ManyToManyField("YearLevel", related_name="subjects")
 
     def __str__(self):
         return f"{self.department} - {self.subject_name}"
@@ -701,7 +702,7 @@ class SchoolExpense(models.Model):
     school_year = models.ForeignKey(SchoolYear, on_delete=models.CASCADE)
     category = models.ForeignKey(ExpenseCategory, on_delete=models.PROTECT, related_name='expenses')# 
     amount = models.DecimalField(max_digits=12, decimal_places=2)# 
-    description = models.TextField(blank=True, null=True)# 
+    description = models.TextField(max_length=225,blank=True, null=True)# 
     expense_date = models.DateField()# 
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='cash') 
     attachment = models.FileField(upload_to=expense_attachments, blank=True, null=True) 
@@ -742,7 +743,7 @@ class EmployeeSalary(models.Model):
     payment_date = models.DateField()
     payment_method = models.CharField(max_length=20,choices=[('cash', 'Cash'), ('cheque', 'Cheque'), ('online','Online')],)
     paid_by = models.ForeignKey("authentication.User", on_delete=models.SET_NULL, null=True, blank=True) #jisne salary issue ki
-    remarks = models.TextField(null=True, blank=True)
+    remarks = models.TextField(max_length=225,null=True, blank=True)
     status = models.CharField(max_length=20,choices=[('paid', 'Paid'), ('pending', 'Pending')],default='pending')
     created_at = models.DateTimeField(auto_now=True)
 
@@ -780,7 +781,7 @@ class SchoolIncome(models.Model):
     month = models.CharField(max_length=20, choices=MONTH_CHOICES)
     category = models.ForeignKey(IncomeCategory, on_delete=models.PROTECT, related_name='incomes')# 
     amount = models.DecimalField(max_digits=12, decimal_places=2)# 
-    description = models.TextField(blank=True, null=True)# 
+    description = models.TextField(max_length=225,blank=True, null=True)# 
     income_date = models.DateField()# 
     school_year = models.ForeignKey(SchoolYear, on_delete=models.PROTECT)  # Added as of 20Aug25
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='cash') 
