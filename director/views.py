@@ -5125,12 +5125,16 @@ class SchoolExpenseView(viewsets.ModelViewSet):
             expense.status = "approved"
             expense.approved_by = user
             expense.save()
-            return Response(SchoolExpenseSerializer(expense).data, status=status.HTTP_201_CREATED)
+            # return Response(SchoolExpenseSerializer(expense).data, status=status.HTTP_201_CREATED)
+            return Response({"message": "Expense approved successfully","expense": SchoolExpenseSerializer(expense).data}, status=status.HTTP_201_CREATED)
+
 
         elif payment_method == "cheque":
             expense.status = "pending"  
             expense.save()
-            return Response(SchoolExpenseSerializer(expense).data, status=status.HTTP_201_CREATED)
+            # return Response(SchoolExpenseSerializer(expense).data, status=status.HTTP_201_CREATED)
+            return Response({"message": "Expense created and pending approval","expense": SchoolExpenseSerializer(expense).data}, status=status.HTTP_201_CREATED)
+
 
         elif payment_method == "online":
             # Call initiate_expense_payment function
