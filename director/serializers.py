@@ -3847,10 +3847,12 @@ class IncomeCategorySerializer(serializers.ModelSerializer):
         model = IncomeCategory
         fields = "__all__"
 
+from director.utils import AbsoluteURLFileField
 class SchoolIncomeSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     creator = serializers.SerializerMethodField()
     school_year_value = serializers.SerializerMethodField()
+    attachment = AbsoluteURLFileField(required=False, allow_null=True)
 
     class Meta:
         model = SchoolIncome
@@ -3864,6 +3866,24 @@ class SchoolIncomeSerializer(serializers.ModelSerializer):
 
     def get_school_year_value(self, obj):
         return obj.school_year.year_name if obj.school_year else None
+
+    def validate_attachment(self, value):
+        if not value:
+            return value
+
+        # File size check (2 MB max)
+        max_size = 2 * 1024 * 1024  # 2 MB
+        if value.size > max_size:
+            raise serializers.ValidationError("File size must be under 2MB.")
+
+        # File extension check
+        ext = os.path.splitext(value.name)[1].lower()
+        allowed_extensions = [".jpg", ".jpeg", ".png", ".webp", ".pdf"]
+        if ext not in allowed_extensions:
+            raise serializers.ValidationError(
+                f"Unsupported file type '{ext}'. Allowed types are: {', '.join(allowed_extensions)}"
+            )
+        return value
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
