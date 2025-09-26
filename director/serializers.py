@@ -440,6 +440,16 @@ class AdmissionSerializer(serializers.ModelSerializer):
             user = User.objects.create_user(**user_data)
             user.role.add(role)
 
+
+        # ===== Generate scholar_number here =====
+        last_student = Student.objects.order_by('-id').first()
+        
+        if last_student and last_student.scholar_number and last_student.scholar_number.isdigit():
+            next_number = int(last_student.scholar_number) + 1
+        else:
+            next_number = 1
+        student_data['scholar_number'] = str(next_number).zfill(4)
+
         student, created = Student.objects.get_or_create(user=user, defaults=student_data)
         if not created:
             raise serializers.ValidationError({"student": "Student already exists for this user."})
@@ -1283,11 +1293,12 @@ class FeeDiscountSerializer(serializers.ModelSerializer):   # added today as of 
     student_id = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all(),source='student')
     student_name = serializers.SerializerMethodField()
     year_level = serializers.SerializerMethodField()
+    scholar_no = serializers.SerializerMethodField()
 
     class Meta:
         model = FeeDiscount
-        fields = ["id","student_id","student_name","year_level","admission_fee_discount","tuition_fee_discount","admission_fee","tuition_fee","discount_reason","is_allowed","created_at","updated_at",]
-        read_only_fields = ["admission_fee","tuition_fee","created_at", "updated_at"]  
+        fields = ["id","student_id","student_name","scholar_no","year_level","admission_fee_discount","tuition_fee_discount","admission_fee","tuition_fee","discount_reason","is_allowed","created_at","updated_at",]
+        read_only_fields = ["admission_fee","tuition_fee","created_at", "updated_at","scholar_no"]  
     
     def get_student_name(self, obj):
         return f"{obj.student.user.first_name} {obj.student.user.last_name}".strip()
@@ -1300,6 +1311,10 @@ class FeeDiscountSerializer(serializers.ModelSerializer):   # added today as of 
             .first()
         )
         return student_year_level.level.level_name if student_year_level else None
+
+    def get_scholar_no(self, obj):
+        scholar_no= obj.student.scholar_number
+        return scholar_no
 
     def validate(self, attrs):
         student = attrs.get("student")
@@ -3539,16 +3554,25 @@ class IncomeCategorySerializer(serializers.ModelSerializer):
 class SchoolIncomeSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     creator = serializers.SerializerMethodField()
+    school_year_value = serializers.SerializerMethodField()
 
     class Meta:
         model = SchoolIncome
         fields = "__all__"
-        read_only_fields = ["created_at", "creator"]
+        read_only_fields = ["created_at", "creator","school_year_value"]
 
     def get_creator(self, obj):
         if obj.created_by:
             return f"{obj.created_by.first_name} {obj.created_by.last_name}".strip()
         return None
+
+    def get_school_year_value(self, obj):
+        return obj.school_year.year_name if obj.school_year else None
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["school_year"] = self.get_school_year_value(instance)
+        return data
 
     def validate(self, data):
         category = data.get("category")
