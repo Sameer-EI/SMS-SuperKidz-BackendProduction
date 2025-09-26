@@ -124,6 +124,11 @@ def Document_folder(instance, filename):
 
 
 # ---------------------- Exam Paper
+def clean_name(name):
+    if not name:
+        return "unknown"
+    return name.replace("\xa0", "_").replace(" ", "_")
+
 
 def ExamPaper_folder(instance, filename):
     try:

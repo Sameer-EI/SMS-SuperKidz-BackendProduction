@@ -23,6 +23,7 @@ import calendar
 from django.core.exceptions import ValidationError
 import os
 from dateutil.relativedelta import relativedelta
+from django.conf import settings
 
 class YearLevelSerializer(serializers.ModelSerializer):   # coomented as of 05June25 at 01:36 AM
     class Meta:
@@ -2748,6 +2749,7 @@ class ExamPaperItemSerializer(serializers.Serializer):
     start_time = serializers.TimeField()
     end_time = serializers.TimeField()
 
+MAX_SUBJECTS_PER_TIMETABLE = 10  
 from collections import Counter
 class ExamScheduleSerializer(serializers.Serializer):
     class_name = serializers.IntegerField()
@@ -2757,12 +2759,67 @@ class ExamScheduleSerializer(serializers.Serializer):
 
     def validate(self, data):
         subject_ids = [paper["subject_id"] for paper in data.get("papers", [])]
-        duplicate_subjects = [sub_id for sub_id, count in Counter(subject_ids).items() if count > 1]
 
+        # Duplicate subjects
+        duplicate_subjects = [sub_id for sub_id, count in Counter(subject_ids).items() if count > 1]
         if duplicate_subjects:
             raise serializers.ValidationError({
                 "papers": f"Duplicate subject(s) found in timetable: {duplicate_subjects}"
             })
+        
+        class_id = data["class_name"]
+        exam_type_id = data["exam_type"]
+        school_year_id = data["school_year"]
+        papers = data.get("papers", [])
+
+        class_obj = YearLevel.objects.get(id=class_id)
+        max_per_date = 3 if class_obj.level_order >= 15 else 1
+
+        school_year = SchoolYear.objects.get(id=school_year_id)
+        term = Term.objects.filter(year=school_year).first()
+        if not term:
+            raise serializers.ValidationError({"term": f"No term found for school year '{school_year.year_name}'"})
+
+        existing_papers = ExamSchedule.objects.filter(
+            class_name_id=class_id,
+            exam_type_id=exam_type_id,
+            term_id=term.id
+        )
+
+        # check total subjects per timetable 
+        total_subjects_after_add = existing_papers.count() + len(papers)
+        if total_subjects_after_add > MAX_SUBJECTS_PER_TIMETABLE:
+            raise serializers.ValidationError({
+                "papers": f"Cannot add {len(papers)} subjects. This timetable already has {existing_papers.count()} subjects. Max allowed per timetable is {MAX_SUBJECTS_PER_TIMETABLE}."
+            })
+
+
+        date_counter = Counter([str(p.exam_date) for p in existing_papers])
+        for p in papers:
+            date_counter[str(p["exam_date"])] += 1
+
+        # check if any date exceeds max allowed
+        over_limit_dates = [d for d, cnt in date_counter.items() if cnt > max_per_date]
+        if over_limit_dates:
+            raise serializers.ValidationError({
+                "papers": f"Too many papers on date(s): {over_limit_dates} (max {max_per_date})"
+            })
+
+        # only one date can have max papers, others must have 1 each
+        max_count_dates = [d for d, cnt in date_counter.items() if cnt == max_per_date]
+        if len(max_count_dates) > 1:
+            raise serializers.ValidationError({
+                # "papers": f"Sirf ek date par maximum {max_per_date} papers ho sakte hain, baaki dates me 1 paper hi ho sakta hai."
+                "papers": f"For {class_obj.level_name}, only one day is allowed to have {max_per_date} exams. Every other day must have only one exam."
+            })
+
+        for d, cnt in date_counter.items():
+            if d not in max_count_dates and cnt != 1:
+                raise serializers.ValidationError({
+                    # "papers": f"{class_obj.level_name} me {d} par 1 paper hona chahiye."
+                    "papers": f"{class_obj.level_name} can have only one subject scheduled on {d}."
+                })
+
         return data
 
 
@@ -2776,6 +2833,10 @@ class ExamScheduleSerializer(serializers.Serializer):
             raise serializers.ValidationError({
                 "subject": f"Subject with ID {subject_id} does not exist."
             })
+        
+        exam_date = paper["exam_date"]
+        if isinstance(exam_date, str):
+            exam_date = datetime.strptime(exam_date, "%Y-%m-%d").date()
 
         exam_date = paper["exam_date"]
 
@@ -2798,6 +2859,17 @@ class ExamScheduleSerializer(serializers.Serializer):
                 "exam_date": f"Exams cannot be scheduled on Sunday: {exam_date}"
             })
 
+        start_time = paper["start_time"]
+        end_time = paper["end_time"]
+
+        # Start < End
+        if start_time >= end_time:
+            raise serializers.ValidationError({
+                "time": f"Exam for '{subject.subject_name}' must have start time before end time."
+            })
+
+
+
         # Duration check (≤ 3 hours)
         start_dt = datetime.combine(datetime.today(), paper["start_time"])
         end_dt = datetime.combine(datetime.today(), paper["end_time"])
@@ -2808,6 +2880,51 @@ class ExamScheduleSerializer(serializers.Serializer):
                 "time": f"Exam duration for subject '{subject.subject_name}' cannot exceed 3 hours."
             })
 
+        # Allowed time range (8:00 AM to 5:00 PM)
+        def format_time_12hr(t: time):
+            return t.strftime("%I:%M %p")  # 08:00 AM, 05:00 PM
+
+        allowed_start = time(8, 0)  # 08:00 AM
+        allowed_end = time(17, 0)   # 05:00 PM
+
+        if not (allowed_start <= paper["start_time"] <= allowed_end):
+            raise serializers.ValidationError({
+                "start_time": f"Exam for '{subject.subject_name}' must start between {format_time_12hr(allowed_start)} and {format_time_12hr(allowed_end)}."
+            })
+
+        if not (allowed_start <= paper["end_time"] <= allowed_end):
+            raise serializers.ValidationError({
+                "end_time": f"Exam for '{subject.subject_name}' must end between {format_time_12hr(allowed_start)} and {format_time_12hr(allowed_end)}."
+            })
+      
+        class_id = self.initial_data.get("class_name")
+        exam_type_id = self.initial_data.get("exam_type")
+        school_year_id = self.initial_data.get("school_year")
+
+        if not class_id:
+            raise serializers.ValidationError({"class_name": "Class is required for exam scheduling."})
+
+        # Get class object
+        class_obj = YearLevel.objects.get(id=class_id)
+
+        # Determine max exams per date based on class
+        if class_obj.level_order >= 15:  # Class 11 & 12
+            max_allowed = 3
+        else:  # Class ≤ 10
+            max_allowed = 1
+
+        # Existing exams for this class, date, type, year
+        existing_exams_count = ExamSchedule.objects.filter(
+            class_name_id=class_id,
+            exam_date=exam_date,
+            exam_type_id=exam_type_id,
+            term__year_id=school_year_id
+        ).count()
+
+        if existing_exams_count >= max_allowed:
+            raise serializers.ValidationError({
+                "exam_date": f"{class_obj.level_name} can have maximum {max_allowed} exam(s) on {exam_date}."
+            })
 
 
     def create(self, validated_data):
@@ -3016,13 +3133,14 @@ class ExamPaperSerializer(serializers.ModelSerializer):
     exam_name = serializers.CharField(source='exam_type.name', read_only=True)
     teacher_name = serializers.SerializerMethodField()
     year = serializers.CharField(source='term.year.year_name', read_only=True)
+    uploaded_file_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ExamPaper
         fields = [
             'id', 'subject_name', 'year_level_name', 'exam_name', 'teacher_name',
             'total_marks', 'paper_code', 'uploaded_file', 'year',
-            'exam_type', 'term', 'subject', 'year_level', 'teacher'
+            'exam_type', 'term', 'subject', 'year_level', 'teacher','uploaded_file_url'
         ]
         extra_kwargs = {
             'exam_type': {'write_only': True},
@@ -3036,6 +3154,20 @@ class ExamPaperSerializer(serializers.ModelSerializer):
         if obj.teacher and obj.teacher.user:
             return obj.teacher.user.get_full_name()
         return None
+
+
+    def get_uploaded_file_url(self, obj):
+        import os
+        from django.conf import settings
+
+        if obj.uploaded_file:
+            file_path = os.path.join(settings.MEDIA_ROOT, obj.uploaded_file.name)
+            if os.path.exists(file_path):
+                return obj.uploaded_file.url
+            else:
+                return "File has been deleted or not found"
+        return None
+
 
     def validate_uploaded_file(self, value):
         # 1. File size check like 5 MB
