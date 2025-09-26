@@ -440,6 +440,16 @@ class AdmissionSerializer(serializers.ModelSerializer):
             user = User.objects.create_user(**user_data)
             user.role.add(role)
 
+
+        # ===== Generate scholar_number here =====
+        last_student = Student.objects.order_by('-id').first()
+        
+        if last_student and last_student.scholar_number and last_student.scholar_number.isdigit():
+            next_number = int(last_student.scholar_number) + 1
+        else:
+            next_number = 1
+        student_data['scholar_number'] = str(next_number).zfill(4)
+
         student, created = Student.objects.get_or_create(user=user, defaults=student_data)
         if not created:
             raise serializers.ValidationError({"student": "Student already exists for this user."})

@@ -51,7 +51,7 @@ class StudentSerializer(serializers.ModelSerializer):
     number_of_siblings = serializers.IntegerField(required=False, allow_null=True)
     roll_number = serializers.CharField(required=False, allow_null=True) 
     contact_number = serializers.CharField(required=False, allow_null=True, allow_blank=True)
-    scholar_number = serializers.SerializerMethodField(read_only=True)  # Read-only field
+    scholar_number = serializers.CharField(read_only=True, allow_null=False)  # Read-only field
 
 
     # Classes many-to-many
@@ -64,14 +64,6 @@ class StudentSerializer(serializers.ModelSerializer):
             'father_name', 'mother_name', 'date_of_birth', 'gender', 'religion', 'category',
             'height', 'weight', 'blood_group', 'number_of_siblings', 'roll_number','contact_number','scholar_number','classes'
         ]
-    
-    def get_scholar_number(self, obj):
-        last_student = Student.objects.order_by('-scholar_number').first()
-        if last_student and last_student.scholar_number.isdigit():
-            next_number = int(last_student.scholar_number) + 1
-        else:
-            next_number = 1
-        return str(next_number).zfill(4)
 
     def to_representation(self, instance):
         rep = super().to_representation(instance)
@@ -122,9 +114,20 @@ class StudentSerializer(serializers.ModelSerializer):
             user.user_profile = user_data['user_profile']
         user.save()
 
+        # ===== Generate scholar_number here =====
+        last_student = Student.objects.order_by('-id').first()
+        
+        if last_student and last_student.scholar_number and last_student.scholar_number.isdigit():
+            next_number = int(last_student.scholar_number) + 1
+        else:
+            next_number = 1
+        validated_data['scholar_number'] = str(next_number).zfill(4)
+
+        
         student = Student.objects.create(user=user, **validated_data)
         # student.classes.set(classes_data)
-        # ✅ Only call .set() if the list is not empty
+
+        # Only call .set() if the list is not empty
         if classes_data:
             student.classes.set(classes_data)
 
