@@ -2532,7 +2532,7 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         result = []
         for item in summary:
-            total = item["total_amount"] + item["late_fee"]
+            total = item["total_amount"]# + item["late_fee"]#is se do baar late fee add ho rahi he
             due = max(0, total - item["paid_amount"])
 
             result.append({
@@ -2588,10 +2588,10 @@ class FeeRecordView(viewsets.ModelViewSet):
                 late_fee=Coalesce(Sum("late_fee", output_field=FloatField()), Value(0.0))
             )
         )
-        print(summary)
+        # print(summary)
         formatted_summary = []
         for item in summary:
-            total = item["total_amount"] + item["late_fee"]
+            total = item["total_amount"] #+ item["late_fee"]#is se do baar late fee add ho rahi he
             due = max(0, total - item["paid_amount"])
             
             formatted_summary.append({
@@ -3550,47 +3550,47 @@ class DownloadFileView(APIView):
 class ExamTypeView(viewsets.ModelViewSet):
     queryset = ExamType.objects.all()
     serializer_class = ExamTypeSerializer
-    # permission_classes = [IsAuthenticated, RoleBasedExamPermission]
+    permission_classes = [IsAuthenticated, RoleBasedExamPermission]
     api_section = 'exam_type'
 
-    @action(detail=False, methods=["get"], url_path="get_examtype")
-    def get_examtypes(self, request):
-        exam_types = self.get_queryset()
-        serializer = self.get_serializer(exam_types, many=True)
-        return Response(serializer.data)
+    # @action(detail=False, methods=["get"], url_path="get_examtype")
+    # def get_examtypes(self, request):
+    #     exam_types = self.get_queryset()
+    #     serializer = self.get_serializer(exam_types, many=True)
+    #     return Response(serializer.data)
 
-    @action(detail=False, methods=["post"], url_path="create_examtype")
-    def create_examtype(self, request):
-        name = request.data.get("name")
-        if not name:
-            return Response({"error": "Name is required."}, status=400)
+    # @action(detail=False, methods=["post"], url_path="create_examtype")
+    # def create_examtype(self, request):
+    #     name = request.data.get("name")
+    #     if not name:
+    #         return Response({"error": "Name is required."}, status=400)
 
-        exam_type, created = ExamType.objects.get_or_create(name=name)
-        serializer = self.get_serializer(exam_type)
-        message = "Exam type created successfully." if created else "Exam type already exists."
-        return Response({"message": message, "data": serializer.data}, status=201 if created else 200)
+    #     exam_type, created = ExamType.objects.get_or_create(name=name)
+    #     serializer = self.get_serializer(exam_type)
+    #     message = "Exam type created successfully." if created else "Exam type already exists."
+    #     return Response({"message": message, "data": serializer.data}, status=201 if created else 200)
 
-    @action(detail=False, methods=["put"], url_path="update_examtype")
-    def update_examtype(self, request):
-        try:
-            exam_type = ExamType.objects.get(id=request.data.get("id"))
-        except ExamType.DoesNotExist:
-            return Response({"error": "ExamType not found"}, status=404)
+    # @action(detail=False, methods=["put"], url_path="update_examtype")
+    # def update_examtype(self, request):
+    #     try:
+    #         exam_type = ExamType.objects.get(id=request.data.get("id"))
+    #     except ExamType.DoesNotExist:
+    #         return Response({"error": "ExamType not found"}, status=404)
 
-        serializer = self.get_serializer(exam_type, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response({"message": "Exam type updated successfully", "data": serializer.data})
-        return Response(serializer.errors, status=400)
+    #     serializer = self.get_serializer(exam_type, data=request.data, partial=True)
+    #     if serializer.is_valid():
+    #         serializer.save()
+    #         return Response({"message": "Exam type updated successfully", "data": serializer.data})
+    #     return Response(serializer.errors, status=400)
 
-    @action(detail=False, methods=["delete"], url_path="delete_examtype")
-    def delete_examtype(self, request):
-        try:
-            exam_type = ExamType.objects.get(id=request.data.get("id"))
-            exam_type.delete()
-            return Response({"message": "ExamType deleted successfully."})
-        except ExamType.DoesNotExist:
-            return Response({"error": "ExamType not found"}, status=404)
+    # @action(detail=False, methods=["delete"], url_path="delete_examtype")
+    # def delete_examtype(self, request):
+    #     try:
+    #         exam_type = ExamType.objects.get(id=request.data.get("id"))
+    #         exam_type.delete()
+    #         return Response({"message": "ExamType deleted successfully."})
+    #     except ExamType.DoesNotExist:
+    #         return Response({"error": "ExamType not found"}, status=404)
 
 
 
@@ -3614,6 +3614,28 @@ class ExamPaperView(viewsets.ModelViewSet):
         
         else:
             return Response({"error": "You do not have permission to view exam papers."}, status=403)
+        # Filters from query params
+        subject_id = request.query_params.get("subject")
+        teacher_id = request.query_params.get("teacher")
+        school_year = request.query_params.get("school_year")
+        paper_code = request.query_params.get("paper_code")
+        exam_type_id = request.query_params.get("exam_type")
+        class_id = request.query_params.get("class")
+
+        if subject_id:
+            queryset = queryset.filter(subject__subject_name=subject_id)
+        if teacher_id:
+            queryset = queryset.filter(teacher_id=teacher_id)
+        if school_year:
+            queryset = queryset.filter(term__year__year_name=school_year)
+        if paper_code:
+            queryset = queryset.filter(paper_code__icontains=paper_code)
+        if exam_type_id:
+            queryset = queryset.filter(exam_type__name=exam_type_id)
+        if class_id:
+            queryset = queryset.filter(year_level__level_name=class_id)
+        if not queryset.exists():
+            return Response([])
 
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
@@ -3769,11 +3791,29 @@ class ExamScheduleView(viewsets.ModelViewSet):
         else:
             return Response({"error": "Access Denied"}, status=403)
 
-        # 🔹 Apply filters from query params
+        # Apply filters from query params
         class_name = request.query_params.get("class_name")
         school_year = request.query_params.get("school_year")
         subject = request.query_params.get("subject")
         exam_type = request.query_params.get("exam_type")
+        schedule_id = request.query_params.get("id")
+        exam_date = request.query_params.get("exam_date")  
+
+        if schedule_id:
+            try:
+                record = ExamSchedule.objects.get(id=schedule_id)
+            except ExamSchedule.DoesNotExist:
+                return Response({"error": "Schedule not found"}, status=404)
+
+            queryset = ExamSchedule.objects.filter(
+                class_name=record.class_name,
+                term=record.term,
+                exam_type=record.exam_type
+            )
+
+        if exam_date:
+            queryset = queryset.filter(exam_date=exam_date)  
+
 
         if class_name:
             queryset = queryset.filter(class_name__level_name__iexact=class_name)
@@ -5010,6 +5050,19 @@ class SchoolExpenseView(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = SchoolExpense.objects.all()
 
+        search = self.request.query_params.get("search")
+        if search:
+            queryset = queryset.filter(
+                Q(category__name__icontains=search) |
+                Q(description__icontains=search) |
+                Q(payment_method__icontains=search) |
+                Q(status__icontains=search) |
+                Q(created_by__first_name__icontains=search) |
+                Q(created_by__last_name__icontains=search) |
+                Q(expense_date__icontains=search)
+            )
+
+
         school_year_id = self.request.query_params.get("school_year")
         if school_year_id:
             queryset = queryset.filter(school_year_id=school_year_id)
@@ -5207,6 +5260,10 @@ class EmployeeView(viewsets.ModelViewSet):
     def get_emp(self, request):
         role = request.query_params.get("role")
         emp_id = request.query_params.get("id")   
+        name = request.query_params.get("name")
+        queryset = self.get_queryset()
+        filters = Q()  
+
 
         if emp_id:
             try:
@@ -5235,7 +5292,15 @@ class EmployeeView(viewsets.ModelViewSet):
             serializer = UserSerializer(users_to_return, many=True)
             return Response(serializer.data)
 
-        queryset = self.get_queryset()
+        if name:
+            filters &= (
+                Q(user__first_name__icontains=name) |
+                Q(user__middle_name__icontains=name) |
+                Q(user__last_name__icontains=name)
+            )
+        queryset = queryset.filter(filters).distinct()
+
+        # queryset = self.get_queryset()
         serializer = self.get_serializer(queryset.distinct(), many=True)
         return Response(serializer.data)
 
@@ -5382,7 +5447,7 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
 
         if payment_method == "cash":
             salary.status = "paid"
-            salary.paid_by = user
+            salary.paid_by = request.user
             salary.save()
             return Response(EmployeeSalarySerializer(salary).data, status=status.HTTP_201_CREATED)
         
@@ -5399,7 +5464,13 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
         else:
             return Response({"error": "Invalid payment method"}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(EmployeeSalarySerializer(salary).data, status=status.HTTP_201_CREATED)
+        # return Response(EmployeeSalarySerializer(salary).data, status=status.HTTP_201_CREATED)
+        
+        return Response({
+            "message": "Salary record created successfully",
+            "data": EmployeeSalarySerializer(salary).data
+        }, status=status.HTTP_201_CREATED)
+
 
     @action(detail=False, methods=["post"], url_path="initiate-salary-payment")
     def initiate_salary_payment(self, request):
