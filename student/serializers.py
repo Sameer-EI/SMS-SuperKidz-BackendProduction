@@ -51,7 +51,7 @@ class StudentSerializer(serializers.ModelSerializer):
     number_of_siblings = serializers.IntegerField(required=False, allow_null=True)
     roll_number = serializers.CharField(required=False, allow_null=True) 
     contact_number = serializers.CharField(required=False, allow_null=True, allow_blank=True)
-    scholar_number = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    scholar_number = serializers.SerializerMethodField(read_only=True)  # Read-only field
 
 
     # Classes many-to-many
@@ -64,6 +64,14 @@ class StudentSerializer(serializers.ModelSerializer):
             'father_name', 'mother_name', 'date_of_birth', 'gender', 'religion', 'category',
             'height', 'weight', 'blood_group', 'number_of_siblings', 'roll_number','contact_number','scholar_number','classes'
         ]
+    
+    def get_scholar_number(self, obj):
+        last_student = Student.objects.order_by('-scholar_number').first()
+        if last_student and last_student.scholar_number.isdigit():
+            next_number = int(last_student.scholar_number) + 1
+        else:
+            next_number = 1
+        return str(next_number).zfill(4)
 
     def to_representation(self, instance):
         rep = super().to_representation(instance)
@@ -87,7 +95,7 @@ class StudentSerializer(serializers.ModelSerializer):
             'user_profile': validated_data.pop('user_profile', None),
         }
         classes_data = validated_data.pop('classes',[])
-            # ✅ Normalize class IDs to integers
+            # Normalize class IDs to integers
         if isinstance(classes_data, list):
             try:
                 classes_data = [int(c) for c in classes_data]
