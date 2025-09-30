@@ -3171,17 +3171,23 @@ class ExamPaperSerializer(serializers.ModelSerializer):
         return None
 
 
-    def get_uploaded_file_url(self, obj):
-        import os
-        from django.conf import settings
+    # def get_uploaded_file_url(self, obj):
+    #     import os
+    #     from django.conf import settings
 
-        if obj.uploaded_file:
-            file_path = os.path.join(settings.MEDIA_ROOT, obj.uploaded_file.name)
-            if os.path.exists(file_path):
-                return obj.uploaded_file.url
-            else:
-                return "File has been deleted or not found"
-        return None
+    #     if obj.uploaded_file:
+    #         file_path = os.path.join(settings.MEDIA_ROOT, obj.uploaded_file.name)
+    #         if os.path.exists(file_path):
+    #             return obj.uploaded_file.url
+    #         else:
+    #             return "File has been deleted or not found"
+    #     return None
+    def get_uploaded_file_url(self, obj):
+        # Check if file exists
+        if obj.uploaded_file and obj.uploaded_file.storage.exists(obj.uploaded_file.name):
+            request = self.context.get('request')
+            return request.build_absolute_uri(obj.uploaded_file.url)
+        return None  # ya "File has been deleted or not found"
 
 
     def validate_uploaded_file(self, value):
