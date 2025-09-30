@@ -51,7 +51,7 @@ class StudentSerializer(serializers.ModelSerializer):
     number_of_siblings = serializers.IntegerField(required=False, allow_null=True)
     roll_number = serializers.CharField(required=False, allow_null=True) 
     contact_number = serializers.CharField(required=False, allow_null=True, allow_blank=True)
-    scholar_number = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    scholar_number = serializers.CharField(read_only=True, allow_null=False)  # Read-only field
 
 
     # Classes many-to-many
@@ -87,7 +87,7 @@ class StudentSerializer(serializers.ModelSerializer):
             'user_profile': validated_data.pop('user_profile', None),
         }
         classes_data = validated_data.pop('classes',[])
-            # ✅ Normalize class IDs to integers
+            # Normalize class IDs to integers
         if isinstance(classes_data, list):
             try:
                 classes_data = [int(c) for c in classes_data]
@@ -114,9 +114,20 @@ class StudentSerializer(serializers.ModelSerializer):
             user.user_profile = user_data['user_profile']
         user.save()
 
+        # ===== Generate scholar_number here =====
+        last_student = Student.objects.order_by('-id').first()
+        
+        if last_student and last_student.scholar_number and last_student.scholar_number.isdigit():
+            next_number = int(last_student.scholar_number) + 1
+        else:
+            next_number = 1
+        validated_data['scholar_number'] = str(next_number).zfill(4)
+
+        
         student = Student.objects.create(user=user, **validated_data)
         # student.classes.set(classes_data)
-        # ✅ Only call .set() if the list is not empty
+
+        # Only call .set() if the list is not empty
         if classes_data:
             student.classes.set(classes_data)
 

@@ -124,6 +124,11 @@ def Document_folder(instance, filename):
 
 
 # ---------------------- Exam Paper
+def clean_name(name):
+    if not name:
+        return "unknown"
+    return name.replace("\xa0", "_").replace(" ", "_")
+
 
 def ExamPaper_folder(instance, filename):
     try:
@@ -275,6 +280,17 @@ def calculate_subject_summary(subjects_data):
 
 
 # ---------------------  Income and Expense 
+
+from rest_framework import serializers
+
+class AbsoluteURLFileField(serializers.FileField):
+    def to_representation(self, value):
+        if not value:
+            return None
+        request = self.context.get("request")
+        return request.build_absolute_uri(value.url)
+        
+
 
 def income_attachments(instance, filename):
     category_name = instance.category.name.replace(" ", "_").lower()

@@ -15,6 +15,15 @@ import holidays
 from director.views import send_whatsapp_message
 
 
+#payload for MultipleAttendance
+# {
+#     "teacher": 1,
+#     "year_level": 6,
+#     "marked_at": "2025-09-24",
+#     "P": [1],
+#     "A": [104, 105],
+#     "L": [106]
+# }
 class MultipleAttendanceViewSet1(ModelViewSet):
     queryset = StudentAttendance.objects.all()
     serializer_class = StudentAttendanceSerializer
@@ -31,10 +40,24 @@ class MultipleAttendanceViewSet1(ModelViewSet):
         except ValueError:
             return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # ========================= NEW:24/09/25 ==========================
+         # Prevent attendance on Sundays
+        if marked_at.weekday() == 6:
+            return Response({"error": "Attendance cannot be marked on Sunday."}, status=status.HTTP_400_BAD_REQUEST)
+
+         # Prevent attendance on school holidays
+        if SchoolHoliday.objects.filter(date=marked_at).exists():
+            return Response({"error": "Attendance cannot be marked on a school holiday."}, status=status.HTTP_400_BAD_REQUEST)
+
+         # Prevent attendance on declared holidays
+        if Holiday.objects.filter(start_date__lte=marked_at, end_date__gte=marked_at).exists():
+            return Response({"error": "Attendance cannot be marked on a holiday."}, status=status.HTTP_400_BAD_REQUEST)
+        # ==================================================================
+        
         # Validate teacher
-        teacher_id = data.get("teacher_id")
+        teacher_id = data.get("teacher")
         if not teacher_id:
-            return Response({"error": "teacher_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "teacher is required."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             teacher = Teacher.objects.get(id=teacher_id)
@@ -42,9 +65,9 @@ class MultipleAttendanceViewSet1(ModelViewSet):
             return Response({"error": "Invalid teacher_id."}, status=status.HTTP_404_NOT_FOUND)
 
         # Validate year level
-        year_level_id = data.get("year_level_id")
+        year_level_id = data.get("year_level")
         if not year_level_id:
-            return Response({"error": "year_level_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "year_level is required."}, status=status.HTTP_400_BAD_REQUEST)
 
         # Validate presence of at least one status
         allowed_statuses = {'P', 'A', 'L'}
@@ -455,73 +478,75 @@ class TeacherYearLevelList(APIView):
             for l in levels
         ]
         return Response(data)
-class BulkHolidayAttendanceViewSet(ViewSet):
-    def list(self, request):
-        holidays = Holiday.objects.all().order_by('-start_date')
-        serializer = HolidaySerializer(holidays, many=True)
-        return Response(serializer.data)
 
-    def create(self, request):
-        start_date_str = request.data.get('start_date')
-        end_date_str = request.data.get('end_date')
-        title = request.data.get('title', 'Unnamed Holiday')
+        #------------- was creating numerous entries-------24/09/25--------------
+# class BulkHolidayAttendanceViewSet(ViewSet):
+#     def list(self, request):
+#         holidays = Holiday.objects.all().order_by('-start_date')
+#         serializer = HolidaySerializer(holidays, many=True)
+#         return Response(serializer.data)
 
-        if not start_date_str or not end_date_str:
-            return Response({"error": "Start and end date are required."}, status=400)
+#     def create(self, request):
+#         start_date_str = request.data.get('start_date')
+#         end_date_str = request.data.get('end_date')
+#         title = request.data.get('title', 'Unnamed Holiday')
 
-        try:
-            start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
-            end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
-        except ValueError:
-            return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=400)
+#         if not start_date_str or not end_date_str:
+#             return Response({"error": "Start and end date are required."}, status=400)
 
-        if start_date > end_date:
-            return Response({"error": "Start date must be before end date."}, status=400)
+#         try:
+#             start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+#             end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+#         except ValueError:
+#             return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=400)
 
-        # Create Holiday
-        Holiday.objects.create(
-            title=title,
-            start_date=start_date,
-            end_date=end_date
-        )
+#         if start_date > end_date:
+#             return Response({"error": "Start date must be before end date."}, status=400)
 
-        # Mark Holiday Attendance for all Students
-        students = Student.objects.all()
-        dates = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
-        count = 0
+#         # Create Holiday
+#         Holiday.objects.create(
+#             title=title,
+#             start_date=start_date,
+#             end_date=end_date
+#         )
 
-        for student in students:
-            try:
-                syl = StudentYearLevel.objects.get(student=student)
-                for date in dates:
-                    if not StudentAttendance.objects.filter(student=student, marked_at=date).exists():
-                        StudentAttendance.objects.create(
-                            student=student,
-                            status='H',
-                            marked_at=date,
-                            year_level=syl.level
-                        )
-                        count += 1
-            except StudentYearLevel.DoesNotExist:
-                continue
+#         # Mark Holiday Attendance for all Students
+#         students = Student.objects.all()
+#         dates = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
+#         count = 0
 
-        # Get all user phone numbers (students, teachers, staff, guardians)
-        # phone_numbers = list(                 # commented as of 07Sep25 at 12:34 PM
-        #     User.objects.filter(is_active=True)
-        #     .exclude(phone_number__isnull=True)
-        #     .exclude(phone_number__exact="")
-        #     .values_list('phone_number', flat=True)
-        # )
+#         for student in students:
+#             try:
+#                 syl = StudentYearLevel.objects.get(student=student)
+#                 for date in dates:
+#                     if not StudentAttendance.objects.filter(student=student, marked_at=date).exists():
+#                         StudentAttendance.objects.create(
+#                             student=student,
+#                             status='H',
+#                             marked_at=date,
+#                             year_level=syl.level
+#                         )
+#                         count += 1
+#             except StudentYearLevel.DoesNotExist:
+#                 continue
 
-        # Send WhatsApp Notification to all users
-        message_text = f"📢 Notice: {title} holiday has been declared from {start_date} to {end_date}."
-        # if phone_numbers:                     # commented as of 07Sep25 at 12:34 PM
-            # send_whatsapp_message(message_text, phone_numbers)    {len(phone_numbers)}
-        send_whatsapp_message(message_text)
+#         # Get all user phone numbers (students, teachers, staff, guardians)
+#         # phone_numbers = list(                 # commented as of 07Sep25 at 12:34 PM
+#         #     User.objects.filter(is_active=True)
+#         #     .exclude(phone_number__isnull=True)
+#         #     .exclude(phone_number__exact="")
+#         #     .values_list('phone_number', flat=True)
+#         # )
 
-        return Response({
-            "message": f"{count} holiday attendance records created. Notifications sent to users."
-        }, status=201)
+#         # Send WhatsApp Notification to all users
+#         message_text = f"📢 Notice: {title} holiday has been declared from {start_date} to {end_date}."
+#         # if phone_numbers:                     # commented as of 07Sep25 at 12:34 PM
+#             # send_whatsapp_message(message_text, phone_numbers)    {len(phone_numbers)}
+#         send_whatsapp_message(message_text)
+
+#         return Response({
+#             "message": f"{count} holiday attendance records created. Notifications sent to users."
+#         }, status=201)
 
 
 class FetchIndianHolidaysView(APIView):
