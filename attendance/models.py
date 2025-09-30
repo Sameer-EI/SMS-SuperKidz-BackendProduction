@@ -21,7 +21,7 @@ class StudentAttendance(models.Model):
         ('P', 'Present'),
         ('A', 'Absent'),
         ('L', 'Leave'),
-        ('H','Holiday')
+        ('H','Holiday') # remove it in future
     ]
 
     student = models.ForeignKey(Student, on_delete=models.CASCADE)

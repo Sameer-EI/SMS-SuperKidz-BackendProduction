@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import *
 import re
 from rest_framework import serializers
 from .models import *
@@ -20,7 +20,10 @@ from django.db.models import Max
 from decimal import Decimal
 from django.db.models import Sum
 import calendar
-
+from django.core.exceptions import ValidationError
+import os
+from dateutil.relativedelta import relativedelta
+from django.conf import settings
 
 class YearLevelSerializer(serializers.ModelSerializer):   # coomented as of 05June25 at 01:36 AM
     class Meta:
@@ -441,6 +444,16 @@ class AdmissionSerializer(serializers.ModelSerializer):
             role, _ = Role.objects.get_or_create(name='student')
             user = User.objects.create_user(**user_data)
             user.role.add(role)
+
+
+        # ===== Generate scholar_number here =====
+        last_student = Student.objects.order_by('-id').first()
+        
+        if last_student and last_student.scholar_number and last_student.scholar_number.isdigit():
+            next_number = int(last_student.scholar_number) + 1
+        else:
+            next_number = 1
+        student_data['scholar_number'] = str(next_number).zfill(4)
 
         student, created = Student.objects.get_or_create(user=user, defaults=student_data)
         if not created:
@@ -1295,11 +1308,12 @@ class FeeDiscountSerializer(serializers.ModelSerializer):   # added today as of 
     student_id = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all(),source='student')
     student_name = serializers.SerializerMethodField()
     year_level = serializers.SerializerMethodField()
+    scholar_no = serializers.SerializerMethodField()
 
     class Meta:
         model = FeeDiscount
-        fields = ["id","student_id","student_name","year_level","admission_fee_discount","tuition_fee_discount","admission_fee","tuition_fee","discount_reason","is_allowed","created_at","updated_at",]
-        read_only_fields = ["admission_fee","tuition_fee","created_at", "updated_at"]  
+        fields = ["id","student_id","student_name","scholar_no","year_level","admission_fee_discount","tuition_fee_discount","admission_fee","tuition_fee","discount_reason","is_allowed","created_at","updated_at",]
+        read_only_fields = ["admission_fee","tuition_fee","created_at", "updated_at","scholar_no"]  
     
     def get_student_name(self, obj):
         return f"{obj.student.user.first_name} {obj.student.user.last_name}".strip()
@@ -1312,6 +1326,10 @@ class FeeDiscountSerializer(serializers.ModelSerializer):   # added today as of 
             .first()
         )
         return student_year_level.level.level_name if student_year_level else None
+
+    def get_scholar_no(self, obj):
+        scholar_no= obj.student.scholar_number
+        return scholar_no
 
     def validate(self, attrs):
         student = attrs.get("student")
@@ -2758,6 +2776,7 @@ class ExamPaperItemSerializer(serializers.Serializer):
     start_time = serializers.TimeField()
     end_time = serializers.TimeField()
 
+MAX_SUBJECTS_PER_TIMETABLE = 10  
 from collections import Counter
 class ExamScheduleSerializer(serializers.Serializer):
     class_name = serializers.IntegerField()
@@ -2767,20 +2786,181 @@ class ExamScheduleSerializer(serializers.Serializer):
 
     def validate(self, data):
         subject_ids = [paper["subject_id"] for paper in data.get("papers", [])]
-        duplicate_subjects = [sub_id for sub_id, count in Counter(subject_ids).items() if count > 1]
 
+        # Duplicate subjects
+        duplicate_subjects = [sub_id for sub_id, count in Counter(subject_ids).items() if count > 1]
         if duplicate_subjects:
             raise serializers.ValidationError({
                 "papers": f"Duplicate subject(s) found in timetable: {duplicate_subjects}"
             })
+        
+        class_id = data["class_name"]
+        exam_type_id = data["exam_type"]
+        school_year_id = data["school_year"]
+        papers = data.get("papers", [])
+
+        class_obj = YearLevel.objects.get(id=class_id)
+        max_per_date = 3 if class_obj.level_order >= 15 else 1
+
+        school_year = SchoolYear.objects.get(id=school_year_id)
+        term = Term.objects.filter(year=school_year).first()
+        if not term:
+            raise serializers.ValidationError({"term": f"No term found for school year '{school_year.year_name}'"})
+
+        existing_papers = ExamSchedule.objects.filter(
+            class_name_id=class_id,
+            exam_type_id=exam_type_id,
+            term_id=term.id
+        )
+
+        # check total subjects per timetable 
+        total_subjects_after_add = existing_papers.count() + len(papers)
+        if total_subjects_after_add > MAX_SUBJECTS_PER_TIMETABLE:
+            raise serializers.ValidationError({
+                "papers": f"Cannot add {len(papers)} subjects. This timetable already has {existing_papers.count()} subjects. Max allowed per timetable is {MAX_SUBJECTS_PER_TIMETABLE}."
+            })
+
+
+        date_counter = Counter([str(p.exam_date) for p in existing_papers])
+        for p in papers:
+            date_counter[str(p["exam_date"])] += 1
+
+        # check if any date exceeds max allowed
+        over_limit_dates = [d for d, cnt in date_counter.items() if cnt > max_per_date]
+        if over_limit_dates:
+            raise serializers.ValidationError({
+                "papers": f"Too many papers on date(s): {over_limit_dates} (max {max_per_date})"
+            })
+
+        # only one date can have max papers, others must have 1 each
+        max_count_dates = [d for d, cnt in date_counter.items() if cnt == max_per_date]
+        if len(max_count_dates) > 1:
+            raise serializers.ValidationError({
+                # "papers": f"Sirf ek date par maximum {max_per_date} papers ho sakte hain, baaki dates me 1 paper hi ho sakta hai."
+                "papers": f"For {class_obj.level_name}, only one day is allowed to have {max_per_date} exams. Every other day must have only one exam."
+            })
+
+        for d, cnt in date_counter.items():
+            if d not in max_count_dates and cnt != 1:
+                raise serializers.ValidationError({
+                    # "papers": f"{class_obj.level_name} me {d} par 1 paper hona chahiye."
+                    "papers": f"{class_obj.level_name} can have only one subject scheduled on {d}."
+                })
+
         return data
+
+
+    def validate_paper(self, paper):
+        subject_id = paper.get("subject_id")
+
+        # Subject existence
+        try:
+            subject = Subject.objects.get(id=subject_id)
+        except Subject.DoesNotExist:
+            raise serializers.ValidationError({
+                "subject": f"Subject with ID {subject_id} does not exist."
+            })
+        
+        exam_date = paper["exam_date"]
+        if isinstance(exam_date, str):
+            exam_date = datetime.strptime(exam_date, "%Y-%m-%d").date()
+
+        exam_date = paper["exam_date"]
+
+        # Past date check
+        if exam_date < date.today():
+            raise serializers.ValidationError({
+                "exam_date": f"Exam date for subject '{subject.subject_name}' cannot be in the past."
+            })
+
+        # Future date limit
+        max_future_date = date.today().replace(year=date.today().year + 1)
+        if exam_date > max_future_date:
+            raise serializers.ValidationError({
+                "exam_date": f"Exam date for subject '{subject.subject_name}' cannot be more than 1 year in the future."
+            })
+
+        # Sunday check
+        if exam_date.weekday() == 6:
+            raise serializers.ValidationError({
+                "exam_date": f"Exams cannot be scheduled on Sunday: {exam_date}"
+            })
+
+        start_time = paper["start_time"]
+        end_time = paper["end_time"]
+
+        # Start < End
+        if start_time >= end_time:
+            raise serializers.ValidationError({
+                "time": f"Exam for '{subject.subject_name}' must have start time before end time."
+            })
+
+
+
+        # Duration check (≤ 3 hours)
+        start_dt = datetime.combine(datetime.today(), paper["start_time"])
+        end_dt = datetime.combine(datetime.today(), paper["end_time"])
+        duration = end_dt - start_dt
+
+        if duration > timedelta(hours=3):
+            raise serializers.ValidationError({
+                "time": f"Exam duration for subject '{subject.subject_name}' cannot exceed 3 hours."
+            })
+
+        # Allowed time range (8:00 AM to 5:00 PM)
+        def format_time_12hr(t: time):
+            return t.strftime("%I:%M %p")  # 08:00 AM, 05:00 PM
+
+        allowed_start = time(8, 0)  # 08:00 AM
+        allowed_end = time(17, 0)   # 05:00 PM
+
+        if not (allowed_start <= paper["start_time"] <= allowed_end):
+            raise serializers.ValidationError({
+                "start_time": f"Exam for '{subject.subject_name}' must start between {format_time_12hr(allowed_start)} and {format_time_12hr(allowed_end)}."
+            })
+
+        if not (allowed_start <= paper["end_time"] <= allowed_end):
+            raise serializers.ValidationError({
+                "end_time": f"Exam for '{subject.subject_name}' must end between {format_time_12hr(allowed_start)} and {format_time_12hr(allowed_end)}."
+            })
+      
+        class_id = self.initial_data.get("class_name")
+        exam_type_id = self.initial_data.get("exam_type")
+        school_year_id = self.initial_data.get("school_year")
+
+        if not class_id:
+            raise serializers.ValidationError({"class_name": "Class is required for exam scheduling."})
+
+        # Get class object
+        class_obj = YearLevel.objects.get(id=class_id)
+
+        # Determine max exams per date based on class
+        if class_obj.level_order >= 15:  # Class 11 & 12
+            max_allowed = 3
+        else:  # Class ≤ 10
+            max_allowed = 1
+
+        # Existing exams for this class, date, type, year
+        existing_exams_count = ExamSchedule.objects.filter(
+            class_name_id=class_id,
+            exam_date=exam_date,
+            exam_type_id=exam_type_id,
+            term__year_id=school_year_id
+        ).count()
+
+        if existing_exams_count >= max_allowed:
+            raise serializers.ValidationError({
+                "exam_date": f"{class_obj.level_name} can have maximum {max_allowed} exam(s) on {exam_date}."
+            })
 
 
     def create(self, validated_data):
         class_id = validated_data["class_name"]
         year_id = validated_data["school_year"]
         exam_type_id = validated_data["exam_type"]
-        papers_data = validated_data["papers"]
+        # papers_data = validated_data["papers"]
+        papers_data = validated_data.get("papers", [])
+
 
         try:
             school_year = SchoolYear.objects.get(id=year_id)
@@ -2793,6 +2973,7 @@ class ExamScheduleSerializer(serializers.Serializer):
 
         created_schedules = []
         for paper in papers_data:
+            self.validate_paper(paper)
             subject_id = paper["subject_id"]
 
             existing_schedule = ExamSchedule.objects.filter(
@@ -2839,13 +3020,13 @@ class ExamScheduleSerializer(serializers.Serializer):
 
         result = []
 
-        from datetime import date, time, datetime
         def safe_serialize(value):
             if isinstance(value, (date, time, datetime)):
                 return value.isoformat()
             return str(value)
 
         for paper in papers_data:
+            self.validate_paper(paper)
             subject_id = paper.get("subject_id")
 
             try:
@@ -2979,13 +3160,14 @@ class ExamPaperSerializer(serializers.ModelSerializer):
     exam_name = serializers.CharField(source='exam_type.name', read_only=True)
     teacher_name = serializers.SerializerMethodField()
     year = serializers.CharField(source='term.year.year_name', read_only=True)
+    uploaded_file_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ExamPaper
         fields = [
             'id', 'subject_name', 'year_level_name', 'exam_name', 'teacher_name',
             'total_marks', 'paper_code', 'uploaded_file', 'year',
-            'exam_type', 'term', 'subject', 'year_level', 'teacher'
+            'exam_type', 'term', 'subject', 'year_level', 'teacher','uploaded_file_url'
         ]
         extra_kwargs = {
             'exam_type': {'write_only': True},
@@ -2999,6 +3181,69 @@ class ExamPaperSerializer(serializers.ModelSerializer):
         if obj.teacher and obj.teacher.user:
             return obj.teacher.user.get_full_name()
         return None
+
+
+    def get_uploaded_file_url(self, obj):
+        import os
+        from django.conf import settings
+
+        if obj.uploaded_file:
+            file_path = os.path.join(settings.MEDIA_ROOT, obj.uploaded_file.name)
+            if os.path.exists(file_path):
+                return obj.uploaded_file.url
+            else:
+                return "File has been deleted or not found"
+        return None
+
+
+    def validate_uploaded_file(self, value):
+        # 1. File size check like 5 MB
+        MAX_FILE_SIZE = 5 * 1024 * 1024  
+        file_size = getattr(value, 'size', 0)
+        if file_size > MAX_FILE_SIZE:
+            raise ValidationError(f"File size should not exceed {MAX_FILE_SIZE / (1024*1024)} MB.")
+
+        # 2. Extension check
+        ALLOWED_EXTENSIONS = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png', '.gif']
+        file_name = getattr(value, 'name', None)
+        ext = os.path.splitext(file_name)[1].lower()
+        if ext not in ALLOWED_EXTENSIONS:
+            raise ValidationError(f"Files with extension '{ext}' are not allowed.")
+
+        # 3. MIME type check (if available)
+        ALLOWED_MIME_TYPES = [
+            'application/pdf',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'image/jpeg',
+            'image/png',
+            'image/gif'
+        ]
+        file_type = getattr(value, 'content_type', None) or getattr(getattr(value, 'file', None), 'content_type', None)
+        if file_type and file_type not in ALLOWED_MIME_TYPES:
+            raise ValidationError(f"Files of type '{file_type}' are not allowed.")
+        return value
+        
+    def validate_total_marks(self, value):
+        if value < 0:
+            raise serializers.ValidationError("Total marks cannot be negative.")
+
+        exam_type_id = self.initial_data.get("exam_type")
+        if not exam_type_id:
+            return value
+
+        try:
+            exam_type = ExamType.objects.get(id=exam_type_id)
+        except ExamType.DoesNotExist:
+            return value
+
+        name = exam_type.name.upper()
+        if name in ["SA1", "SA2"] and value > 100:
+            raise serializers.ValidationError("Total marks for SA1/SA2 cannot exceed 100.")
+        elif name in ["FA1", "FA2", "FA3"] and value > 20:
+            raise serializers.ValidationError("Total marks for FA1/FA2/FA3 cannot exceed 20.")
+        return value
+
 
     def create(self, validated_data):
         subject = validated_data["subject"]
@@ -3030,6 +3275,20 @@ class ExamPaperSerializer(serializers.ModelSerializer):
         teacher = validated_data.get("teacher", instance.teacher)
         paper_code = validated_data.get("paper_code", instance.paper_code)
         total_marks = validated_data.get("total_marks", instance.total_marks)
+
+        if ExamPaper.objects.exclude(id=instance.id).filter(
+            subject=subject,
+            exam_type=instance.exam_type,
+            term=instance.term,
+            year_level=instance.year_level
+        ).exists():
+            raise serializers.ValidationError(
+                f"Exam paper already exists for this subject, class, year, and exam type."
+            )
+
+        if ExamPaper.objects.exclude(id=instance.id).filter(paper_code=paper_code).exists():
+            raise serializers.ValidationError({"paper_code": ["exam paper with this paper code already exists."]})
+
 
         instance.subject = subject
         instance.teacher = teacher
@@ -3172,13 +3431,14 @@ class SchoolExpenseSerializer(serializers.ModelSerializer):
     # razorpay_payment_id = serializers.CharField(read_only=True)
     # razorpay_order_id = serializers.CharField(read_only=True)
     # razorpay_signature = serializers.CharField(read_only=True)
+    attachment_url = serializers.SerializerMethodField()
 
     class Meta:
         model = SchoolExpense
         fields = [
             "id", "category", "category_name", "amount", "description", "expense_date",
             "payment_method", "attachment", "status", "created_at", "created_by",
-            "created_by_name", "approved_by", "approved_by_name", "school_year", "school_year_name"] 
+            "created_by_name", "approved_by", "approved_by_name", "school_year", "school_year_name","attachment_url"] 
             # ,"razorpay_payment_id", "razorpay_order_id", "razorpay_signature"]
         read_only_fields = [
             "created_at", "created_by", "approved_by"
@@ -3196,6 +3456,33 @@ class SchoolExpenseSerializer(serializers.ModelSerializer):
 
     def get_school_year_name(self, obj):
         return obj.school_year.year_name if obj.school_year else None
+
+    def get_attachment_url(self, obj):
+        request = self.context.get("request")
+        if obj.attachment:
+            if request:
+                return request.build_absolute_uri(obj.attachment.url)
+            # fallback agar request nahi mila
+            return obj.attachment.url
+
+    def validate_attachment(self, value):
+        if not value:
+            return value
+
+        # File size check (2 MB max)
+        max_size = 2 * 1024 * 1024  # 2 MB
+        if value.size > max_size:
+            raise serializers.ValidationError("File size must be under 2MB.")
+
+        # File extension check
+        ext = os.path.splitext(value.name)[1].lower()
+        allowed_extensions = [".jpg", ".jpeg", ".png", ".webp", ".pdf"]
+        if ext not in allowed_extensions:
+            raise serializers.ValidationError(
+                f"Unsupported file type '{ext}'. Allowed types are: {', '.join(allowed_extensions)}"
+            )
+
+        return value
 
     def validate(self, attrs):
         if self.instance and "payment_method" in attrs:
@@ -3345,6 +3632,19 @@ class EmployeeSerializer(serializers.ModelSerializer):
     def validate(self, data):
         if data.get('base_salary', 0) <= 0:
             raise serializers.ValidationError({"base_salary": "Amount must be a positive number."})
+        
+        # Joining date check
+        joining_date = data.get("joining_date")
+        today = date.today()
+        two_months_ago = today - relativedelta(months=2)  # This will take the date of last 2 months
+
+        if joining_date > today:
+            raise serializers.ValidationError({"joining_date": "Future date is not allowed."})
+        if joining_date < two_months_ago:
+            raise serializers.ValidationError({"joining_date": "Joining date cannot be older than 2 months."})
+
+
+
         return data
 
 
@@ -3452,6 +3752,17 @@ class EmployeeSalarySerializer(serializers.ModelSerializer):
                     {"school_year": "You can only create salary records for the current school year."}
                 )
 
+        # Payment date cannot be before joining date
+        if payment_date and payment_date < user.joining_date:
+            raise serializers.ValidationError({"payment_date": "Payment date cannot be before joining date."})
+
+        # Month in payment_date must match month field
+        if payment_date and month:
+            if payment_date.strftime("%B") != month:
+                raise serializers.ValidationError({
+                    "payment_date": f"Payment date month must match the selected month ({month})."
+                })
+
 
         # qs = EmployeeSalary.objects.filter(user=user, month=month, school_year=school_year)
         # if self.instance:
@@ -3548,19 +3859,48 @@ class IncomeCategorySerializer(serializers.ModelSerializer):
         model = IncomeCategory
         fields = "__all__"
 
+from director.utils import AbsoluteURLFileField
 class SchoolIncomeSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     creator = serializers.SerializerMethodField()
+    school_year_value = serializers.SerializerMethodField()
+    attachment = AbsoluteURLFileField(required=False, allow_null=True)
 
     class Meta:
         model = SchoolIncome
         fields = "__all__"
-        read_only_fields = ["created_at", "creator"]
+        read_only_fields = ["created_at", "creator","school_year_value"]
 
     def get_creator(self, obj):
         if obj.created_by:
             return f"{obj.created_by.first_name} {obj.created_by.last_name}".strip()
         return None
+
+    def get_school_year_value(self, obj):
+        return obj.school_year.year_name if obj.school_year else None
+
+    def validate_attachment(self, value):
+        if not value:
+            return value
+
+        # File size check (2 MB max)
+        max_size = 2 * 1024 * 1024  # 2 MB
+        if value.size > max_size:
+            raise serializers.ValidationError("File size must be under 2MB.")
+
+        # File extension check
+        ext = os.path.splitext(value.name)[1].lower()
+        allowed_extensions = [".jpg", ".jpeg", ".png", ".webp", ".pdf"]
+        if ext not in allowed_extensions:
+            raise serializers.ValidationError(
+                f"Unsupported file type '{ext}'. Allowed types are: {', '.join(allowed_extensions)}"
+            )
+        return value
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["school_year"] = self.get_school_year_value(instance)
+        return data
 
     def validate(self, data):
         category = data.get("category")

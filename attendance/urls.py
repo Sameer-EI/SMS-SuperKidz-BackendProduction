@@ -9,7 +9,7 @@ router.register(r'director-dashboard', DirectorAttendanceDashboard, basename='at
 router.register(r'teacher-dashboard', TeacherAttendanceDashboard, basename='teacher-student-attendance')
 router.register(r'student-dashboard', StudentOwnAttendanceViewSet, basename='student-own-attendance')
 router.register(r'guardian/attendance', GuardianChildrenAttendanceViewSet, basename='guardian-attendance')
-router.register(r'attendance/mark-holidays', BulkHolidayAttendanceViewSet, basename='mark-holiday'),
+# router.register(r'attendance/mark-holidays', BulkHolidayAttendanceViewSet, basename='mark-holiday'),
 router.register('events', SchoolEventViewSet, basename='event')
 
 
