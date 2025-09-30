@@ -1488,471 +1488,6 @@ class FeeRecordSerializer(serializers.ModelSerializer):
 
         return [{"year_level": yl, "fees": fees} for yl, fees in grouped.items()]
 
-    
-    ### ------------ conmmented as of 27Aug25 at 05:15 PM below one ---------- ###
-    
-   
-    ### ------------ conmmented as of 27Aug25 at 05:15 PM above one ---------- ###
-    
-    
-    
-    ##### ------- updated validation -------  #### As of 27Aug25 at 05:14 PM below one
-    
-    
-    # def validate(self, data):
-    #     student = data.get('student')
-    #     month = data.get('month')  # e.g., 'July'
-    #     year_level_fees = data.get('year_level_fees', [])
-    #     paid_amount = data.get('paid_amount', 0)
-
-    #     if self.instance is None:
-    #         for fee in year_level_fees:
-    #             # Admission Fee Validation
-    #             if "admission fee" in fee.fee_type.name.lower():
-    #                 if FeeRecord.objects.filter(
-    #                     student=student,
-    #                     year_level_fees__fee_type__name__iexact="Admission Fee"
-    #                 ).exists():
-    #                     raise serializers.ValidationError({
-    #                         "admission_fee": "Admission fee already paid for this student in this school year."
-    #                     })
-
-    #             # Tuition Fee Validation   corrected here
-    #             if "tuition fee" in fee.fee_type.name.lower():
-    #                 if FeeRecord.objects.filter(
-    #                     student=student,
-    #                     month=month,
-    #                     year_level_fees__fee_type__name__iexact="Tuition Fee"
-    #                 ).exists():
-    #                     raise serializers.ValidationError({
-    #                         "tuition_fee": f"Tuition fee of {month} is already submitted for {student}."
-    #                     })
-
-    #             # Other fee types  structured response
-    #             if FeeRecord.objects.filter(student=student, month=month, year_level_fees=fee).exists():
-    #                 raise serializers.ValidationError({
-    #                     fee.fee_type.name.lower().replace(" ", "_"): f"{fee.fee_type.name} of {month} is already submitted for {student}."
-    #                 })
-
-    #     if not year_level_fees:
-    #         raise serializers.ValidationError("At least one year level fee must be selected.")
-
-    #     total = 0
-    #     for fee in year_level_fees:
-    #         total += fee.amount
-
-    #     # Get applicable discount (only allowed ones)
-    #     try:
-    #         discount = FeeDiscount.objects.get(student=student, is_allowed=True)
-    #     except FeeDiscount.DoesNotExist:
-    #         discount = None
-
-    #     admission_discount = 0
-    #     tuition_discount = 0
-    #     if discount:
-    #         for fee in year_level_fees:
-    #             fee_type = fee.fee_type.name.lower()
-    #             if "admission fee" in fee_type:
-    #                 admission_discount += discount.admission_fee_discount or 0
-    #             if "tuition fee" in fee_type:
-    #                 tuition_discount += discount.tuition_fee_discount or 0
-
-    #     total_discount = admission_discount + tuition_discount
-
-    #     # Subtract discount from total but never negative
-    #     total = max(total - total_discount, 0)
-    #     data['total_amount'] = total
-
-    #     # ---- Apply Late Fee ONLY for Tuition Fee ----
-    #     today = date.today()
-    #     late_fee = 0
-    #     for fee in year_level_fees:
-    #         if "tuition fee" in fee.fee_type.name.lower() and today.day > 15:
-    #             late_fee = 25
-    #             break  # apply only once per month
-
-    #     if late_fee > 0:
-    #         total += late_fee
-    #         data['late_fee'] = late_fee
-    #         data['total_amount'] = total        
-
-    #     # paid amount should be equal or less than total amount
-    #     if paid_amount > total:
-    #         raise serializers.ValidationError(
-    #             f"Paid amount {paid_amount} cannot be greater than total amount {total}."
-    #         )
-        
-    #     # calculate due amount
-    #     due = total - paid_amount
-    #     data['due_amount'] = due if due > 0 else 0
-
-
-    #     # Determine payment status  commented as of 11June25
-    #     # data['payment_status'] = 'Paid' if data['due_amount'] == 0 else 'Unpaid'
-
-    #     return data                  
-    
-    ### ------------ conmmented as of 27Aug25 at 05:15 PM above one ---------- ###
-    
-    
-    
-    ##### ------- updated validation -------  #### As of 27Aug25 at 05:14 PM below one
-    
-    
-    # def validate(self, data):
-    #     student = data.get('student')
-    #     month = data.get('month')  # e.g., 'July'
-    #     year_level_fees = data.get('year_level_fees', [])
-    #     paid_amount = data.get('paid_amount', 0)
-
-    #     if self.instance is None:
-    #         for fee in year_level_fees:
-    #             # Admission Fee Validation
-    #             if "admission fee" in fee.fee_type.name.lower():
-    #                 if FeeRecord.objects.filter(
-    #                     student=student,
-    #                     year_level_fees__fee_type__name__iexact="Admission Fee"
-    #                 ).exists():
-    #                     raise serializers.ValidationError({
-    #                         "admission_fee": "Admission fee already paid for this student in this school year."
-    #                     })
-
-    #             # Tuition Fee Validation   corrected here
-    #             if "tuition fee" in fee.fee_type.name.lower():
-    #                 if FeeRecord.objects.filter(
-    #                     student=student,
-    #                     month=month,
-    #                     year_level_fees__fee_type__name__iexact="Tuition Fee"
-    #                 ).exists():
-    #                     raise serializers.ValidationError({
-    #                         "tuition_fee": f"Tuition fee of {month} is already submitted for {student}."
-    #                     })
-
-    #             # Other fee types  structured response
-    #             if FeeRecord.objects.filter(student=student, month=month, year_level_fees=fee).exists():
-    #                 raise serializers.ValidationError({
-    #                     fee.fee_type.name.lower().replace(" ", "_"): f"{fee.fee_type.name} of {month} is already submitted for {student}."
-    #                 })
-
-    #     if not year_level_fees:
-    #         raise serializers.ValidationError("At least one year level fee must be selected.")
-
-    #     total = 0
-    #     for fee in year_level_fees:
-    #         total += fee.amount
-
-    #     # Get applicable discount (only allowed ones)
-    #     try:
-    #         discount = FeeDiscount.objects.get(student=student, is_allowed=True)
-    #     except FeeDiscount.DoesNotExist:
-    #         discount = None
-
-    #     admission_discount = 0
-    #     tuition_discount = 0
-    #     if discount:
-    #         for fee in year_level_fees:
-    #             fee_type = fee.fee_type.name.lower()
-    #             if "admission fee" in fee_type:
-    #                 admission_discount += discount.admission_fee_discount or 0
-    #             if "tuition fee" in fee_type:
-    #                 tuition_discount += discount.tuition_fee_discount or 0
-
-    #     total_discount = admission_discount + tuition_discount
-
-    #     # Subtract discount from total but never negative
-    #     total = max(total - total_discount, 0)
-    #     data['total_amount'] = total
-
-    #     # ---- Apply Late Fee ONLY for Tuition Fee ----
-    #     today = date.today()
-    #     late_fee = 0
-    #     for fee in year_level_fees:
-    #         if "tuition fee" in fee.fee_type.name.lower() and today.day > 15:
-    #             late_fee = 25
-    #             break  # apply only once per month
-
-    #     if late_fee > 0:
-    #         total += late_fee
-    #         data['late_fee'] = late_fee
-    #         data['total_amount'] = total        
-
-    #     # paid amount should be equal or less than total amount
-    #     if paid_amount > total:
-    #         raise serializers.ValidationError(
-    #             f"Paid amount {paid_amount} cannot be greater than total amount {total}."
-    #         )
-        
-    #     # calculate due amount
-    #     due = total - paid_amount
-    #     data['due_amount'] = due if due > 0 else 0
-
-    #     return data
-
-    # def validate(self, data):
-    #     student = data.get('student')
-    #     month = data.get('month')  # e.g., 'July'
-    #     year_level_fees = data.get('year_level_fees', [])
-    #     paid_amount = data.get('paid_amount', 0)
-
-    #     if self.instance is None:
-    #         for fee in year_level_fees:
-    #             fee_name = fee.fee_type.name.lower()
-
-    #             # Admission Fee Validation
-    #             if "admission fee" in fee_name:
-    #                 if FeeRecord.objects.filter(
-    #                     student=student,
-    #                     year_level_fees__fee_type__name__iexact="Admission Fee"
-    #                 ).exists():
-    #                     raise serializers.ValidationError({
-    #                         "admission_fee": "Admission fee already paid for this student in this school year."
-    #                     })
-
-    #             # Tuition Fee Validation with dues check
-    #             if "tuition fee" in fee_name:
-    #                 existing_tuition = FeeRecord.objects.filter(
-    #                     student=student,
-    #                     month=month,
-    #                     year_level_fees__fee_type__name__iexact="Tuition Fee"
-    #                 ).order_by("-id").first()
-
-    #                 if existing_tuition:
-    #                     if existing_tuition.due_amount > 0:
-    #                         # Only allow clearing dues, not resetting
-    #                         remaining_due = existing_tuition.due_amount
-
-    #                         if paid_amount > remaining_due:
-    #                             raise serializers.ValidationError({
-    #                                 "tuition_fee": f"Only {remaining_due} is due for {month}. You cannot pay more than that."
-    #                             })
-
-    #                         # overwrite total & due based on remaining balance
-    #                         # total = remaining_due
-    #                         # due = remaining_due - paid_amount
-    #                         # data['total_amount'] = remaining_due
-    #                         # data['due_amount'] = due if due > 0 else 0
-
-    #                         # Keep total_amount as sum of all fees
-    #                         total = sum(fee.amount for fee in year_level_fees)
-    #                         data['total_amount'] = total
-
-    #                         # Calculate due only for tuition
-    #                         due = existing_tuition.due_amount - paid_amount
-    #                         data['due_amount'] = due if due > 0 else 0
-
-    #                         return data  # stop here, no recalculation needed
-
-    #                     else:
-    #                         raise serializers.ValidationError({
-    #                             "tuition_fee": f"Tuition fee of {month} is already fully paid for {student}."
-    #                         })
-    #             else:
-    #                 # Non-tuition fees: must be paid in full, no dues
-    #                 if paid_amount < fee.amount:
-    #                     raise serializers.ValidationError({
-    #                         fee_name.replace(" ", "_"): f"{fee.fee_type.name} must be paid in full. Partial payments are not allowed."
-    #                     })
-
-    #                 # Also prevent duplicates
-    #                 if FeeRecord.objects.filter(student=student, month=month, year_level_fees=fee).exists():
-    #                     raise serializers.ValidationError({
-    #                         fee_name.replace(" ", "_"): f"{fee.fee_type.name} of {month} is already submitted for {student}."
-    #                     })
-
-    #                 # always set due = 0 for non-tuition
-    #                 data['due_amount'] = 0
-
-
-    #             # Other fee types (no dues allowed, one-time only)
-    #             if "tuition fee" not in fee_name:
-    #                 if FeeRecord.objects.filter(student=student, month=month, year_level_fees=fee).exists():
-    #                     raise serializers.ValidationError({
-    #                         fee_name.replace(" ", "_"): f"{fee.fee_type.name} of {month} is already submitted for {student}."
-    #                     })
-
-    #     if not year_level_fees:
-    #         raise serializers.ValidationError("At least one year level fee must be selected.")
-
-    #     total = 0
-    #     for fee in year_level_fees:
-    #         total += fee.amount
-
-    #     # Discounts
-    #     try:
-    #         discount = FeeDiscount.objects.get(student=student, is_allowed=True)
-    #     except FeeDiscount.DoesNotExist:
-    #         discount = None
-
-    #     admission_discount = 0
-    #     tuition_discount = 0
-    #     if discount:
-    #         for fee in year_level_fees:
-    #             fee_type = fee.fee_type.name.lower()
-    #             if "admission fee" in fee_type:
-    #                 admission_discount += discount.admission_fee_discount or 0
-    #             if "tuition fee" in fee_type:
-    #                 tuition_discount += discount.tuition_fee_discount or 0
-
-    #     total_discount = admission_discount + tuition_discount
-    #     total = max(total - total_discount, 0)
-    #     data['total_amount'] = total
-
-    #     # Late fee (only for tuition)
-    #     today = date.today()
-    #     late_fee = 0
-    #     for fee in year_level_fees:
-    #         if "tuition fee" in fee.fee_type.name.lower() and today.day > 15:
-    #             late_fee = 25
-    #             break
-
-    #     if late_fee > 0:
-    #         total += late_fee
-    #         data['late_fee'] = late_fee
-    #         data['total_amount'] = total        
-
-    #     # Paid amount validation
-    #     if paid_amount > total:
-    #         raise serializers.ValidationError(
-    #             f"Paid amount {paid_amount} cannot be greater than total amount {total}."
-    #         )
-        
-    #     # Dues (only for tuition fee)
-    #     due = total - paid_amount
-    #     for fee in year_level_fees:
-    #         if "tuition fee" in fee.fee_type.name.lower():
-    #             data['due_amount'] = due if due > 0 else 0
-    #             break
-    #     else:
-    #         # For non-tuition, always 0 due
-    #         data['due_amount'] = 0
-
-    #     # --- Set payment_status based on amounts ---
-    #     if any("tuition fee" in fee.fee_type.name.lower() for fee in year_level_fees):
-    #         if paid_amount == 0:
-    #             data['payment_status'] = "Unpaid"
-    #         elif data['due_amount'] > 0:
-    #             data['payment_status'] = "Partially Paid"
-    #         else:
-    #             data['payment_status'] = "Paid"
-    #     else:
-    #         # Non-tuition fees must be full paid only
-    #         if paid_amount == 0:
-    #             data['payment_status'] = "Unpaid"
-    #         else:
-    #             data['payment_status'] = "Paid"
-
-
-    #     return data
-
-    # def validate(self, data):
-    #     student = data.get('student')
-    #     month = data.get('month')
-    #     year_level_fees = data.get('year_level_fees', [])
-    #     paid_amount = data.get('paid_amount', 0)
-
-    #     if not year_level_fees:
-    #         raise serializers.ValidationError("At least one year level fee must be selected.")
-
-    #     # Fetch any allowed discount for this student
-    #     try:
-    #         discount = FeeDiscount.objects.get(student=student, is_allowed=True)
-    #     except FeeDiscount.DoesNotExist:
-    #         discount = None
-
-    #     total_amount = 0
-    #     tuition_due = 0
-
-    #     for fee in year_level_fees:
-    #         fee_name = fee.fee_type.name.lower()
-    #         fee_amount = fee.amount
-    #         fee_discount = 0
-
-    #         # Apply discount if tuition or admission
-    #         if discount:
-    #             if "tuition fee" in fee_name:
-    #                 fee_discount = discount.tuition_fee_discount or 0
-    #             elif "admission fee" in fee_name:
-    #                 fee_discount = discount.admission_fee_discount or 0
-
-    #         final_fee_amount = max(fee_amount - fee_discount, 0)
-    #         total_amount += final_fee_amount
-
-    #         # ADMISSION: one-time, no dues
-    #         if "admission fee" in fee_name:
-    #             if FeeRecord.objects.filter(student=student, year_level_fees=fee).exists():
-    #                 raise serializers.ValidationError({
-    #                     "admission_fee": "Admission fee already paid for this student."
-    #                 })
-
-    #         # TUITION: allow partial payment & dues
-    #         elif "tuition fee" in fee_name:
-    #             existing_tuition = FeeRecord.objects.filter(
-    #                 student=student,
-    #                 month=month,
-    #                 year_level_fees=fee
-    #             ).order_by("-id").first()
-
-    #             paid_so_far = existing_tuition.paid_amount if existing_tuition else 0
-    #             remaining_due = max(final_fee_amount - paid_so_far, 0)
-
-    #             # Check overpayment
-    #             if paid_amount > remaining_due:
-    #                 raise serializers.ValidationError({
-    #                     "tuition_fee": f"Only {remaining_due} is due for {month}. You cannot pay more."
-    #                 })
-
-    #             tuition_due = remaining_due - paid_amount if paid_amount < remaining_due else 0
-
-    #         # NON-TUITION (transport, exam, etc.): full payment only
-    #         else:
-    #             if paid_amount < fee_amount:
-    #                 raise serializers.ValidationError({
-    #                     fee_name.replace(" ", "_"): f"{fee.fee_type.name} must be paid in full. Partial payments not allowed."
-    #                 })
-
-    #             # Prevent duplicate payment
-    #             if FeeRecord.objects.filter(student=student, month=month, year_level_fees=fee).exists():
-    #                 raise serializers.ValidationError({
-    #                     fee_name.replace(" ", "_"): f"{fee.fee_type.name} of {month} already submitted."
-    #                 })
-
-    #     # Apply late fee ONLY to tuition
-    #     today = date.today()
-    #     late_fee = 0
-    #     for fee in year_level_fees:
-    #         if "tuition fee" in fee.fee_type.name.lower() and today.day > 15:
-    #             late_fee = 25
-    #             break
-
-    #     total_amount += late_fee
-    #     data['late_fee'] = late_fee
-    #     data['total_amount'] = total_amount
-
-    #     # Due amount: only tuition can have dues
-    #     data['due_amount'] = tuition_due
-
-    #     # Payment status
-    #     if any("tuition fee" in f.fee_type.name.lower() for f in year_level_fees):
-    #         if tuition_due == 0 and paid_amount > 0:
-    #             data['payment_status'] = "Paid"
-    #         elif tuition_due > 0 and paid_amount > 0:
-    #             data['payment_status'] = "Partially Paid"
-    #         else:
-    #             data['payment_status'] = "Unpaid"
-    #     else:
-    #         # Non-tuition fees: must be fully paid
-    #         if paid_amount > 0:
-    #             data['payment_status'] = "Paid"
-    #         else:
-    #             data['payment_status'] = "Unpaid"
-
-    #     # Paid amount validation
-    #     if paid_amount > total_amount:
-    #         raise serializers.ValidationError(
-    #             f"Paid amount {paid_amount} cannot exceed total amount {total_amount}."
-    #         )
-
-    #     return data
 
     def validate(self, data):
         student = data.get('student')
@@ -2155,96 +1690,161 @@ class FeeRecordSerializer(serializers.ModelSerializer):
         return fee_record
 
 
-### Razorpay Functionality Added as of 10Jun25
+# # serializers.py
+# class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
+#     student_id = serializers.PrimaryKeyRelatedField(
+#         queryset=Student.objects.all(), source='student', write_only=True
+#     )
+#     year_level_fees = serializers.PrimaryKeyRelatedField(
+#         queryset=YearLevelFee.objects.all(),
+#         many=True,
+#         required=False,
+#         default=[]
+#     )
+#     receipt_number = serializers.CharField(read_only=True)
+#     paid_amount = serializers.DecimalField(max_digits=10, decimal_places=2)
 
-### Added as of 12june25 at 02:20 PM
-class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
-    student_id = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all(), source='student', write_only=True)
-    year_level_fees = serializers.PrimaryKeyRelatedField(queryset=YearLevelFee.objects.all(), many=True)
-    receipt_number = serializers.CharField(read_only=True)
+#     class Meta:
+#         model = FeeRecord
+#         fields = [
+#             'id', 'student_id', 'month', 'year_level_fees', 'total_amount', 'paid_amount',
+#             'due_amount', 'late_fee', 'payment_mode', 'payment_status', 'remarks', 'received_by',
+#             'razorpay_order_id', 'razorpay_payment_id', 'razorpay_signature_id', 'receipt_number'
+#         ]
+#         read_only_fields = [
+#             'total_amount', 'due_amount', 'late_fee', 'payment_status',
+#             'razorpay_payment_id', 'razorpay_signature_id', 'receipt_number'
+#         ]
+
+#     def validate(self, data):
+#         student = data.get('student')
+#         year_level_fees = data.get('year_level_fees', [])
+#         paid_amount = data.get('paid_amount', Decimal("0.00"))
+        
+      
+#         if isinstance(paid_amount, str):
+#             paid_amount = Decimal(paid_amount)
     
+#         if data.get('payment_mode', '').lower() == 'online' and paid_amount <= 0:
+#             raise serializers.ValidationError("Paid amount must be greater than 0 for online payment.")
+
+#         multi_month_mode = self.context.get('multi_month', False)
+
+  
+#         base_total = sum(fee.amount for fee in year_level_fees) if year_level_fees else Decimal("0.00")
+
+
+#         try:
+#             discount = FeeDiscount.objects.get(student=student, is_allowed=True)
+#         except FeeDiscount.DoesNotExist:
+#             discount = None
+
+#         total_discount = Decimal("0.00")
+#         if discount:
+#             for fee in year_level_fees:
+#                 fee_type = fee.fee_type.name.lower()
+#                 if "admission fee" in fee_type:
+#                     total_discount += discount.admission_fee_discount or Decimal("0.00")
+#                 if "tuition fee" in fee_type:
+#                     total_discount += discount.tuition_fee_discount or Decimal("0.00")
+
+#         discounted_total = max(base_total - total_discount, Decimal("0.00"))
+
+     
+#         today = date.today()
+#         late_fee = Decimal("0.00")
+#         if any("tuition fee" in fee.fee_type.name.lower() for fee in year_level_fees) and today.day > 15:
+#             late_fee = Decimal("25.00")
+
+#         total = discounted_total + late_fee
+
+#         # ALLOW PARTIAL PAYMENT FOR ALL FEE TYPES
+#         due_amount = max(total - paid_amount, Decimal("0.00"))
+
+#         data['total_amount'] = discounted_total
+#         data['late_fee'] = late_fee
+#         data['due_amount'] = due_amount
+#         data['paid_amount'] = paid_amount
+
+#         # Payment status - ALLOW PARTIAL FOR ALL FEES
+#         if due_amount == 0 and paid_amount > 0:
+#             data['payment_status'] = 'Paid'
+#         elif paid_amount > 0:
+#             data['payment_status'] = 'Partially Paid'
+#         else:
+#             data['payment_status'] = 'Unpaid'
+
+       
+#         data['razorpay_order_id'] = self.initial_data.get('razorpay_order_id')
+#         data['razorpay_payment_id'] = self.initial_data.get('razorpay_payment_id')
+#         data['razorpay_signature_id'] = self.initial_data.get('razorpay_signature_id')
+
+#         return data
+
+#     def create(self, validated_data):
+#         year_level_fees = validated_data.pop('year_level_fees', [])
+#         fee_record = FeeRecord.objects.create(**validated_data)
+#         fee_record.year_level_fees.set(year_level_fees)
+
+#         # Generate unique receipt number if not exists
+#         if not fee_record.receipt_number:
+#             fee_record.receipt_number = self.generate_unique_receipt_number()
+#             fee_record.save()
+
+#         return fee_record
+
+#     def generate_unique_receipt_number(self):
+#         today = datetime.now().strftime('%Y%m%d')
+#         last_receipt = FeeRecord.objects.filter(receipt_number__startswith=f'REC-{today}') \
+#                                         .aggregate(Max('receipt_number'))
+#         if last_receipt['receipt_number__max']:
+#             last_number = int(last_receipt['receipt_number__max'].split('-')[-1])
+#             new_number = last_number + 1
+#         else:
+#             new_number = 1
+#         return f'REC-{today}-{new_number:05d}'
+class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
+    student_id = serializers.PrimaryKeyRelatedField(
+        queryset=Student.objects.all(), source='student', write_only=True
+    )
+    year_level_fees = serializers.PrimaryKeyRelatedField(
+        queryset=YearLevelFee.objects.all(),
+        many=True,
+        required=False,
+        default=[]
+    )
+    receipt_number = serializers.CharField(read_only=True)
+    paid_amount = serializers.DecimalField(max_digits=10, decimal_places=2)
 
     class Meta:
         model = FeeRecord
         fields = [
-            'id', 'student_id', 'month', 'year_level_fees', 'total_amount', 'paid_amount', 'due_amount',
-            'late_fee', 'payment_mode', 'payment_status', 'remarks', 'received_by',
+            'id', 'student_id', 'month', 'year_level_fees', 'total_amount', 'paid_amount',
+            'due_amount', 'late_fee', 'payment_mode', 'payment_status', 'remarks', 'received_by',
             'razorpay_order_id', 'razorpay_payment_id', 'razorpay_signature_id', 'receipt_number'
         ]
-        read_only_fields = ['total_amount', 'due_amount', 'late_fee', 'payment_status',
-                            'razorpay_payment_id', 'razorpay_signature_id', 'receipt_number']
-        # read_only_fields = ['total_amount', 'due_amount', 'late_fee', 'payment_status', 'receipt_number']
+        read_only_fields = [
+            'total_amount', 'due_amount', 'late_fee', 'payment_status',
+            'razorpay_payment_id', 'razorpay_signature_id', 'receipt_number'
+        ]
 
-    
-    # just added as of 16June25 at 12:29 PM
-
-    
-    def validate(self, data):       # corrected late fee logic for advanced fee payment
+    def validate(self, data):
         student = data.get('student')
-        month = data.get('month')
         year_level_fees = data.get('year_level_fees', [])
         paid_amount = data.get('paid_amount', Decimal("0.00"))
+        payment_mode = data.get('payment_mode', '').lower()
+        
+        if isinstance(paid_amount, str):
+            paid_amount = Decimal(paid_amount)
+    
+        # Online payment validation
+        if payment_mode == 'online' and paid_amount <= 0:
+            raise serializers.ValidationError("Paid amount must be greater than 0 for online payment.")
 
-        if not year_level_fees:
-            raise serializers.ValidationError("At least one year level fee must be selected.")
+        # Calculate total from selected fees
+        base_total = sum(fee.amount for fee in year_level_fees) if year_level_fees else Decimal("0.00")
 
-        # if FeeRecord.objects.filter(student=student, month=month).exists():
-        #     raise serializers.ValidationError(f"Fee already submitted for {month} month for this student.")
-
-        if self.instance is None:
-            for fee in year_level_fees:
-                if FeeRecord.objects.filter(student=student, month=month, year_level_fees=fee).exists():
-                    raise serializers.ValidationError(
-                        f"{fee.fee_type.name} of {month} is already submitted for {student}."
-                    )
-
-        # Calculate total fees
-        total = sum(fee.amount for fee in year_level_fees)
-
-        # # Get applicable discount (only allowed ones)
-        # try:
-        #     discount = FeeDiscount.objects.get(student=student, is_allowed=True)
-        # except FeeDiscount.DoesNotExist:
-        #     discount = None
-
-        # total_discount = Decimal("0.00")
-        # if discount:
-        #     for fee in year_level_fees:
-        #         fee_type = fee.fee_type.name.lower()
-        #         if "admission fee" in fee_type:
-        #             total_discount += discount.admission_fee_discount or Decimal("0.00")
-        #         if "tuition fee" in fee_type:
-        #             total_discount += discount.tuition_fee_discount or Decimal("0.00")
-
-        # # Subtract discount from total but never negative
-        # total = max(total - total_discount, Decimal("0.00"))
-
-
-        # # Calculate late fee based on current or past month logic (same as cash serializer)
-        # month_map = {
-        #     'January': 1, 'February': 2, 'March': 3, 'April': 4,
-        #     'May': 5, 'June': 6, 'July': 7, 'August': 8,
-        #     'September': 9, 'October': 10, 'November': 11, 'December': 12
-        # }
-        # today = date.today()
-        # fee_month_num = month_map.get(month)
-
-        # if fee_month_num is not None and fee_month_num <= today.month:
-        #     late_fee = Decimal("25.00") if today.day > 15 else Decimal("0.00")
-        # else:
-        #     late_fee = Decimal("0.00")
-        #print(f"Late fee for {month}: {late_fee}")
-
-        # calculate late fee, if submitted after 15th
-        today = date.today()
-        late_fee = 25 if today.day > 15 else 0
-
-        #if late fee is applicable, add it to total amount
-        if late_fee > 0:
-            total += late_fee
-            data['total_amount'] = total
-
-        # Get applicable discount (only allowed ones)
+        # Apply discount
         try:
             discount = FeeDiscount.objects.get(student=student, is_allowed=True)
         except FeeDiscount.DoesNotExist:
@@ -2259,65 +1859,84 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
                 if "tuition fee" in fee_type:
                     total_discount += discount.tuition_fee_discount or Decimal("0.00")
 
-        # Subtract discount from total but never negative
-        total = max(total - total_discount, Decimal("0.00"))
+        discounted_total = max(base_total - total_discount, Decimal("0.00"))
 
-        due_amount = total - paid_amount
-        # print(due_amount)
-        if paid_amount > total:
-            raise serializers.ValidationError(
-                f"Paid amount ({paid_amount}) cannot be greater than the total due ({total})."
-            )
+        # Late fee calculation
+        today = date.today()
+        late_fee = Decimal("0.00")
+        if any("tuition fee" in fee.fee_type.name.lower() for fee in year_level_fees) and today.day > 15:
+            late_fee = Decimal("25.00")
 
-        data['total_amount'] = total
+        total = discounted_total + late_fee
+
+        # Allow partial payment
+        due_amount = max(total - paid_amount, Decimal("0.00"))
+
+        data['total_amount'] = discounted_total
         data['late_fee'] = late_fee
-        data['due_amount'] = due_amount if due_amount > 0 else Decimal("0.00")
+        data['due_amount'] = due_amount
+        data['paid_amount'] = paid_amount
 
-        # Set payment status based on due amount
-        data['payment_status'] = 'Paid' if data['due_amount'] == 0 else 'Unpaid'
+        # ✅ FIXED: PROPER STATUS CALCULATION FOR ONLINE PAYMENTS
+        if payment_mode == 'online':
+            # For online payments, status should be based on paid_amount vs total
+            if paid_amount >= total:
+                data['payment_status'] = 'Paid'
+            elif paid_amount > 0:
+                data['payment_status'] = 'Partially Paid'
+            else:
+                data['payment_status'] = 'Unpaid'
+        else:
+            # Cash payment logic remains same
+            if due_amount == 0 and paid_amount > 0:
+                data['payment_status'] = 'Paid'
+            elif paid_amount > 0:
+                data['payment_status'] = 'Partially Paid'
+            else:
+                data['payment_status'] = 'Unpaid'
 
-        # Extract Razorpay fields explicitly from input data
-        data['razorpay_order_id'] = self.initial_data.get('razorpay_order_id')
-        data['razorpay_payment_id'] = self.initial_data.get('razorpay_payment_id')
-        data['razorpay_signature_id'] = self.initial_data.get('razorpay_signature_id')
+        # Razorpay fields
+        if 'razorpay_order_id' in self.initial_data:
+            data['razorpay_order_id'] = self.initial_data.get('razorpay_order_id')
+        if 'razorpay_payment_id' in self.initial_data:
+            data['razorpay_payment_id'] = self.initial_data.get('razorpay_payment_id')
+        if 'razorpay_signature_id' in self.initial_data:
+            data['razorpay_signature_id'] = self.initial_data.get('razorpay_signature_id')
 
+        print(f"DEBUG: Payment Mode: {payment_mode}, Status: {data.get('payment_status')}")
         return data
-    
+
+    def create(self, validated_data):
+        year_level_fees = validated_data.pop('year_level_fees', [])
         
-
-    # just commented as of 13June25 at 04:23 PM as it is not saving Razorpay payment id,Razorpay signature id: in the FeeRecord DB
-    
-    def create(self, validated_data):      # just uncomment it as of 16June25 at 12:29 PM   
-        year_level_fees = validated_data.pop('year_level_fees')
-        validated_data['payment_date'] = date.today()
-
-        total_amount = validated_data.get('total_amount', Decimal("0.00"))
-        paid_amount = validated_data.get('paid_amount', Decimal("0.00"))
-        late_fee = validated_data.get('late_fee', Decimal("0.00"))
-
-        payment_status = 'Paid' if paid_amount >= (total_amount + late_fee) else 'Unpaid'
-        validated_data['payment_status'] = payment_status
-
+        # ✅ FIXED: Ensure status is preserved
         fee_record = FeeRecord.objects.create(**validated_data)
         fee_record.year_level_fees.set(year_level_fees)
+
+        # Generate receipt number if not exists
+        if not fee_record.receipt_number:
+            fee_record.receipt_number = self.generate_unique_receipt_number()
+            fee_record.save()
+
+        print(f"DEBUG: Final Status Saved: {fee_record.payment_status}")
         return fee_record
-    
-    
-    
 
+    def generate_unique_receipt_number(self):
+        today = datetime.now().strftime('%Y%m%d')
+        last_receipt = FeeRecord.objects.filter(receipt_number__startswith=f'REC-{today}') \
+                                        .aggregate(Max('receipt_number'))
+        if last_receipt['receipt_number__max']:
+            last_number = int(last_receipt['receipt_number__max'].split('-')[-1])
+            new_number = last_number + 1
+        else:
+            new_number = 1
+        return f'REC-{today}-{new_number:05d}'
 
-    
-   
     ### Added this as of 13June25 at 11:53 AM 
 class RazorpayConfirmPaymentSerializer(serializers.Serializer):
     razorpay_order_id = serializers.CharField()
     razorpay_payment_id = serializers.CharField()
     razorpay_signature_id = serializers.CharField()
-
-
-
-
-
 
 
 # ********************OfficeStaffSerializer profile*******************************
