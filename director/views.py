@@ -2332,119 +2332,119 @@ class FeeRecordView(viewsets.ModelViewSet):
 
     #     return Response(combined_response, status=status.HTTP_200_OK)
     
-from utils.email_notifications import send_email_notification
-import logging
-
-logger = logging.getLogger(__name__)
-
-@action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
-def submit_single_multi_month_fees(self, request):
-    student_id = request.data.get('student_id')
-    months = request.data.get('months', [])
-    year_level_fees = request.data.get('year_level_fees', [])
-    paid_amount = Decimal(request.data.get('paid_amount', "0.00"))
-    payment_mode = request.data.get('payment_mode')
-    remarks = request.data.get('remarks')
-    received_by = request.data.get('received_by')
-
-    admission = Admission.objects.filter(student_id=student_id).first()
-
-    if admission and admission.is_rte and admission.rte_number:
-        return Response(
-            {"message": f"Student {admission.student.user.get_full_name()} belongs to RTE category, fees record not created."},
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-    if not months or not isinstance(months, list):
-        return Response({"error": "Months must be a non-empty list."}, status=status.HTTP_400_BAD_REQUEST)
-
-    receipt_number = FeeRecord().generate_unique_receipt_number()
-    total_amount = Decimal("0.00")
-    total_late_fee = Decimal("0.00")
-    total_due = Decimal("0.00")
-    saved_records = []
-
-    for month in months:
-        serializer = self.get_serializer(data={
-            "student_id": student_id,
-            "month": month,
-            "year_level_fees": year_level_fees,
-            "paid_amount": paid_amount,
+    from utils.email_notifications import send_email_notification
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    @action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
+    def submit_single_multi_month_fees(self, request):
+        student_id = request.data.get('student_id')
+        months = request.data.get('months', [])
+        year_level_fees = request.data.get('year_level_fees', [])
+        paid_amount = Decimal(request.data.get('paid_amount', "0.00"))
+        payment_mode = request.data.get('payment_mode')
+        remarks = request.data.get('remarks')
+        received_by = request.data.get('received_by')
+    
+        admission = Admission.objects.filter(student_id=student_id).first()
+    
+        if admission and admission.is_rte and admission.rte_number:
+            return Response(
+                {"message": f"Student {admission.student.user.get_full_name()} belongs to RTE category, fees record not created."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+        if not months or not isinstance(months, list):
+            return Response({"error": "Months must be a non-empty list."}, status=status.HTTP_400_BAD_REQUEST)
+    
+        receipt_number = FeeRecord().generate_unique_receipt_number()
+        total_amount = Decimal("0.00")
+        total_late_fee = Decimal("0.00")
+        total_due = Decimal("0.00")
+        saved_records = []
+    
+        for month in months:
+            serializer = self.get_serializer(data={
+                "student_id": student_id,
+                "month": month,
+                "year_level_fees": year_level_fees,
+                "paid_amount": paid_amount,
+                "payment_mode": payment_mode,
+                "remarks": f"{remarks or ''} ({month})",
+                "received_by": received_by,
+                "receipt_number": receipt_number
+            })
+    
+            if serializer.is_valid():
+                instance = serializer.save()
+                total_amount += instance.total_amount
+                total_late_fee += instance.late_fee
+                total_due += instance.due_amount
+                saved_records.append(instance)
+            else:
+                return Response({"month": month, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+    
+        # Use the first record as base
+        first_record = saved_records[0]
+        combined_response = {
+            "id": first_record.id,
+            "student": {
+                "id": first_record.student.id,
+                "name": first_record.student.user.get_full_name()
+            },
+            "months": months,
+            "year_level_fees_grouped": FeeRecordSerializer(first_record).data["year_level_fees_grouped"],
+            "total_amount": f"{total_amount:.2f}",
+            "paid_amount": f"{paid_amount:.2f}",
+            "due_amount": f"{total_due:.2f}",
+            "payment_date": str(date.today()),
             "payment_mode": payment_mode,
-            "remarks": f"{remarks or ''} ({month})",
-            "received_by": received_by,
-            "receipt_number": receipt_number
-        })
-
-        if serializer.is_valid():
-            instance = serializer.save()
-            total_amount += instance.total_amount
-            total_late_fee += instance.late_fee
-            total_due += instance.due_amount
-            saved_records.append(instance)
-        else:
-            return Response({"month": month, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
-
-    # Use the first record as base
-    first_record = saved_records[0]
-    combined_response = {
-        "id": first_record.id,
-        "student": {
-            "id": first_record.student.id,
-            "name": first_record.student.user.get_full_name()
-        },
-        "months": months,
-        "year_level_fees_grouped": FeeRecordSerializer(first_record).data["year_level_fees_grouped"],
-        "total_amount": f"{total_amount:.2f}",
-        "paid_amount": f"{paid_amount:.2f}",
-        "due_amount": f"{total_due:.2f}",
-        "payment_date": str(date.today()),
-        "payment_mode": payment_mode,
-        "is_cheque_cleared": False,
-        "receipt_number": receipt_number,
-        "late_fee": f"{total_late_fee:.2f}",
-        "payment_status": "Paid" if total_due == 0 else "Unpaid",
-        "remarks": remarks,
-        "received_by": received_by
-    }
-
-    # Prepare message (student only)
-    months_display = ", ".join([str(m) for m in months])
-    message_text = (
-        f"Dear {first_record.student.user.get_full_name()},\n\n"
-        f"Your fee for {months_display} has been successfully recorded.\n"
-        f"Receipt No: {receipt_number}\n"
-        f"Total Amount: ₹{total_amount:.2f}\n"
-        f"Paid Amount: ₹{paid_amount:.2f}\n"
-        f"Due Amount: ₹{total_due:.2f}\n"
-        f"Payment Mode: {payment_mode}\n"
-        f"Received By: {received_by}\n\n"
-        f"Thank you!"
-    )
-
-    # PRINT MESSAGE to VS Code terminal (runserver console)
-    print("🔥 DEBUG: Fee notification prepared")
-
-    print("---- Fee Notification (student only) ----")
-    print(message_text)
-    print("-----------------------------------------")
-
-    # SEND EMAIL to student only (if email exists)
-    student_user = first_record.student.user
-    student_email = getattr(student_user, "email", None)
-
-    if student_email:
-        email_response = send_email_notification(
-            subject="Fee Payment Confirmation",
-            message=message_text,
-            recipients=[student_email]
+            "is_cheque_cleared": False,
+            "receipt_number": receipt_number,
+            "late_fee": f"{total_late_fee:.2f}",
+            "payment_status": "Paid" if total_due == 0 else "Unpaid",
+            "remarks": remarks,
+            "received_by": received_by
+        }
+    
+        # Prepare message (student only)
+        months_display = ", ".join([str(m) for m in months])
+        message_text = (
+            f"Dear {first_record.student.user.get_full_name()},\n\n"
+            f"Your fee for {months_display} has been successfully recorded.\n"
+            f"Receipt No: {receipt_number}\n"
+            f"Total Amount: ₹{total_amount:.2f}\n"
+            f"Paid Amount: ₹{paid_amount:.2f}\n"
+            f"Due Amount: ₹{total_due:.2f}\n"
+            f"Payment Mode: {payment_mode}\n"
+            f"Received By: {received_by}\n\n"
+            f"Thank you!"
         )
-        # Print email helper response to console as well
-        print("Email send response:", email_response)
-    else:
-        print("No email found for student (email not sent). Student id:", first_record.student.id)
-
-    return Response(combined_response, status=status.HTTP_200_OK)
+    
+        # PRINT MESSAGE to VS Code terminal (runserver console)
+        print("🔥 DEBUG: Fee notification prepared")
+    
+        print("---- Fee Notification (student only) ----")
+        print(message_text)
+        print("-----------------------------------------")
+    
+        # SEND EMAIL to student only (if email exists)
+        student_user = first_record.student.user
+        student_email = getattr(student_user, "email", None)
+    
+        if student_email:
+            email_response = send_email_notification(
+                subject="Fee Payment Confirmation",
+                message=message_text,
+                recipients=[student_email]
+            )
+            # Print email helper response to console as well
+            print("Email send response:", email_response)
+        else:
+            print("No email found for student (email not sent). Student id:", first_record.student.id)
+    
+        return Response(combined_response, status=status.HTTP_200_OK)
 
    
 
@@ -2767,7 +2767,110 @@ def submit_single_multi_month_fees(self, request):
         return Response(result, status=status.HTTP_200_OK)
 
 
-    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated],url_path="student_unpaid_fees")
+    # @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated],url_path="student_unpaid_fees")
+    # def student_unpaid_fees(self, request):
+    #     user = request.user
+        
+    #     roles = [role.name.lower() for role in user.role.all()]
+    #     student_id = request.query_params.get("student_id")
+
+    #     if "director" in roles or "office staff" in roles:
+    #         if student_id:
+    #             queryset = FeeRecord.objects.filter(payment_status="Unpaid", student_id=student_id)
+    #             print("Filtered Queryset for student_id:", queryset)
+    #         else:
+    #             queryset = FeeRecord.objects.filter(payment_status="Unpaid")
+
+
+    #     elif "teacher" in roles:
+    #         teacher_instance = get_object_or_404(Teacher, user=user)
+
+    #         assigned_class_ids = TeacherYearLevel.objects.filter(
+    #             teacher=teacher_instance
+    #         ).values_list("year_level_id", flat=True)
+
+    #         if student_id:
+    #             try:
+    #                 student_yl = StudentYearLevel.objects.select_related("student", "level").get(id=student_id)
+    #             except StudentYearLevel.DoesNotExist:
+    #                 return Response({"detail": "Student not found."}, status=404)
+
+    #             if student_yl.level.id not in assigned_class_ids:
+    #                 return Response({"detail": "You are not allowed to view this student's data."}, status=403)
+
+    #             queryset = FeeRecord.objects.filter(
+    #                 payment_status="Unpaid",
+    #                 student=student_yl.student
+    #             )
+
+    #         else:
+    #             student_ids = StudentYearLevel.objects.filter(
+    #                 level_id__in=assigned_class_ids
+    #             ).values_list("student_id", flat=True)
+
+    #             queryset = FeeRecord.objects.filter(
+    #                 payment_status="Unpaid",
+    #                 student_id__in=student_ids
+    #             )
+
+
+    #     elif "student" in roles:
+    #         if "student_id" in request.query_params:
+    #             return Response({"detail": "You are not allowed to provide student_id."}, status=400)
+
+    #         student = get_object_or_404(Student, user=user)
+    #         queryset = FeeRecord.objects.filter(
+    #             payment_status="Unpaid",
+    #             student=student
+    #         )
+
+
+    #     elif "guardian" in roles:
+    #         if "student_id" in request.query_params:
+    #             return Response({"detail": "You are not allowed to provide student_id."}, status=400)
+    #         guardian = get_object_or_404(Guardian, user=user)
+    #         student_ids = StudentGuardian.objects.filter(guardian=guardian).values_list("student_id", flat=True)
+    #         queryset = FeeRecord.objects.filter(
+    #             payment_status="Unpaid", student_id__in=student_ids
+    #         )
+
+    #     else:
+    #         return Response({"detail": "Permission denied."}, status=403)
+
+    #     # serializer = FeeRecordSerializer(queryset, many=True) 
+    #     # return Response(serializer.data)
+
+    #     serializer = FeeRecordSerializer(queryset, many=True, context={"request": request})
+    #     print("Unpaid Fees:", serializer.data)
+    #     notifications = []
+    #     for fee_record in queryset:
+    #         student = fee_record.student
+    #         msg = (
+    #             f" Dear {student.user.get_full_name()},\n"
+    #             f"Your fee for {fee_record.month} is still UNPAID.\n"
+    #             f"Total Amount: ₹{fee_record.total_amount}\n"
+    #             f"Paid: ₹{fee_record.paid_amount}\n"
+    #             f"Due: ₹{fee_record.due_amount}\n"
+    #             f"Please clear it at the earliest."
+    #         )
+    #         # WhatsApp notification bhejna
+    #         response = send_whatsapp_message(msg)   # <-- apka existing function
+    #         notifications.append({
+    #             "student": student.user.get_full_name(),
+    #             "month": str(fee_record.month),
+    #             "due_amount": str(fee_record.due_amount),
+    #             "response": response
+    #         })
+    #     # -------------------------------------------------------
+
+    #     return Response({
+    #         "unpaid_fees": serializer.data,
+    #         "notifications": notifications
+    #     })
+
+    from utils.email_notifications import send_email_notification
+
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="student_unpaid_fees")
     def student_unpaid_fees(self, request):
         user = request.user
         roles = [role.name.lower() for role in user.role.all()]
@@ -2779,10 +2882,8 @@ def submit_single_multi_month_fees(self, request):
             else:
                 queryset = FeeRecord.objects.filter(payment_status="Unpaid")
 
-
         elif "teacher" in roles:
             teacher_instance = get_object_or_404(Teacher, user=user)
-
             assigned_class_ids = TeacherYearLevel.objects.filter(
                 teacher=teacher_instance
             ).values_list("year_level_id", flat=True)
@@ -2800,7 +2901,6 @@ def submit_single_multi_month_fees(self, request):
                     payment_status="Unpaid",
                     student=student_yl.student
                 )
-
             else:
                 student_ids = StudentYearLevel.objects.filter(
                     level_id__in=assigned_class_ids
@@ -2811,7 +2911,6 @@ def submit_single_multi_month_fees(self, request):
                     student_id__in=student_ids
                 )
 
-
         elif "student" in roles:
             if "student_id" in request.query_params:
                 return Response({"detail": "You are not allowed to provide student_id."}, status=400)
@@ -2821,7 +2920,6 @@ def submit_single_multi_month_fees(self, request):
                 payment_status="Unpaid",
                 student=student
             )
-
 
         elif "guardian" in roles:
             if "student_id" in request.query_params:
@@ -2835,30 +2933,61 @@ def submit_single_multi_month_fees(self, request):
         else:
             return Response({"detail": "Permission denied."}, status=403)
 
-        # serializer = FeeRecordSerializer(queryset, many=True) 
-        # return Response(serializer.data)
-
         serializer = FeeRecordSerializer(queryset, many=True, context={"request": request})
+        print("Unpaid Fees:", serializer.data)
+
         notifications = []
+
         for fee_record in queryset:
             student = fee_record.student
-            msg = (
-                f" Dear {student.user.get_full_name()},\n"
-                f"Your fee for {fee_record.month} is still UNPAID.\n"
-                f"Total Amount: ₹{fee_record.total_amount}\n"
-                f"Paid: ₹{fee_record.paid_amount}\n"
-                f"Due: ₹{fee_record.due_amount}\n"
-                f"Please clear it at the earliest."
-            )
-            # WhatsApp notification bhejna
-            response = send_whatsapp_message(msg)   # <-- apka existing function
+            student_name = student.user.get_full_name()
+
+            # Prepare messages for student and guardians
+            messages_dict = {}  # email -> message
+
+            # Student email
+            if student.user.email:
+                messages_dict[student.user.email] = (
+                    f"Dear {student_name},\n"
+                    f"Your fee for {fee_record.month} is still UNPAID.\n"
+                    f"Total Amount: ₹{fee_record.total_amount}\n"
+                    f"Paid: ₹{fee_record.paid_amount}\n"
+                    f"Due: ₹{fee_record.due_amount}\n"
+                    f"Please clear it at the earliest."
+                )
+
+            # Guardian emails
+            guardians = StudentGuardian.objects.filter(student=student)
+            for sg in guardians:
+                guardian_email = sg.guardian.user.email
+                if guardian_email:
+                    guardian_name = sg.guardian.user.get_full_name()
+                    messages_dict[guardian_email] = (
+                        f"Dear {guardian_name},\n"
+                        f"{student_name}'s fee for {fee_record.month} is still UNPAID.\n"
+                        f"Total Amount: ₹{fee_record.total_amount}\n"
+                        f"Paid: ₹{fee_record.paid_amount}\n"
+                        f"Due: ₹{fee_record.due_amount}\n"
+                        f"Please ensure the fee is cleared at the earliest."
+                    )
+
+            # Send emails individually
+            email_responses = []
+            for email, message_text in messages_dict.items():
+                print(f"Sending to: {email}\nMessage:\n{message_text}\n")
+                email_response = send_email_notification(
+                    subject="Unpaid Fee Reminder",
+                    message=message_text,
+                    recipients=[email]
+                )
+                email_responses.append(email_response)
+
             notifications.append({
-                "student": student.user.get_full_name(),
+                "student": student_name,
                 "month": str(fee_record.month),
                 "due_amount": str(fee_record.due_amount),
-                "response": response
+                "email_responses": email_responses
             })
-        # -------------------------------------------------------
 
         return Response({
             "unpaid_fees": serializer.data,
