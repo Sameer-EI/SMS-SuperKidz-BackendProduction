@@ -264,8 +264,9 @@ EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587  
 EMAIL_USE_TLS = True
 EMAIL_USE_SSL = False
-EMAIL_HOST_USER = 'technohub344@gmail.com'
-EMAIL_HOST_PASSWORD = 'innjflfdusucaygz'
+# EMAIL_HOST_USER = 'technohub344@gmail.com'
+EMAIL_HOST_USER = 'sayyedsaqib406@gmail.com'
+EMAIL_HOST_PASSWORD = 'wtpw ktma chhr mftk'
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 
