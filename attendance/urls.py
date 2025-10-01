@@ -11,7 +11,7 @@ router.register(r'student-dashboard', StudentOwnAttendanceViewSet, basename='stu
 router.register(r'guardian/attendance', GuardianChildrenAttendanceViewSet, basename='guardian-attendance')
 # router.register(r'attendance/mark-holidays', BulkHolidayAttendanceViewSet, basename='mark-holiday'),
 router.register('events', SchoolEventViewSet, basename='event')
-
+router.register(r'holidays',HolidayViewSet,basename='holidays')
 
 urlpatterns = [
     path('', include(router.urls)),

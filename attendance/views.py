@@ -806,3 +806,8 @@ class SendWhatsAppView(APIView):
                 })
 
         return Response({"results": sent_messages}, status=status.HTTP_200_OK)
+
+
+class HolidayViewSet(ModelViewSet):
+    queryset = Holiday.objects.all().order_by("-start_date")
+    serializer_class = HolidaySerializer

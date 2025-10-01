@@ -26,6 +26,7 @@ from django.db.models import Sum, DecimalField
 # views.py
 
 from django.db.models import Count, F, ExpressionWrapper, IntegerField ,Func , Value
+from razorpay.errors import SignatureVerificationError, InvalidOperation
 
 
 import razorpay
@@ -2039,21 +2040,13 @@ class FeeDiscountView(viewsets.ModelViewSet):
     serializer_class = FeeDiscountSerializer
     # permission_classes = [IsAuthenticated,IsDirector]
 
-
-# from director.permission import FeeRecordPermission
-from rest_framework.filters import SearchFilter  # (agar already import nahi hai)
-from django.db.models import Q  # (agar already import nahi hai)
-
-
-# Fee Record View
-# https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/
 class FeeRecordView(viewsets.ModelViewSet):
     serializer_class = FeeRecordSerializer
     queryset = FeeRecord.objects.all()
-    # permission_classes = [FeeRecordPermission]
+  
     filter_backends = [SearchFilter]
     permission_classes = [IsAuthenticated]
-    # Enables search using ?search=something
+  
     search_fields = [
         'remarks',
         'receipt_number',
@@ -2062,12 +2055,11 @@ class FeeRecordView(viewsets.ModelViewSet):
         'year_level_fees__year_level__level_name',
     ]
     
-    # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/?year_level=6
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
 
-        #  Role-based visibility
+        # Role-based visibility
         if hasattr(user, "director") or hasattr(user, "officestaff") or user.is_staff or user.is_superuser:
             pass  # full access
         elif hasattr(user, "teacher"):
@@ -2075,7 +2067,7 @@ class FeeRecordView(viewsets.ModelViewSet):
             teacher_year_levels = user.teacher.teacheryearlevel_set.values_list("year_level_id", flat=True)
             qs = qs.filter(student__student_year_levels__level_id__in=teacher_year_levels)
         elif hasattr(user, "student"):
-            # only own records
+            
             qs = qs.filter(student=user.student)
         elif hasattr(user, "guardian_relation"):
             children_ids = user.guardian_relation.studentguardian.values_list("student_id", flat=True)
@@ -2083,7 +2075,6 @@ class FeeRecordView(viewsets.ModelViewSet):
         else:
             qs = qs.none()
 
-        # Keep your existing filters
         request = self.request
         
         month = request.query_params.get('month')
@@ -2119,21 +2110,121 @@ class FeeRecordView(viewsets.ModelViewSet):
     
         return qs.distinct()
 
-    
+    # removed commented or unnecessary code from line 1906 - 2266
+        # commented as of 26Aug25 at 04:34 PM
+
+    # Added as of 26Aug25 at 04:34 PM
+    # @action(detail=False, methods=["get"], url_path="fee-preview")
+    # def preview(self, request):
+    #     student_id = request.query_params.get("student_id")
+    #     month = request.query_params.get("month")
+
+    #     if not student_id or not month:
+    #         return Response({"detail": "student_id and month are required"}, status=400)
+
+    #     try:
+    #         student = Student.objects.get(id=student_id)
+    #     except Student.DoesNotExist:
+    #         return Response({"detail": "Student not found"}, status=404)
+
+    #     # Latest active year level
+    #     student_year_level = (
+    #         StudentYearLevel.objects
+    #         .filter(student=student)
+    #         .order_by("-year")
+    #         .first()
+    #     )
+    #     if not student_year_level:
+    #         return Response({"detail": "No year level found for this student."}, status=404)
+
+    #     # All year-level fees
+    #     year_level_fees = YearLevelFee.objects.filter(year_level=student_year_level.level)
+
+    #     # Paid fee records for this student & school year
+    #     paid_fees = FeeRecord.objects.filter(
+    #         student=student,
+    #         school_year__year=student_year_level.year
+    #     )
+
+    #     # Admission fees → only once per year
+    #     admission_paid_fee_ids = paid_fees.filter(
+    #         year_level_fees__fee_type__name__iexact="admission fee"
+    #     ).values_list("year_level_fees", flat=True)
+
+    #     # Tuition fees (monthly) → must match same month
+    #     monthly_paid_fee_ids = YearLevelFee.objects.filter(
+    #         feerecord__in=paid_fees,
+    #         feerecord__month__iexact=month,
+    #         fee_type__name__iexact="tuition fee"
+    #     ).values_list("id", flat=True)
+
+    #     # Exam fees → must match same month
+    #     exam_paid_fee_ids = paid_fees.filter(
+    #         month=month,
+    #         year_level_fees__fee_type__name__iexact="exam fee"
+    #     ).values_list("year_level_fees", flat=True)
+
+    #     # Transport fees → must match same month
+    #     transport_paid_fee_ids = paid_fees.filter(
+    #         month=month,
+    #         year_level_fees__fee_type__name__iexact="transport fee"
+    #     ).values_list("year_level_fees", flat=True)
+
+    #     # Serialize fees
+    #     serializer = YearLevelFeeSerializer(year_level_fees, many=True, context={"student": student})
+    #     grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
+
+    #     today = date.today()
+
+    #     # --- Add status/late fee ---
+    #     for group in grouped_fees:
+    #         new_fees_list = []  # Create a new list to hold the modified fee dictionaries
+    #         for fee in group["fees"]:
+    #             fee_id = fee["id"]
+    #             fee_type = fee["fee_type"].lower()
+
+    #             # --- HANDLING ADMISSION, TUITION, EXAM, TRANSPORT ---
+    #             if (fee_type == "admission fee" and fee_id in admission_paid_fee_ids) or \
+    #             (fee_type == "tuition fee" and fee_id in monthly_paid_fee_ids) or \
+    #             (fee_type == "exam fee" and fee_id in exam_paid_fee_ids) or \
+    #             (fee_type == "transport fee" and fee_id in transport_paid_fee_ids):
+
+    #                 # Already Paid → minimal response
+    #                 new_fee = {
+    #                     "fee_type": fee_type.title(),
+    #                     "id": fee_id,
+    #                     "status": "Already Paid"
+    #                 }
+    #                 new_fees_list.append(new_fee)
+
+    #             else:
+    #                 # Pending → include amounts
+    #                 fee["amount"] = str(fee.get("amount", "0"))
+    #                 fee["final_amount"] = str(fee.get("final_amount", "0"))
+    #                 fee["status"] = "Pending"
+
+    #                 # Late Fee (only for Tuition Fee)
+    #                 if fee_type == "tuition fee" and today.day > 15:
+    #                     fee["late_fee"] = 25
+
+    #                 new_fees_list.append(fee)
+
+    #         group["fees"] = new_fees_list
+
+    #     return Response(grouped_fees)
+
     @action(detail=False, methods=["get"], url_path="fee-preview")
     def preview(self, request):
         student_id = request.query_params.get("student_id")
-        month = request.query_params.get("month")
 
-        if not student_id or not month:
-            return Response({"detail": "student_id and month are required"}, status=400)
+        if not student_id:
+            return Response({"detail": "student_id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             student = Student.objects.get(id=student_id)
         except Student.DoesNotExist:
-            return Response({"detail": "Student not found"}, status=404)
+            return Response({"detail": "Student not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        # Latest active year level
         student_year_level = (
             StudentYearLevel.objects
             .filter(student=student)
@@ -2141,92 +2232,72 @@ class FeeRecordView(viewsets.ModelViewSet):
             .first()
         )
         if not student_year_level:
-            return Response({"detail": "No year level found for this student."}, status=404)
+            return Response({"detail": "No year level found for this student."}, status=status.HTTP_404_NOT_FOUND)
 
-        # All year-level fees
         year_level_fees = YearLevelFee.objects.filter(year_level=student_year_level.level)
 
-        # Paid fee records for this student & school year
-        paid_fees = FeeRecord.objects.filter(
-            student=student,
-            school_year__year=student_year_level.year
-        )
+        # Include all fee records
+        paid_fees = FeeRecord.objects.filter(student=student)
 
-        # Admission fees → only once per year
-        admission_paid_fee_ids = paid_fees.filter(
-            year_level_fees__fee_type__name__iexact="admission fee"
-        ).values_list("year_level_fees", flat=True)
+        # Debug logs
+        print(f" FEE PREVIEW - Student: {student.user.get_full_name()}")
+        print(f"   Total FeeRecords: {paid_fees.count()}")
+        for record in paid_fees:
+            print(f"   Record: {record.receipt_number}, Status: {record.payment_status}, "
+                  f"Amount: {record.paid_amount}, Month: {record.month}")
 
-        # Tuition fees (monthly)
-        tuition_records = paid_fees.filter(
-            month=month,
-            year_level_fees__fee_type__name__iexact="tuition fee"
-        )
-        monthly_paid_fee_ids = tuition_records.values_list("year_level_fees", flat=True)
+        all_months = [
+            'January', 'February', 'March', 'April', 'May', 'June',
+            'July', 'August', 'September', 'October', 'November', 'December'
+        ]
 
-        # Exam fees
-        exam_paid_fee_ids = paid_fees.filter(
-            month=month,
-            year_level_fees__fee_type__name__iexact="exam fee"
-        ).values_list("year_level_fees", flat=True)
-
-        # Transport fees
-        transport_paid_fee_ids = paid_fees.filter(
-            month=month,
-            year_level_fees__fee_type__name__iexact="transport fee"
-        ).values_list("year_level_fees", flat=True)
-
-        # Serialize fees
         serializer = YearLevelFeeSerializer(year_level_fees, many=True, context={"student": student})
         grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
 
         today = date.today()
+        result = []
 
-        # --- Add status/amounts ---
-        for group in grouped_fees:
-            new_fees_list = []
-            for fee in group["fees"]:
-                fee_id = fee["id"]
-                fee_type = fee["fee_type"].lower()
-                new_fee = {"id": fee_id, "fee_type": fee["fee_type"]}
+        for month in all_months:
+            month_data = {"month": month, "fees": []}
 
-                # ADMISSION
-                if fee_type == "admission fee":
-                    if fee_id in admission_paid_fee_ids:
-                        new_fee["status"] = "Already Paid"
-                    else:
-                        new_fee["final_amount"] = str(fee.get("final_amount", "0"))
-                        new_fee["status"] = "Pending"
+            for group in grouped_fees:
+                for fee in group["fees"]:
+                    fee_id = fee["id"]
+                    fee_type = fee["fee_type"].lower()
+                    base_amount = Decimal(fee.get("final_amount", "0"))
 
-                # TUITION
-                elif fee_type == "tuition fee":
-                    if fee_id in monthly_paid_fee_ids:
-                        latest_record = tuition_records.order_by("-id").first()
-                        if latest_record:
-                            if latest_record.due_amount == 0:
-                                new_fee["status"] = "Already Paid"
-                            elif latest_record.paid_amount > 0:
-                                # new_fee["paid_amount"] = str(latest_record.paid_amount)
-                                new_fee["due_amount"] = str(latest_record.due_amount)
-                                new_fee["status"] = "Partially Paid"
+                    if fee_type == "admission fee":
+                        if month == "January":
+                            admission_payments = paid_fees.filter(
+                                year_level_fees__id=fee_id,
+                                payment_status__in=['Paid', 'Partially Paid']
+                            )
+                            total_paid = admission_payments.aggregate(Sum('paid_amount'))['paid_amount__sum'] or Decimal('0.00')
+
+                            if total_paid >= base_amount:
+                                status_info = {"status": "Already Paid", "paid_amount": str(total_paid)}
+                            elif total_paid > 0:
+                                status_info = {"status": "Partially Paid", "paid_amount": str(total_paid), "base_amount": str(base_amount)}
                             else:
-                                new_fee["final_amount"] = str(fee.get("final_amount", "0"))
-                                new_fee["status"] = "Pending"
-                    else:
-                        new_fee["final_amount"] = str(fee.get("final_amount", "0"))
-                        new_fee["status"] = "Pending"
+                                status_info = {"status": "Pending", "base_amount": str(base_amount)}
 
-                    # Apply late fee only if today is past 15th and fee isn't fully paid
-                    if today.day > 15 and new_fee["status"] in ["Partially Paid", "Pending"]:
-                        new_fee["late_fee"] = 25
+                            month_data["fees"].append({
+                                "id": fee_id,
+                                "fee_type": fee["fee_type"],
+                                "base_amount": str(base_amount),
+                                "late_fee": "0",
+                                **status_info
+                            })
 
-                # EXAM
-                elif fee_type == "exam fee":
-                    if fee_id in exam_paid_fee_ids:
-                        new_fee["status"] = "Already Paid"
-                    else:
-                        new_fee["final_amount"] = str(fee.get("final_amount", "0"))
-                        new_fee["status"] = "Pending"
+                    elif fee_type in ["tuition fee", "activity fee", "transport fee"]:
+                        fee_payments = paid_fees.filter(
+                            month=month,
+                            year_level_fees__id=fee_id,
+                            payment_status__in=['Paid', 'Partially Paid']
+                        )
+
+                        total_paid = fee_payments.aggregate(Sum('paid_amount'))['paid_amount__sum'] or Decimal('0.00')
+                        total_due = fee_payments.aggregate(Sum('due_amount'))['due_amount__sum'] or Decimal('0.00')
 
                 # TRANSPORT
                 elif fee_type == "transport fee":
@@ -2246,124 +2317,39 @@ class FeeRecordView(viewsets.ModelViewSet):
     
 
         
-    # @action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
-    # def submit_single_multi_month_fees(self, request):
-    #     student_id = request.data.get('student_id')
-    #     months = request.data.get('months', [])
-    #     year_level_fees = request.data.get('year_level_fees', [])
-    #     paid_amount = Decimal(request.data.get('paid_amount', "0.00"))
-    #     payment_mode = request.data.get('payment_mode')
-    #     remarks = request.data.get('remarks')
-    #     received_by = request.data.get('received_by')
-        
-    #     admission = Admission.objects.filter(student_id=student_id).first()
-        
-    #     if admission and admission.is_rte and admission.rte_number:
-    #         return Response(
-    #             {"message": f"Student {admission.student.user.get_full_name()} belongs to RTE category, fees record not created."},
-    #             status=status.HTTP_400_BAD_REQUEST
-    #     )
-
-
-    #     if not months or not isinstance(months, list):
-    #         return Response({"error": "Months must be a non-empty list."}, status=status.HTTP_400_BAD_REQUEST)
-
-    #     receipt_number = FeeRecord().generate_unique_receipt_number()
-    #     total_amount = Decimal("0.00")
-    #     total_late_fee = Decimal("0.00")
-    #     total_due = Decimal("0.00")
-    #     saved_records = []
-
-    #     for month in months:
-    #         serializer = self.get_serializer(data={
-    #             "student_id": student_id,
-    #             "month": month,
-    #             "year_level_fees": year_level_fees,
-    #             "paid_amount": paid_amount,
-    #             "payment_mode": payment_mode,
-    #             "remarks": f"{remarks or ''} ({month})",
-    #             "received_by": received_by,
-    #             "receipt_number": receipt_number  
-    #         })
-
-    #         if serializer.is_valid():
-    #             instance = serializer.save()
-    #             total_amount += instance.total_amount
-    #             total_late_fee += instance.late_fee
-    #             total_due += instance.due_amount
-    #             saved_records.append(instance)
-    #         else:
-    #             return Response({"month": month, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
-
-    #     # Use the first record as base
-    #     first_record = saved_records[0]
-    #     combined_response = {
-    #         "id": first_record.id,
-    #         "student": {
-    #             "id": first_record.student.id,
-    #             "name": first_record.student.user.get_full_name()
-    #         },
-    #         "months": months,
-    #         "year_level_fees_grouped": FeeRecordSerializer(first_record).data["year_level_fees_grouped"],
-    #         "total_amount": f"{total_amount:.2f}",
-    #         "paid_amount": f"{paid_amount:.2f}",
-    #         "due_amount": f"{total_due:.2f}",
-    #         "payment_date": str(date.today()),
-    #         "payment_mode": payment_mode,
-    #         "is_cheque_cleared": False,
-    #         "receipt_number": receipt_number,
-    #         "late_fee": f"{total_late_fee:.2f}",
-    #         "payment_status": "Paid" if total_due == 0 else "Unpaid",
-    #         "remarks": remarks,
-    #         "received_by": received_by
-    #     }
-    #     message_text = (
-    #         f"Dear {first_record.student.user.get_full_name()},\n"
-    #         f"Your fee for {', '.join(months)} month has been successfully recorded.\n"
-    #         f"Receipt No: {receipt_number}\n"
-    #         f"Total Amount: ₹{total_amount:.2f}\n"
-    #         f"Paid Amount: ₹{paid_amount:.2f}\n"
-    #         f"Due Amount: ₹{total_due:.2f}\n"
-    #         f"Payment Mode: {payment_mode}\n"
-    #         f"received_by: {received_by}\n"
-    #         f"Thank you!"
-    #     )
-    #     send_whatsapp_message(message_text)
-
-    #     return Response(combined_response, status=status.HTTP_200_OK)
-    
-    from utils.email_notifications import send_email_notification
-    import logging
-    
-    logger = logging.getLogger(__name__)
-    
     @action(detail=False, methods=['post'], url_path='submit_single_multi_month_fees')
     def submit_single_multi_month_fees(self, request):
         student_id = request.data.get('student_id')
-        months = request.data.get('months', [])
-        year_level_fees = request.data.get('year_level_fees', [])
-        paid_amount = Decimal(request.data.get('paid_amount', "0.00"))
+        selected_fees = request.data.get('selected_fees', [])
+        
+        # Handle paid_amount conversion safely
+        paid_amount_str = request.data.get('paid_amount', "0.00")
+        try:
+            total_paid_amount = Decimal(str(paid_amount_str))
+        except (InvalidOperation, ValueError, TypeError):
+            return Response({"error": "Invalid paid_amount format."}, status=status.HTTP_400_BAD_REQUEST)
+        
         payment_mode = request.data.get('payment_mode')
         remarks = request.data.get('remarks')
         received_by = request.data.get('received_by')
-    
+        
         admission = Admission.objects.filter(student_id=student_id).first()
-    
+        
         if admission and admission.is_rte and admission.rte_number:
             return Response(
                 {"message": f"Student {admission.student.user.get_full_name()} belongs to RTE category, fees record not created."},
                 status=status.HTTP_400_BAD_REQUEST
-            )
-    
+        )
+
+
         if not months or not isinstance(months, list):
             return Response({"error": "Months must be a non-empty list."}, status=status.HTTP_400_BAD_REQUEST)
-    
+
         receipt_number = FeeRecord().generate_unique_receipt_number()
-        total_amount = Decimal("0.00")
+        total_base_amount = Decimal("0.00")
         total_late_fee = Decimal("0.00")
-        total_due = Decimal("0.00")
         saved_records = []
-    
+
         for month in months:
             serializer = self.get_serializer(data={
                 "student_id": student_id,
@@ -2373,18 +2359,18 @@ class FeeRecordView(viewsets.ModelViewSet):
                 "payment_mode": payment_mode,
                 "remarks": f"{remarks or ''} ({month})",
                 "received_by": received_by,
-                "receipt_number": receipt_number
+                "receipt_number": receipt_number  
             })
-    
+
             if serializer.is_valid():
                 instance = serializer.save()
-                total_amount += instance.total_amount
-                total_late_fee += instance.late_fee
-                total_due += instance.due_amount
+                total_base_amount += item['base_amount']
+                total_late_fee += item['late_fee']
+                total_allocated += allocated_amount_decimal
                 saved_records.append(instance)
             else:
                 return Response({"month": month, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
-    
+
         # Use the first record as base
         first_record = saved_records[0]
         combined_response = {
@@ -2407,49 +2393,22 @@ class FeeRecordView(viewsets.ModelViewSet):
             "remarks": remarks,
             "received_by": received_by
         }
-    
-        # Prepare message (student only)
-        months_display = ", ".join([str(m) for m in months])
         message_text = (
-            f"Dear {first_record.student.user.get_full_name()},\n\n"
-            f"Your fee for {months_display} has been successfully recorded.\n"
+            f"Dear {first_record.student.user.get_full_name()},\n"
+            f"Your fee for {', '.join(months)} month has been successfully recorded.\n"
             f"Receipt No: {receipt_number}\n"
             f"Total Amount: ₹{total_amount:.2f}\n"
             f"Paid Amount: ₹{paid_amount:.2f}\n"
             f"Due Amount: ₹{total_due:.2f}\n"
             f"Payment Mode: {payment_mode}\n"
-            f"Received By: {received_by}\n\n"
+            f"received_by: {received_by}\n"
             f"Thank you!"
         )
-    
-        # PRINT MESSAGE to VS Code terminal (runserver console)
-        print("🔥 DEBUG: Fee notification prepared")
-    
-        print("---- Fee Notification (student only) ----")
-        print(message_text)
-        print("-----------------------------------------")
-    
-        # SEND EMAIL to student only (if email exists)
-        student_user = first_record.student.user
-        student_email = getattr(student_user, "email", None)
-    
-        if student_email:
-            email_response = send_email_notification(
-                subject="Fee Payment Confirmation",
-                message=message_text,
-                recipients=[student_email]
-            )
-            # Print email helper response to console as well
-            print("Email send response:", email_response)
-        else:
-            print("No email found for student (email not sent). Student id:", first_record.student.id)
-    
+        send_whatsapp_message(message_text)
+
         return Response(combined_response, status=status.HTTP_200_OK)
-
-   
-
     
-
+    
     ### Razorpay custom views
     # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/initiate-payment/
     ### using custom view 
@@ -2520,22 +2479,8 @@ class FeeRecordView(viewsets.ModelViewSet):
         except razorpay.errors.SignatureVerificationError:
             return Response({"error": "Payment verification failed"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 2. Save FeeRecord
-        serializer = FeeRecordRazorpaySerializer(data=data)
-        if serializer.is_valid():
-            instance = serializer.save()
 
-            # Serialize with full FeeRecordSerializer to return complete info
-            # full_data = FeeRecordSerializer(instance).data    # fix the issue 04Sep25 at 03:43 PM
-            full_data = FeeRecordSerializer(instance, context={'request': request}).data
 
-            return Response({
-                "message": "Payment successful and FeeRecord saved.",
-                "fee_record": full_data
-            }, status=status.HTTP_201_CREATED)
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
     
     # corrected amount issue as of 19June25 at 02:50 PM
     # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/student-fee-summary/?year_level=5
@@ -2940,54 +2885,23 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         for fee_record in queryset:
             student = fee_record.student
-            student_name = student.user.get_full_name()
-
-            # Prepare messages for student and guardians
-            messages_dict = {}  # email -> message
-
-            # Student email
-            if student.user.email:
-                messages_dict[student.user.email] = (
-                    f"Dear {student_name},\n"
-                    f"Your fee for {fee_record.month} is still UNPAID.\n"
-                    f"Total Amount: ₹{fee_record.total_amount}\n"
-                    f"Paid: ₹{fee_record.paid_amount}\n"
-                    f"Due: ₹{fee_record.due_amount}\n"
-                    f"Please clear it at the earliest."
-                )
-
-            # Guardian emails
-            guardians = StudentGuardian.objects.filter(student=student)
-            for sg in guardians:
-                guardian_email = sg.guardian.user.email
-                if guardian_email:
-                    guardian_name = sg.guardian.user.get_full_name()
-                    messages_dict[guardian_email] = (
-                        f"Dear {guardian_name},\n"
-                        f"{student_name}'s fee for {fee_record.month} is still UNPAID.\n"
-                        f"Total Amount: ₹{fee_record.total_amount}\n"
-                        f"Paid: ₹{fee_record.paid_amount}\n"
-                        f"Due: ₹{fee_record.due_amount}\n"
-                        f"Please ensure the fee is cleared at the earliest."
-                    )
-
-            # Send emails individually
-            email_responses = []
-            for email, message_text in messages_dict.items():
-                print(f"Sending to: {email}\nMessage:\n{message_text}\n")
-                email_response = send_email_notification(
-                    subject="Unpaid Fee Reminder",
-                    message=message_text,
-                    recipients=[email]
-                )
-                email_responses.append(email_response)
-
+            msg = (
+                f" Dear {student.user.get_full_name()},\n"
+                f"Your fee for {fee_record.month} is still UNPAID.\n"
+                f"Total Amount: ₹{fee_record.total_amount}\n"
+                f"Paid: ₹{fee_record.paid_amount}\n"
+                f"Due: ₹{fee_record.due_amount}\n"
+                f"Please clear it at the earliest."
+            )
+            # WhatsApp notification bhejna
+            response = send_whatsapp_message(msg)   # <-- apka existing function
             notifications.append({
                 "student": student_name,
                 "month": str(fee_record.month),
                 "due_amount": str(fee_record.due_amount),
                 "email_responses": email_responses
             })
+        # -------------------------------------------------------
 
         return Response({
             "unpaid_fees": serializer.data,
@@ -5931,5 +5845,4 @@ class SchoolTurnOverViewSet(viewsets.ModelViewSet):
             instance.verified_at = timezone.now()
 
         instance.save(update_fields=["verified_by", "verified_at", "is_locked"])
-
 
