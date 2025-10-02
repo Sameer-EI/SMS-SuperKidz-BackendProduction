@@ -2224,7 +2224,6 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         print(" CONFIRM PAYMENT DATA:", data)
 
-        # Required fields
         required_fields = [
             "razorpay_payment_id",
             "razorpay_order_id", 
@@ -2243,22 +2242,22 @@ class FeeRecordView(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Month data processing - this contains selected_fees array
+    
         selected_fees_data = data.get("month")
-        print("📋 SELECTED FEES DATA:", selected_fees_data)
+        print(" SELECTED FEES DATA:", selected_fees_data)
 
-        #  FIX: Properly parse selected_fees_data
+
         processed_fees_data = []
         
-        # Case 1: Already a list
+ 
         if isinstance(selected_fees_data, list):
             processed_fees_data = selected_fees_data
             print(" CASE 1: Already a list")
         
-        # Case 2: String that needs parsing
+ 
         elif isinstance(selected_fees_data, str):
             try:
-                # Clean the string
+       
                 cleaned_data = selected_fees_data.replace("'", '"').replace("None", "null")
                 processed_fees_data = json.loads(cleaned_data)
                 print(" CASE 2: Parsed from string")
@@ -2281,7 +2280,7 @@ class FeeRecordView(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Verify Razorpay signature
+   
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
         try:
             client.utility.verify_payment_signature({
@@ -2296,7 +2295,7 @@ class FeeRecordView(viewsets.ModelViewSet):
             return Response({"error": f"Payment verification error: {str(e)}"}, 
                             status=status.HTTP_400_BAD_REQUEST)
 
-        # Check duplicate
+
         if FeeRecord.objects.filter(razorpay_payment_id=data["razorpay_payment_id"]).exists():
             existing_record = FeeRecord.objects.get(razorpay_payment_id=data["razorpay_payment_id"])
             return Response({
@@ -2304,21 +2303,21 @@ class FeeRecordView(viewsets.ModelViewSet):
                 "existing_record_id": existing_record.id
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Paid amount conversion
+    
         try:
             total_paid_amount = Decimal(str(data["paid_amount"]))
         except (ValueError, TypeError):
             return Response({"error": "Invalid paid_amount format"}, 
                             status=status.HTTP_400_BAD_REQUEST)
 
-        #  FIX: Create multiple FeeRecord entries for multiple months
+
         saved_records = []
         receipt_number = self.generate_receipt_number()
 
         try:
             student = Student.objects.get(id=data["student_id"])
             
-            # Calculate total payable amount for all selected fees
+
             total_payable = Decimal("0.00")
             fee_month_details = {}
             
@@ -2339,10 +2338,10 @@ class FeeRecordView(viewsets.ModelViewSet):
                 except (ValueError, TypeError, YearLevelFee.DoesNotExist):
                     continue
                 
-                #  FIX: Calculate base amount with discount
+     
                 base_amount = fee.amount
                 
-                # Apply discount
+     
                 try:
                     discount = FeeDiscount.objects.get(student=student, is_allowed=True)
                     total_discount = Decimal("0.00")
@@ -2355,7 +2354,7 @@ class FeeRecordView(viewsets.ModelViewSet):
                 except FeeDiscount.DoesNotExist:
                     discounted_amount = base_amount
                 
-                #  FIX: Late fee calculation ONLY for current and past months
+   
                 today = date.today()
                 current_month = today.strftime('%B')
                 all_months = ['January', 'February', 'March', 'April', 'May', 'June', 
@@ -2372,7 +2371,7 @@ class FeeRecordView(viewsets.ModelViewSet):
                 
                 total_for_fee = discounted_amount + late_fee
                 
-                # Check existing payments
+    
                 existing_payments = FeeRecord.objects.filter(
                     student_id=data["student_id"],
                     month=month_name,
@@ -2509,7 +2508,7 @@ class FeeRecordView(viewsets.ModelViewSet):
                         f"Months: {', '.join(set(record.month for record in saved_records))}\n"
                         f"Thank you!"
                     )
-                    # send_whatsapp_message(message_text)
+       
                 except Exception as e:
                     print(f"WhatsApp sending failed: {e}")
 
@@ -2638,7 +2637,7 @@ class FeeRecordView(viewsets.ModelViewSet):
         student_id = request.data.get('student_id')
         selected_fees = request.data.get('selected_fees', [])
         
-        # Handle paid_amount conversion safely
+   
         paid_amount_str = request.data.get('paid_amount', "0.00")
         try:
             total_paid_amount = Decimal(str(paid_amount_str))
@@ -2649,7 +2648,7 @@ class FeeRecordView(viewsets.ModelViewSet):
         remarks = request.data.get('remarks')
         received_by = request.data.get('received_by')
 
-        #  RTE check
+     
         admission = Admission.objects.filter(student_id=student_id).first()
         if admission and admission.is_rte and admission.rte_number:
             return Response(
@@ -2665,7 +2664,6 @@ class FeeRecordView(viewsets.ModelViewSet):
         total_late_fee = Decimal("0.00")
         saved_records = []
 
-        #  Group fees by (month, fee_id)
         month_fee_groups = defaultdict(list)
         for fee_data in selected_fees:
             month = fee_data.get('month')
@@ -2673,7 +2671,7 @@ class FeeRecordView(viewsets.ModelViewSet):
             if month and fee_id:
                 month_fee_groups[(month, fee_id)].append(fee_data)
 
-        #  All months list for index calculation
+      
         all_months = [
             'January', 'February', 'March', 'April', 'May', 'June',
             'July', 'August', 'September', 'October', 'November', 'December'
@@ -2694,7 +2692,7 @@ class FeeRecordView(viewsets.ModelViewSet):
                 total_already_paid = existing_payments.aggregate(Sum('paid_amount'))['paid_amount__sum'] or Decimal('0.00')
                 base_amount = fee.amount
                 
-                # Late fee calculation
+            
                 today = date.today()
                 current_month = today.strftime('%B')
                 current_month_index = all_months.index(current_month) if current_month in all_months else 0
@@ -2707,7 +2705,7 @@ class FeeRecordView(viewsets.ModelViewSet):
                     elif month_index == current_month_index and today.day > 15:
                         late_fee = Decimal("25.00")
                 
-                # total payable = base + late fee
+              
                 total_payable = base_amount + late_fee
                 remaining_payable = max(total_payable - total_already_paid, Decimal('0.00'))
                 
@@ -2715,7 +2713,7 @@ class FeeRecordView(viewsets.ModelViewSet):
                     'fee': fee,
                     'base_amount': base_amount,
                     'late_fee': late_fee,
-                    'total_payable': total_payable,  # includes late fee
+                    'total_payable': total_payable, 
                     'already_paid': total_already_paid,
                     'remaining_payable': remaining_payable,
                     'fee_type': fee_type
@@ -2727,7 +2725,7 @@ class FeeRecordView(viewsets.ModelViewSet):
         if not fee_totals:
             return Response({"error": "No valid fees found."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Payment distribution
+   
         remaining_paid_amount = total_paid_amount
         payment_distribution = {}
         total_remaining = sum(item['remaining_payable'] for item in fee_totals.values())
@@ -2746,7 +2744,7 @@ class FeeRecordView(viewsets.ModelViewSet):
                 for key in fee_totals.keys():
                     payment_distribution[key] = equal_amount
 
-        #  Save records
+     
         total_allocated = Decimal("0.00")
         for (month, fee_id), allocated_amount in payment_distribution.items():
             if allocated_amount <= 0:
@@ -2773,13 +2771,13 @@ class FeeRecordView(viewsets.ModelViewSet):
             except (InvalidOperation, ValueError):
                 allocated_amount_decimal = Decimal("0.00")
 
-            # Use total_payable (base + late fee)
+        
             serializer_data = {
                 "student_id": student_id,
                 "month": month,
                 "year_level_fees": [fee.id],
                 "paid_amount": str(allocated_amount_decimal),
-                "total_amount": str(item['total_payable']),  # fixed
+                "total_amount": str(item['total_payable']),  
                 "late_fee": str(item['late_fee']),
                 "due_amount": str(new_due_amount),
                 "payment_mode": payment_mode,
@@ -2805,7 +2803,7 @@ class FeeRecordView(viewsets.ModelViewSet):
                     "month": month, "fee_id": fee_id, "errors": serializer.errors
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-        #  Build final combined response
+   
         if saved_records:
             first_record = saved_records[0]
             total_amount = total_base_amount + total_late_fee
@@ -2833,7 +2831,7 @@ class FeeRecordView(viewsets.ModelViewSet):
             }
             print(" COMBINED RESPONSE:", combined_response)
 
-            #  WhatsApp message
+      
             try:
                 message_text = (
                     f"Dear {first_record.student.user.get_full_name()},\n"

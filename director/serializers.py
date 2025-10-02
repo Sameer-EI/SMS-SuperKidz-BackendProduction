@@ -1560,17 +1560,16 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
         if isinstance(paid_amount, str):
             paid_amount = Decimal(paid_amount)
     
-        # Online payment validation
+       
         if payment_mode == 'online' and paid_amount <= 0:
             raise serializers.ValidationError("Paid amount must be greater than 0 for online payment.")
         
         year_level_fees_ids = self.initial_data.get('year_level_fees', [])
         year_level_fees_qs = YearLevelFee.objects.filter(id__in=year_level_fees_ids)
 
-        # Calculate total from selected fees
         base_total = sum(fee.amount for fee in year_level_fees) if year_level_fees else Decimal("0.00")
 
-        # Apply discount
+        
         try:
             discount = FeeDiscount.objects.get(student=student, is_allowed=True)
         except FeeDiscount.DoesNotExist:
@@ -1587,24 +1586,24 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
 
         discounted_total = max(base_total - total_discount, Decimal("0.00"))
 
-        # Late fee calculation
+ 
         today = date.today()
         late_fee = Decimal("0.00")
         if any("tuition fee" in fee.fee_type.name.lower() for fee in year_level_fees) and today.day > 15:
             late_fee = Decimal("25.00")
 
-        # FIXED: Calculate TOTAL with late fee included
+    
         total_with_late_fee = discounted_total + late_fee
 
-        # Allow partial payment
+   
         due_amount = max(total_with_late_fee - paid_amount, Decimal("0.00"))
 
-        data['total_amount'] = discounted_total  # Base amount without late fee
+        data['total_amount'] = discounted_total  
         data['late_fee'] = late_fee
         data['due_amount'] = due_amount
         data['paid_amount'] = paid_amount
 
-        # FIXED: PROPER STATUS CALCULATION WITH LATE FEE
+     
         razorpay_payment_id = self.initial_data.get('razorpay_payment_id')
         razorpay_signature_id = self.initial_data.get('razorpay_signature_id')
         
@@ -1617,9 +1616,8 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
         print(f"DEBUG: Total with Late Fee: {total_with_late_fee}")
 
         if payment_mode == 'online':
-            # FIXED: For online payments, status depends on Razorpay verification
             if razorpay_payment_id and razorpay_signature_id:
-                # Payment verified by Razorpay - compare with TOTAL (including late fee)
+          
                 if paid_amount >= total_with_late_fee:
                     data['payment_status'] = 'Paid'
                     print("DEBUG: Online Payment - STATUS: Paid (Full payment with late fee verified)")
@@ -1630,11 +1628,11 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
                     data['payment_status'] = 'Unpaid'
                     print("DEBUG: Online Payment - STATUS: Unpaid (No payment)")
             else:
-                # Payment not yet verified - set as Unpaid initially
+             
                 data['payment_status'] = 'Unpaid'
                 print("DEBUG: Online Payment - STATUS: Unpaid (Awaiting verification)")
         else:
-            # Cash payment logic - compare with TOTAL (including late fee)
+        
             if due_amount == 0 and paid_amount > 0:
                 data['payment_status'] = 'Paid'
                 print("DEBUG: Cash Payment - STATUS: Paid (Full payment with late fee)")
@@ -1645,7 +1643,7 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
                 data['payment_status'] = 'Unpaid'
                 print("DEBUG: Cash Payment - STATUS: Unpaid")
 
-        # Razorpay fields
+ 
         if 'razorpay_order_id' in self.initial_data:
             data['razorpay_order_id'] = self.initial_data.get('razorpay_order_id')
         if 'razorpay_payment_id' in self.initial_data:
@@ -1658,7 +1656,7 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         year_level_fees = validated_data.pop('year_level_fees', [])
         
-        # FIXED: Recalculate total for status verification
+     
         payment_mode = validated_data.get('payment_mode', '').lower()
         razorpay_payment_id = validated_data.get('razorpay_payment_id')
         paid_amount = validated_data.get('paid_amount', Decimal('0.00'))
@@ -1675,7 +1673,7 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
         print(f"CREATE DEBUG: Total with Late Fee: {total_with_late_fee}")
         print(f"CREATE DEBUG: Initial Status: {validated_data.get('payment_status')}")
 
-        # FIXED: Double-check status calculation for online payments
+
         if payment_mode == 'online' and razorpay_payment_id:
             if paid_amount >= total_with_late_fee:
                 validated_data['payment_status'] = 'Paid'
@@ -1690,7 +1688,7 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
         fee_record = FeeRecord.objects.create(**validated_data)
         fee_record.year_level_fees.set(year_level_fees)
 
-        # Generate receipt number if not exists
+
         if not fee_record.receipt_number:
             fee_record.receipt_number = self.generate_unique_receipt_number()
             fee_record.save()
@@ -1708,7 +1706,7 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
         else:
             new_number = 1
         return f'REC-{today}-{new_number:05d}'
-    ### Added this as of 13June25 at 11:53 AM 
+  
 class RazorpayConfirmPaymentSerializer(serializers.Serializer):
     razorpay_order_id = serializers.CharField()
     razorpay_payment_id = serializers.CharField()
