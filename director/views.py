@@ -1,3 +1,4 @@
+from calendar import month
 from django.forms import DateField, ValidationError
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -1667,14 +1668,57 @@ class TermView(viewsets.ModelViewSet):
     serializer_class = TermSerializer
 
 
-from django_filters.rest_framework import DjangoFilterBackend  
-# from .filters import AdmissionFilter
+# from django_filters.rest_framework import DjangoFilterBackend  
+# # from .filters import AdmissionFilter
+# class AdmissionView(viewsets.ModelViewSet):
+#     queryset = Admission.objects.all()
+#     serializer_class = AdmissionSerializer
+
+#     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+#     # filterset_class = AdmissionFilter
+
+#     search_fields = [
+#         "student__user__first_name",
+#         "student__user__last_name",
+#         "student__user__email",
+#         "guardian__user__first_name",
+#         "guardian__user__last_name",
+#         "tc_letter",
+#         "enrollment_no",
+#         "previous_school_name",
+#     ]
+
+#     ordering_fields = [
+#         "admission_date",
+#         "year_level__level_name",
+#         "student__user__first_name",
+#         "previous_percentage",
+#     ]
+#     # parser_classes=[MultiPartParser,FormParser]
+    
+
+#     # rte
+#     @action(detail=False, methods=["get"], url_path="rte-students")
+#     def rte_students(self, request):
+#         queryset = self.queryset.filter(is_rte=True)
+#         serializer = self.get_serializer(queryset, many=True)
+#         return Response(serializer.data)
+  
+from rest_framework import viewsets, filters
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from django_filters.rest_framework import DjangoFilterBackend
+from utils.email_notifications import send_email_notification
+
+from .models import Admission
+from .serializers import AdmissionSerializer
+
+
 class AdmissionView(viewsets.ModelViewSet):
     queryset = Admission.objects.all()
     serializer_class = AdmissionSerializer
 
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    # filterset_class = AdmissionFilter
 
     search_fields = [
         "student__user__first_name",
@@ -1693,16 +1737,46 @@ class AdmissionView(viewsets.ModelViewSet):
         "student__user__first_name",
         "previous_percentage",
     ]
-    # parser_classes=[MultiPartParser,FormParser]
-    
 
-    # rte
+    # 📢 Send email notification when a new admission is created
+    def perform_create(self, serializer):
+        admission = serializer.save(created_by=self.request.user)
+
+        # Get emails
+        student_email = getattr(getattr(admission.student, "user", None), "email", None)
+        guardian_email = getattr(getattr(admission.guardian, "user", None), "email", None)
+        staff_email = getattr(self.request.user, "email", None)
+
+        recipients = [e for e in [student_email, guardian_email, staff_email] if e]
+
+        if recipients:
+            subject = "🎉 New Admission Confirmation"
+            message = (
+                f"Dear All,\n\n"
+                f"A new admission has been successfully created.\n\n"
+                f"Student: {admission.student}\n"
+                f"Guardian: {admission.guardian}\n"
+                f"Year Level: {admission.year_level}\n"
+                f"Admission Date: {admission.admission_date}\n"
+                f"Created By: {self.request.user}\n\n"
+                f"Thank you!"
+            )
+
+            email_response = send_email_notification(
+                subject=subject,
+                message=message,
+                recipients=recipients
+            )
+
+            # Optional debug print
+            print("Email notification response:", email_response)
+
+    # Extra action → filter RTE students
     @action(detail=False, methods=["get"], url_path="rte-students")
     def rte_students(self, request):
         queryset = self.queryset.filter(is_rte=True)
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
-  
     
     
     
@@ -1752,73 +1826,6 @@ class FileView(viewsets.ModelViewSet):
 
 
 
-# from rest_framework import viewsets, status
-# from rest_framework.response import Response
-# from django.db import transaction
-# from .models import Document, File
-# from .serializers import DocumentSerializer
-
-# class DocumentView(viewsets.ModelViewSet):
-#     queryset = Document.objects.prefetch_related('files', 'document_types')
-#     serializer_class = DocumentSerializer
-
-#     @transaction.atomic
-#     def create(self, request, *args, **kwargs):
-#         # Validate files
-#         files = request.FILES.getlist('files')
-#         if not files:
-#             return Response({"error": "Files required"}, status=status.HTTP_400_BAD_REQUEST)
-
-#         # Get and validate document types
-#         doc_types = request.data.getlist('document_types', []) or [request.data.get('document_types')]
-#         doc_types = [dt for dt in doc_types if dt and str(dt).isdigit()]  # Filter valid numeric types
-#         if not doc_types:
-#             return Response({"error": "Valid document types required"}, status=status.HTTP_400_BAD_REQUEST)
-
-#         # Prepare data with null handling for empty strings
-#         data = {
-#             'document_types': doc_types,
-#             'identities': request.data.get('identities'),
-#             **{f: int(request.data[f]) if request.data.get(f) and str(request.data[f]).isdigit() else None 
-#                for f in ['student', 'teacher', 'guardian', 'office_staff']}
-#         }
-
-#         # Find existing document
-#         existing = self._find_existing_document(data)
-        
-#         # Create or update document
-#         if existing:
-#             serializer = self.get_serializer(existing, data=data, partial=True)
-#             existing.files.all().delete()
-#             action = 'replaced'
-#         else:
-#             serializer = self.get_serializer(data=data)
-#             action = 'created'
-
-#         serializer.is_valid(raise_exception=True)
-#         doc = serializer.save()
-
-#         # Save all uploaded files
-#         for file in files:
-#             File.objects.create(document=doc, file=file)
-
-#         return Response({
-#             'status': action,
-#             'document': self.get_serializer(doc, context={'request': request}).data
-#         }, status=status.HTTP_201_CREATED)
-
-#     def _find_existing_document(self, data):
-#         """Helper method to find existing document matching criteria"""
-#         filter_params = {
-#             'identities': data.get('identities'),
-#             **{f: data.get(f) for f in ['student', 'teacher', 'guardian', 'office_staff'] 
-#                if data.get(f) is not None}
-#         }
-        
-#         for doc in Document.objects.filter(**filter_params).prefetch_related('document_types'):
-#             if set(doc.document_types.values_list('id', flat=True)) == set(map(int, data['document_types'])):
-#                 return doc
-#         return None
 
 
 
@@ -1928,6 +1935,10 @@ class FeeTypeView(viewsets.ModelViewSet):
     serializer_class = FeeTypeSerializer
 
 
+    
+from rest_framework import status
+from rest_framework.response import Response
+
 class YearLevelFeeView(viewsets.ModelViewSet):
     serializer_class = YearLevelFeeSerializer
 
@@ -1938,18 +1949,35 @@ class YearLevelFeeView(viewsets.ModelViewSet):
             qs = qs.filter(id=fee_id)
         return qs
 
-    # def get_queryset(self):           # just commneted as of 27june25 at 02:47 PM
-    #     return YearLevelFee.objects.select_related('year_level', 'fee_type')
-    
-    # def get_queryset(self):         # GET /api/year-level-fee/?id=3
-    #     queryset = YearLevelFee.objects.select_related('year_level', 'fee_type')
-    #     fee_id = self.request.query_params.get('id', None)
+    # ADDITION: upsert functionality
+    def create(self, request, *args, **kwargs):
+            year_level_id = request.data.get('year_level')
+            fee_type_id = request.data.get('fee_type')
 
-    #     if fee_id is not None:
-    #         queryset = queryset.filter(id=fee_id)
+            # Make a copy of request data
+            defaults = request.data.copy()
 
-    #     return queryset
-    
+            # Remove foreign keys (they are handled separately)
+            defaults.pop('year_level', None)
+            defaults.pop('fee_type', None)
+
+            # Remove any extra fields that are not in the model
+            allowed_fields = {f.name for f in YearLevelFee._meta.get_fields()}
+            defaults = {k: v for k, v in defaults.items() if k in allowed_fields}
+
+            # Upsert
+            instance, created = YearLevelFee.objects.update_or_create(
+                year_level_id=year_level_id,
+                fee_type_id=fee_type_id,
+                defaults=defaults
+            )
+
+            serializer = self.get_serializer(instance)
+            if created:
+                return Response(serializer.data, status=status.HTTP_201_CREATED)
+            else:
+                return Response(serializer.data, status=status.HTTP_200_OK)
+
 
     def list(self, request, *args, **kwargs):       # GET /api/year-level-fee/
         queryset = self.get_queryset()
@@ -1965,8 +1993,7 @@ class YearLevelFeeView(viewsets.ModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
         return Response(grouped_fees[0] if grouped_fees else {})
-    
-    
+
 
 from twilio.rest import Client 
 
@@ -2622,7 +2649,7 @@ class FeeRecordView(viewsets.ModelViewSet):
         remarks = request.data.get('remarks')
         received_by = request.data.get('received_by')
 
-        # ✅ RTE check
+        #  RTE check
         admission = Admission.objects.filter(student_id=student_id).first()
         if admission and admission.is_rte and admission.rte_number:
             return Response(
@@ -2638,7 +2665,7 @@ class FeeRecordView(viewsets.ModelViewSet):
         total_late_fee = Decimal("0.00")
         saved_records = []
 
-        # ✅ Group fees by (month, fee_id)
+        #  Group fees by (month, fee_id)
         month_fee_groups = defaultdict(list)
         for fee_data in selected_fees:
             month = fee_data.get('month')
@@ -2646,7 +2673,7 @@ class FeeRecordView(viewsets.ModelViewSet):
             if month and fee_id:
                 month_fee_groups[(month, fee_id)].append(fee_data)
 
-        # ✅ All months list for index calculation
+        #  All months list for index calculation
         all_months = [
             'January', 'February', 'March', 'April', 'May', 'June',
             'July', 'August', 'September', 'October', 'November', 'December'
@@ -2667,7 +2694,7 @@ class FeeRecordView(viewsets.ModelViewSet):
                 total_already_paid = existing_payments.aggregate(Sum('paid_amount'))['paid_amount__sum'] or Decimal('0.00')
                 base_amount = fee.amount
                 
-                # ✅ Late fee calculation
+                # Late fee calculation
                 today = date.today()
                 current_month = today.strftime('%B')
                 current_month_index = all_months.index(current_month) if current_month in all_months else 0
@@ -2680,7 +2707,7 @@ class FeeRecordView(viewsets.ModelViewSet):
                     elif month_index == current_month_index and today.day > 15:
                         late_fee = Decimal("25.00")
                 
-                # ✅ total payable = base + late fee
+                # total payable = base + late fee
                 total_payable = base_amount + late_fee
                 remaining_payable = max(total_payable - total_already_paid, Decimal('0.00'))
                 
@@ -2700,7 +2727,7 @@ class FeeRecordView(viewsets.ModelViewSet):
         if not fee_totals:
             return Response({"error": "No valid fees found."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ Payment distribution
+        # Payment distribution
         remaining_paid_amount = total_paid_amount
         payment_distribution = {}
         total_remaining = sum(item['remaining_payable'] for item in fee_totals.values())
@@ -2719,7 +2746,7 @@ class FeeRecordView(viewsets.ModelViewSet):
                 for key in fee_totals.keys():
                     payment_distribution[key] = equal_amount
 
-        # ✅ Save records
+        #  Save records
         total_allocated = Decimal("0.00")
         for (month, fee_id), allocated_amount in payment_distribution.items():
             if allocated_amount <= 0:
@@ -2746,7 +2773,7 @@ class FeeRecordView(viewsets.ModelViewSet):
             except (InvalidOperation, ValueError):
                 allocated_amount_decimal = Decimal("0.00")
 
-            # ✅ Use total_payable (base + late fee)
+            # Use total_payable (base + late fee)
             serializer_data = {
                 "student_id": student_id,
                 "month": month,
@@ -2778,7 +2805,7 @@ class FeeRecordView(viewsets.ModelViewSet):
                     "month": month, "fee_id": fee_id, "errors": serializer.errors
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ Build final combined response
+        #  Build final combined response
         if saved_records:
             first_record = saved_records[0]
             total_amount = total_base_amount + total_late_fee
@@ -2806,7 +2833,7 @@ class FeeRecordView(viewsets.ModelViewSet):
             }
             print(" COMBINED RESPONSE:", combined_response)
 
-            # ✅ WhatsApp message
+            #  WhatsApp message
             try:
                 message_text = (
                     f"Dear {first_record.student.user.get_full_name()},\n"
@@ -3656,9 +3683,7 @@ class FeeRecordView(viewsets.ModelViewSet):
                 "remarks": record.remarks,
                 "received_by": record.received_by,
             })
-        return Response(data)    
-    
-
+        return Response(data)
 
 ### --------------------- Income Distribution Dashboard API (Guardian name and student name and id added) --------------------------- ###
 ### ------------------- As of 03 JUly at 12:35 --------------- ###   By daniyal
