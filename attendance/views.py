@@ -15,7 +15,6 @@ import holidays
 from director.views import send_whatsapp_message
 
 
-
 #payload for MultipleAttendance
 # {
 #     "teacher": 1,
@@ -42,7 +41,8 @@ class MultipleAttendanceViewSet1(ModelViewSet):
             return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
 
         # ========================= NEW:24/09/25 ==========================
-#132 from sms-admin-technohub/saqibali2)         # Prevent attendance on Sundays
+
+         # Prevent attendance on Sundays
         if marked_at.weekday() == 6:
             return Response({"error": "Attendance cannot be marked on Sunday."}, status=status.HTTP_400_BAD_REQUEST)
 
