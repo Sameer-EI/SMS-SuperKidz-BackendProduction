@@ -3495,7 +3495,7 @@ class SchoolIncomeSerializer(serializers.ModelSerializer):
         if value.size > max_size:
             raise serializers.ValidationError("File size must be under 2MB.")
 
-        # File extension check
+        # File extension check.
         ext = os.path.splitext(value.name)[1].lower()
         allowed_extensions = [".jpg", ".jpeg", ".png", ".webp", ".pdf"]
         if ext not in allowed_extensions:
