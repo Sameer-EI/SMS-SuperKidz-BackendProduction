@@ -34,7 +34,7 @@ class TeacherSerializer(serializers.ModelSerializer):
         model = Teacher
         fields = [
             'id', 'first_name', 'middle_name', 'last_name', 'password', 'email',
-            'phone_no', 'gender', 'adhaar_no', 'pan_no', 'qualification', 'user_profile','joining_date'
+            'phone_no', 'gender', 'adhaar_no', 'pan_no', 'qualification', 'user_profile','joining_date','is_active'
         ]
 
     def create(self, validated_data):
