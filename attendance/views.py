@@ -15,142 +15,7 @@ import holidays
 from director.views import send_whatsapp_message
 
 
-# class MultipleAttendanceViewSet1(ModelViewSet):
-#     queryset = StudentAttendance.objects.all()
-#     serializer_class = StudentAttendanceSerializer
-
-#     def create(self, request, *args, **kwargs):
-#         data = request.data
-
-#         # Validate marked_at
-#         try:
-#             marked_at_str = data.get("marked_at")
-#             marked_at = datetime.strptime(marked_at_str, "%Y-%m-%d").date() if marked_at_str else date.today()
-#             if marked_at > date.today():
-#                 return Response({"error": "You cannot mark attendance for a future date."}, status=status.HTTP_400_BAD_REQUEST)
-#         except ValueError:
-#             return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
-
-#         # Validate teacher
-#         teacher_id = data.get("teacher_id")
-#         if not teacher_id:
-#             return Response({"error": "teacher_id is required."}, status=status.HTTP_400_BAD_REQUEST)
-
-#         try:
-#             teacher = Teacher.objects.get(id=teacher_id)
-#         except Teacher.DoesNotExist:
-#             return Response({"error": "Invalid teacher_id."}, status=status.HTTP_404_NOT_FOUND)
-
-#         # Validate year level
-#         year_level_id = data.get("year_level_id")
-#         if not year_level_id:
-#             return Response({"error": "year_level_id is required."}, status=status.HTTP_400_BAD_REQUEST)
-
-#         # Validate presence of at least one status
-#         allowed_statuses = {'P', 'A', 'L'}
-#         all_student_ids = []
-#         status_provided = False
-
-#         for status_code in allowed_statuses:
-#             student_ids = data.get(status_code, [])
-#             if student_ids:
-#                 if not isinstance(student_ids, list):
-#                     return Response({
-#                         "error": f"Value for status '{status_code}' must be a list of student IDs."
-#                     }, status=status.HTTP_400_BAD_REQUEST)
-
-#                 # Validate all IDs are integers
-#                 for sid in student_ids:
-#                     if not isinstance(sid, int):
-#                         return Response({
-#                             "error": f"All student IDs under status '{status_code}' must be integers."
-#                         }, status=status.HTTP_400_BAD_REQUEST)
-
-#                 status_provided = True
-#                 all_student_ids.extend(student_ids)
-
-#         if not status_provided:
-#             return Response({
-#                 "error": "At least one attendance status ('P', 'A', or 'L') with student IDs must be provided."
-#             }, status=status.HTTP_400_BAD_REQUEST)
-
-#         # Check if attendance already exists
-#         already_marked_ids = StudentAttendance.objects.filter(
-#             student_id__in=all_student_ids,
-#             marked_at=marked_at
-#         ).values_list("student_id", flat=True)
-
-#         if already_marked_ids:
-#             return Response({
-#                 "error": "Attendance for one or more students already exists on this date.",
-#                 "student_ids": list(already_marked_ids)
-#             }, status=status.HTTP_400_BAD_REQUEST)
-
-#         # Validate student assignments
-#         invalid_students = []
-#         for sid in all_student_ids:
-#             try:
-#                 student = Student.objects.get(id=sid)
-#             except Student.DoesNotExist:
-#                 invalid_students.append(sid)
-#                 continue
-
-#             if not student.student_year_levels.filter(level_id=year_level_id).exists():
-#                 invalid_students.append(sid)
-
-#         if invalid_students:
-#             return Response({
-#                 "error": "Some students are not assigned to the given year level or do not exist.",
-#                 "student_ids": invalid_students
-#             }, status=status.HTTP_400_BAD_REQUEST)
-
-#         # Create attendance records
-#         created_records = []
-#         absent_leave_students = []  # store absent or leave students for notification
-
-#         for status_code in allowed_statuses:
-#             for sid in data.get(status_code, []):
-#                 student = Student.objects.get(id=sid)
-#                 attendance = StudentAttendance.objects.create(
-#                     student=student,
-#                     status=status_code,
-#                     marked_at=marked_at,
-#                     teacher=teacher,
-#                     year_level_id=year_level_id
-#                 )
-#                 created_records.append(attendance)
-
-#                 # Collect absent or leave for notification
-#                 if status_code in ["A", "L"]:
-#                     absent_leave_students.append(student)
-
-#         # === Send Notification for Absent / Leave Students ===
-#         for student in absent_leave_students:
-#             student_name = f"{student.user.first_name} {student.user.last_name}"
-#             msg = (
-#                 f"Dear Parent,\n\n"
-#                 f"{student_name} was marked as Absent "
-#                 f"on {marked_at.strftime('%d-%m-%Y')}.\n"
-#                 f"Kindly ensure regular attendance.\n\n"
-#                 f"Regards,\nSchool Management"
-#             )
-#             send_whatsapp_message(msg)
-
-#         serializer = self.get_serializer(created_records, many=True)
-#         return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-from rest_framework.viewsets import ModelViewSet
-from rest_framework.response import Response
-from rest_framework import status
-from datetime import datetime, date
-from .models import StudentAttendance, Student, Teacher, YearLevel
-from .serializers import StudentAttendanceSerializer
-from django.conf import settings
-from django.core.mail import EmailMessage
-from utils.email_notifications import send_email_notification
-
-
-#payload for MultipleAttendance
+#payload for MultipleAttendance.
 # {
 #     "teacher": 1,
 #     "year_level": 6,
@@ -175,6 +40,20 @@ class MultipleAttendanceViewSet1(ModelViewSet):
         except ValueError:
             return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # ========================= NEW:24/09/25 ==========================
+         # Prevent attendance on Sundays.
+        if marked_at.weekday() == 6:
+            return Response({"error": "Attendance cannot be marked on Sunday."}, status=status.HTTP_400_BAD_REQUEST)
+
+         # Prevent attendance on school holidays.
+        if SchoolHoliday.objects.filter(date=marked_at).exists():
+            return Response({"error": "Attendance cannot be marked on a school holiday."}, status=status.HTTP_400_BAD_REQUEST)
+
+         # Prevent attendance on declared holidays.
+        if Holiday.objects.filter(start_date__lte=marked_at, end_date__gte=marked_at).exists():
+            return Response({"error": "Attendance cannot be marked on a holiday."}, status=status.HTTP_400_BAD_REQUEST)
+        # ==================================================================
+        
         # Validate teacher
         teacher_id = data.get("teacher_id")
         if not teacher_id:

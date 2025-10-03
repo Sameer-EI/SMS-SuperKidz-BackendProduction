@@ -6378,7 +6378,7 @@ class SchoolTurnOverViewSet(viewsets.ModelViewSet):
 
     #     instance.save(update_fields=["total_income", "total_expense", "net_turnover"])
     def update_totals(self, instance):
-        # calculate totals
+        # calculate totals.
         income_sum = (
             SchoolIncome.objects.filter(
                 school_year=instance.school_year, status="confirmed"

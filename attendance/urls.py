@@ -16,7 +16,7 @@ router.register(r'holidays',HolidayViewSet,basename='holidays')
 urlpatterns = [
     path('', include(router.urls)),
     path('teacher-classes/<int:teacher_id>/', TeacherYearLevelList.as_view(), name='teacher-classes'),
-    path('holidays/import/', FetchIndianHolidaysView.as_view()),
+    path('holidays/import', FetchIndianHolidaysView.as_view()),
     path('calendar/', MonthlyCalendarView.as_view(), name='monthly-calendar'),
     path('send-whatsapp/', SendWhatsAppView.as_view(), name='send_whatsapp')
 ]
