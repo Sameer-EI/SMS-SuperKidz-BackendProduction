@@ -43,7 +43,7 @@ class HolidaySerializer(serializers.ModelSerializer):
         if (end - start).days > 45:
             raise serializers.ValidationError("Holiday duration cannot exceed 45 days.")
 
-        # optional: prevent overlapping holidays
+        # optional: prevent overlapping holidays.
         qs = Holiday.objects.filter(
             start_date__lte=end,
             end_date__gte=start

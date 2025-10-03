@@ -24,7 +24,6 @@ class GuardianTypeSerializer(serializers.ModelSerializer):
 
 
 
-# ***********************new*********************
 
 class StudentSerializer(serializers.ModelSerializer):
     # User fields (write-only)
@@ -49,17 +48,17 @@ class StudentSerializer(serializers.ModelSerializer):
     weight = serializers.FloatField(required=False, allow_null=True)
     blood_group = serializers.CharField(required=False, allow_null=True)
     number_of_siblings = serializers.IntegerField(required=False, allow_null=True)
-    roll_number = serializers.CharField(required=False, allow_null=True) 
+    roll_number = serializers.CharField(read_only=True, allow_null=True) 
     contact_number = serializers.CharField(required=False, allow_null=True, allow_blank=True)
-    scholar_number = serializers.CharField(read_only=True, allow_null=False)  # Read-only field
-
+    scholar_number = serializers.CharField(read_only=True, allow_null=False)
 
     # Classes many-to-many
-    classes = serializers.PrimaryKeyRelatedField(queryset=ClassPeriod.objects.all(), many=True,required=False,allow_empty=True,default=[])
+    classes = serializers.PrimaryKeyRelatedField(queryset=ClassPeriod.objects.all(), many=True, required=False, allow_empty=True, default=[])
 
     class Meta:
         model = Student
-        fields = ['id',
+        fields = [
+            'id',
             'first_name', 'middle_name', 'last_name', 'email', 'password', 'user_profile',
             'father_name', 'mother_name', 'date_of_birth', 'gender', 'religion', 'category',
             'height', 'weight', 'blood_group', 'number_of_siblings', 'roll_number','contact_number','scholar_number','classes','is_active'
@@ -74,10 +73,13 @@ class StudentSerializer(serializers.ModelSerializer):
             'last_name': user.last_name,
             'email': user.email,
             'user_profile': user.user_profile.url if user.user_profile else None,
+            'roll_number': instance.roll_number,
+            'scholar_number': instance.scholar_number,
         })
         return rep
 
     def create(self, validated_data):
+        # Extract user data
         user_data = {
             'first_name': validated_data.pop('first_name'),
             'middle_name': validated_data.pop('middle_name', ''),
@@ -86,24 +88,16 @@ class StudentSerializer(serializers.ModelSerializer):
             'password': validated_data.pop('password', None),
             'user_profile': validated_data.pop('user_profile', None),
         }
-        classes_data = validated_data.pop('classes',[])
-            # Normalize class IDs to integers
-        if isinstance(classes_data, list):
-            try:
-                classes_data = [int(c) for c in classes_data]
-            except (ValueError, TypeError):
-                raise serializers.ValidationError({"classes": "Class IDs must be integers."})
-        elif isinstance(classes_data, str):
-            if classes_data.isdigit():
-                classes_data = [int(classes_data)]
-            else:
-                raise serializers.ValidationError({"classes": "Invalid class ID format."})
 
+        # Extract classes
+        classes_data = validated_data.pop('classes', [])
+
+        # Check if user already exists
         if User.objects.filter(email=user_data['email']).exists():
             raise serializers.ValidationError("User with this email already exists.")
 
+        # Create user
         user = User.objects.create_user(
-
             email=user_data['email'],
             first_name=user_data['first_name'],
             last_name=user_data['last_name'],
@@ -114,20 +108,45 @@ class StudentSerializer(serializers.ModelSerializer):
             user.user_profile = user_data['user_profile']
         user.save()
 
-        # ===== Generate scholar_number here =====
+        # ===== Generate scholar_number (global unique) =====
         last_student = Student.objects.order_by('-id').first()
-        
-        if last_student and last_student.scholar_number and last_student.scholar_number.isdigit():
-            next_number = int(last_student.scholar_number) + 1
+        next_scholar_number = int(last_student.scholar_number) + 1 if last_student and last_student.scholar_number.isdigit() else 1
+        validated_data['scholar_number'] = str(next_scholar_number).zfill(4)
+        # ================================================Generate roll_number (per year level) =====
+        year_level = validated_data.get('year_level', None)
+        roll_number = None
+
+        if classes_data:
+            # Use first class's year level
+            main_class = classes_data[0]
+            year_level_obj = main_class.year_level
+        elif year_level:
+            # Use year_level directly from admission form
+            year_level_obj = year_level
         else:
-            next_number = 1
-        validated_data['scholar_number'] = str(next_number).zfill(4)
+            year_level_obj = None
 
-        
+        if year_level_obj:
+            year_level_code =  year_level_obj.level_name.replace(" ", "")
+
+            # Query Student through StudentYearLevel for that year_level
+            last_in_year = Student.objects.filter(
+                student_year_levels__level=year_level_obj
+            ).order_by('-id').first()
+
+            if last_in_year and last_in_year.roll_number and last_in_year.roll_number.startswith(year_level_code):
+                last_number = last_in_year.roll_number.split("-")[-1]
+                next_number = int(last_number) + 1 if last_number.isdigit() else 1
+            else:
+                next_number = 1
+
+            roll_number = f"{year_level_code}-{str(next_number).zfill(4)}"
+
+        validated_data['roll_number'] = roll_number
+
+        # Create student
         student = Student.objects.create(user=user, **validated_data)
-        # student.classes.set(classes_data)
 
-        # Only call .set() if the list is not empty
         if classes_data:
             student.classes.set(classes_data)
 
@@ -136,23 +155,24 @@ class StudentSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         user = instance.user
 
-        user_fields = ['first_name', 'middle_name', 'last_name', 'email', 'user_profile']
-        for field in user_fields:
+        # Update user fields
+        for field in ['first_name', 'middle_name', 'last_name', 'email', 'user_profile']:
             if field in validated_data:
                 setattr(user, field, validated_data.pop(field))
         if 'password' in validated_data:
             user.set_password(validated_data.pop('password'))
         user.save()
 
+        # Update classes
         if 'classes' in validated_data:
             instance.classes.set(validated_data.pop('classes'))
 
+        # Update other fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
 
         return instance
-
 
 
 
