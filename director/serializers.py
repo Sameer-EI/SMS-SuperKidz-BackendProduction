@@ -323,15 +323,14 @@ class DirectorProfileSerializer(serializers.ModelSerializer):
 
 
 class AdmissionSerializer(serializers.ModelSerializer):
-    # enrollment_no = serializers.ReadOnlyField()
-    # Use SerializerMethodField to output nested student and guardian data
+    # SerializerMethodFields for nested output
     student_input = serializers.SerializerMethodField(read_only=True)
     guardian_input = serializers.SerializerMethodField(read_only=True)
-    
     address = serializers.SerializerMethodField(read_only=True)
     banking_detail = serializers.SerializerMethodField(read_only=True)
-
     guardian_type = serializers.SerializerMethodField(read_only=True)
+
+    # Write-only inputs
     guardian_type_input = serializers.SlugRelatedField(
         slug_field='name',
         queryset=GuardianType.objects.all(),
@@ -354,7 +353,6 @@ class AdmissionSerializer(serializers.ModelSerializer):
         allow_null=True,
     )
 
-    # These are write-only inputs for creating/updating admission
     student = StudentSerializer(write_only=True, required=True)
     guardian = GuardianSerializer(write_only=True, required=True)
     address_input = AddressSerializer(write_only=True, required=False, allow_null=True)
@@ -364,9 +362,9 @@ class AdmissionSerializer(serializers.ModelSerializer):
         model = Admission
         fields = [
             'id',
-            'student_input', 'guardian_input',  # output nested data
+            'student_input', 'guardian_input',
             'address', 'banking_detail',
-            'student', 'guardian',  # write-only input nested data
+            'student', 'guardian',
             'address_input', 'banking_detail_input',
             'guardian_type', 'guardian_type_input',
             'year_level', 'school_year',
@@ -443,30 +441,32 @@ class AdmissionSerializer(serializers.ModelSerializer):
             user = User.objects.create_user(**user_data)
             user.role.add(role)
 
-
-        # ===== Generate scholar_number here =====
+        # ===== Generate scholar_number (global unique) =====
         last_student = Student.objects.order_by('-id').first()
-        
-        if last_student and last_student.scholar_number and last_student.scholar_number.isdigit():
-            next_number = int(last_student.scholar_number) + 1
-        else:
-            next_number = 1
-        student_data['scholar_number'] = str(next_number).zfill(4)
+        next_scholar_number = int(last_student.scholar_number) + 1 if last_student and last_student.scholar_number.isdigit() else 1
+        student_data['scholar_number'] = str(next_scholar_number).zfill(4)
 
+        # ===== Generate roll_number (year-level based) =====
+        year_level_obj = year_level
+        roll_number = None
+        if year_level:
+            year_level_code = year_level.level_name.replace(" ", "")
+            last_in_year = Student.objects.filter(
+                student_year_levels__level=year_level
+            ).order_by('-id').first()
+            if last_in_year and last_in_year.roll_number and last_in_year.roll_number.startswith(year_level_code):
+                last_number = last_in_year.roll_number.split("-")[-1]
+                next_number = int(last_number) + 1 if last_number.isdigit() else 1
+            else:
+                next_number = 1
+            student_data['roll_number'] = f"{year_level_code}-{str(next_number).zfill(4)}"
+
+        # --- Create Student ---
         student, created = Student.objects.get_or_create(user=user, defaults=student_data)
         if not created:
             raise serializers.ValidationError({"student": "Student already exists for this user."})
 
-        if classes_data:
-            student.classes.set(classes_data)
-
-        # --- Address and banking ---
-        if address_data:
-            Address.objects.update_or_create(user=user, defaults=address_data)
-        if banking_data:
-            BankingDetail.objects.update_or_create(user=user, defaults=banking_data)
-
-        # --- FIXED: Guardian user creation or auto-fill ---
+        # --- Create Guardian ---
         guardian_user_data = {
             'first_name': guardian_data.pop('first_name', ''),
             'middle_name': guardian_data.pop('middle_name', ''),
@@ -477,37 +477,27 @@ class AdmissionSerializer(serializers.ModelSerializer):
         }
 
         guardian_user = User.objects.filter(email__iexact=guardian_user_data['email']).first()
-        
         if not guardian_user:
-            # New guardian - create with password
             role, _ = Role.objects.get_or_create(name='guardian')
             guardian_user = User.objects.create_user(**guardian_user_data)
             guardian_user.role.add(role)
         else:
-            # Existing guardian - update details but DON'T change password
             password = guardian_user_data.pop('password', None)
-            
-            # Only update non-empty values
             for attr, value in guardian_user_data.items():
                 if value:
                     setattr(guardian_user, attr, value)
-            
-            # Only set password if explicitly provided
             if password:
                 guardian_user.set_password(password)
-            
             guardian_user.is_active = True
             guardian_user.save()
 
-        # --- Guardian model creation or update ---
         guardian, created = Guardian.objects.get_or_create(user=guardian_user, defaults=guardian_data)
         if not created and guardian_data:
-            # Update existing guardian details
             guardian_serializer = GuardianSerializer(guardian, data=guardian_data, partial=True)
             guardian_serializer.is_valid(raise_exception=True)
             guardian_serializer.save()
 
-        # --- Admission creation ---
+        # --- Create Admission ---
         admission = Admission.objects.create(
             student=student,
             guardian=guardian,
@@ -526,18 +516,23 @@ class AdmissionSerializer(serializers.ModelSerializer):
             rte_number=rte_number
         )
 
+        # --- Link Guardian Type ---
         if guardian_type:
             StudentGuardian.objects.update_or_create(
-                student=student, guardian=guardian, defaults={'guardian_type': guardian_type}
+                student=student,
+                guardian=guardian,
+                defaults={'guardian_type': guardian_type}
             )
 
+        # --- Link StudentYearLevel ---
         if year_level and school_year:
             StudentYearLevel.objects.update_or_create(
-                student=student, level=year_level, year=school_year
+                student=student,
+                level=year_level,
+                defaults={'year': school_year}  # defaults for non-lookup fields
             )
 
         return admission
-
 
     def update(self, instance, validated_data):
         instance.is_rte = validated_data.get('is_rte', instance.is_rte)
@@ -651,6 +646,8 @@ class AdmissionSerializer(serializers.ModelSerializer):
                 guardian=instance.guardian,
                 defaults={"guardian_type": guardian_type}
             )
+            print("guardian_type:", guardian_type)
+
 
         if year_level:
             instance.year_level = year_level
@@ -663,302 +660,6 @@ class AdmissionSerializer(serializers.ModelSerializer):
         instance.save()
         return instance
 
-
-
-# # # ***************change variable name *****************************
-# class AdmissionSerializer(serializers.ModelSerializer):
-#     # enrollment_no = serializers.ReadOnlyField()
-#     # Use SerializerMethodField to output nested student and guardian data
-#     student_input = serializers.SerializerMethodField(read_only=True)
-#     guardian_input = serializers.SerializerMethodField(read_only=True)
-    
-#     address = serializers.SerializerMethodField(read_only=True)
-#     banking_detail = serializers.SerializerMethodField(read_only=True)
-
-#     guardian_type = serializers.SerializerMethodField(read_only=True)
-#     guardian_type_input = serializers.SlugRelatedField(
-#         slug_field='name',
-#         queryset=GuardianType.objects.all(),
-#         write_only=True,
-#         required=False,
-#         allow_null=True,
-#     )
-    
-#     year_level = serializers.SlugRelatedField(
-#         slug_field='level_name',
-#         queryset=YearLevel.objects.all(),
-#         required=False,
-#         allow_null=True,
-#     )
-    
-#     school_year = serializers.SlugRelatedField(
-#         slug_field='year_name',
-#         queryset=SchoolYear.objects.all(),
-#         required=False,
-#         allow_null=True,
-#     )
-
-#     # These are write-only inputs for creating/updating admission
-#     student = StudentSerializer(write_only=True, required=True)
-#     guardian = GuardianSerializer(write_only=True, required=True)
-#     address_input = AddressSerializer(write_only=True, required=False, allow_null=True)
-#     banking_detail_input = BankingDetailsSerializer(write_only=True, required=False, allow_null=True)
-
-#     class Meta:
-#         model = Admission
-#         fields = [
-#             'id',
-#             'student_input', 'guardian_input',  # output nested data
-#             'address', 'banking_detail',
-#             'student', 'guardian',  # write-only input nested data
-#             'address_input', 'banking_detail_input',
-#             'guardian_type', 'guardian_type_input',
-#             'year_level', 'school_year',
-#             'admission_date', 'previous_school_name', 'previous_standard_studied',
-#             'tc_letter', 'emergency_contact_no', 'entire_road_distance_from_home_to_school',
-#             'obtain_marks', 'total_marks', 'previous_percentage','enrollment_no','is_rte', 'rte_number'
-#         ]
-#         read_only_fields = [
-#             'admission_date',
-#             'student_input',
-#             'guardian_input',
-#             'guardian_type',
-#             'address',
-#             'banking_detail',
-#             'enrollment_no'
-#         ]
-
-#     def get_student_input(self, obj):
-#         if obj.student:
-#             return StudentSerializer(obj.student).data
-#         return None
-
-#     def get_guardian_input(self, obj):
-#         if obj.guardian:
-#             return GuardianSerializer(obj.guardian).data
-#         return None
-
-#     def get_address(self, obj):
-#         address = Address.objects.filter(user=obj.student.user).first()
-#         return AddressSerializer(address).data if address else None
-
-#     def get_banking_detail(self, obj):
-#         banking = BankingDetail.objects.filter(user=obj.student.user).first()
-#         return BankingDetailsSerializer(banking).data if banking else None
-
-#     def get_guardian_type(self, obj):
-#         try:
-#             sg = StudentGuardian.objects.get(student=obj.student, guardian=obj.guardian)
-#             return sg.guardian_type.name
-#         except StudentGuardian.DoesNotExist:
-#             return None
-
-#     def create(self, validated_data):
-#         is_rte = validated_data.pop('is_rte', False)
-#         rte_number = validated_data.pop('rte_number', None)
-#         student_data = validated_data.pop('student')
-#         guardian_data = validated_data.pop('guardian')
-#         address_data = validated_data.pop('address_input', None)
-#         banking_data = validated_data.pop('banking_detail_input', None)
-#         guardian_type = validated_data.pop('guardian_type_input', None)
-#         year_level = validated_data.pop('year_level', None)
-#         school_year = validated_data.pop('school_year', None)
-
-#         # --- Student processing ---
-#         classes_data = student_data.pop('classes', [])
-#         if isinstance(classes_data, str):
-#             try:
-#                 classes_data = [int(classes_data)]
-#             except ValueError:
-#                 raise serializers.ValidationError({"student.classes": "Invalid class ID format."})
-
-#         user_data = {
-#             'first_name': student_data.pop('first_name', ''),
-#             'middle_name': student_data.pop('middle_name', ''),
-#             'last_name': student_data.pop('last_name', ''),
-#             'email': student_data.pop('email'),
-#             'password': student_data.pop('password', None),
-#             'user_profile': student_data.pop('user_profile', None),
-#         }
-
-#         user = User.objects.filter(email__iexact=user_data['email']).first()
-#         if not user:
-#             role, _ = Role.objects.get_or_create(name='student')
-#             user = User.objects.create_user(**user_data)
-#             user.role.add(role)
-
-#         student, created = Student.objects.get_or_create(user=user, defaults=student_data)
-#         if not created:
-#             raise serializers.ValidationError({"student": "Student already exists for this user."})
-
-#         if classes_data:
-#             student.classes.set(classes_data)
-
-#         # --- Address and banking ---
-#         if address_data:
-#             Address.objects.update_or_create(user=user, defaults=address_data)
-#         if banking_data:
-#             BankingDetail.objects.update_or_create(user=user, defaults=banking_data)
-
-#         # --- Guardian user creation ---
-#         guardian_user_data = {
-#             'first_name': guardian_data.pop('first_name', ''),
-#             'middle_name': guardian_data.pop('middle_name', ''),
-#             'last_name': guardian_data.pop('last_name', ''),
-#             'email': guardian_data.pop('email'),
-#             'password': guardian_data.pop('password', None),
-#             'user_profile': guardian_data.pop('user_profile', None),
-#         }
-
-#         guardian_user = User.objects.filter(email__iexact=guardian_user_data['email']).first()
-#         if not guardian_user:
-#             role, _ = Role.objects.get_or_create(name='guardian')
-#             guardian_user = User.objects.create_user(**guardian_user_data)
-#             guardian_user.role.add(role)
-#         else:
-#             for attr, value in guardian_user_data.items():
-#                 if value:
-#                     setattr(guardian_user, attr, value)
-#             guardian_user.save()
-
-#         # --- Guardian model creation or update ---
-#         guardian, _ = Guardian.objects.get_or_create(user=guardian_user, defaults=guardian_data)
-#         if guardian_data:
-#             guardian_serializer = GuardianSerializer(guardian, data=guardian_data, partial=True)
-#             guardian_serializer.is_valid(raise_exception=True)
-#             guardian_serializer.save()
-
-#         # --- Admission creation ---
-#         admission = Admission.objects.create(
-#             student=student,
-#             guardian=guardian,
-#             previous_school_name=validated_data.get('previous_school_name'),
-#             previous_standard_studied=validated_data.get('previous_standard_studied'),
-#             tc_letter=validated_data.get('tc_letter'),
-#             year_level=year_level,
-#             school_year=school_year,
-#             emergency_contact_no=validated_data.get('emergency_contact_no'),
-#             entire_road_distance_from_home_to_school=validated_data.get('entire_road_distance_from_home_to_school'),
-#             obtain_marks=validated_data.get('obtain_marks'),
-#             total_marks=validated_data.get('total_marks'),
-#             previous_percentage=validated_data.get('previous_percentage'),
-#             enrollment_no=validated_data.get('enrollment_no'),
-#             is_rte=is_rte,
-#             rte_number=rte_number
-
-#         )
-
-#         if guardian_type:
-#             StudentGuardian.objects.update_or_create(
-#                 student=student, guardian=guardian, defaults={'guardian_type': guardian_type}
-#             )
-
-#         if year_level and school_year:
-#             StudentYearLevel.objects.update_or_create(
-#                 student=student, level=year_level, year=school_year
-#             )
-
-#         return admission
-
-
-#     def update(self, instance, validated_data):
-#         instance.is_rte = validated_data.get('is_rte', instance.is_rte)
-#         instance.rte_number = validated_data.get('rte_number', instance.rte_number)
-#         student_data = validated_data.pop('student', None)
-#         guardian_data = validated_data.pop('guardian', None)
-#         address_data = validated_data.pop('address_input', None)
-#         banking_data = validated_data.pop('banking_detail_input', None)
-#         guardian_type = validated_data.pop('guardian_type_input', None)
-#         year_level = validated_data.pop('year_level', None)
-#         school_year = validated_data.pop('school_year', None)
-
-#         user = self.context.get("user") or instance.student.user
-
-#         if student_data:
-#             student_serializer = StudentSerializer(instance.student, data=student_data, partial=True)
-#             student_serializer.is_valid(raise_exception=True)
-#             student_serializer.save()
-
-#             classes_data = student_data.get('classes')
-#             if isinstance(classes_data, str):
-#                 try:
-#                     classes_data = [int(classes_data)]
-#                 except ValueError:
-#                     raise serializers.ValidationError({"student.classes": "Invalid class ID format."})
-
-#             if classes_data:
-#                 instance.student.classes.set(classes_data)
-
-#         if guardian_data:
-#             guardian_serializer = GuardianSerializer(instance.guardian, data=guardian_data, partial=True)
-#             guardian_serializer.is_valid(raise_exception=True)
-#             guardian_serializer.save()
-
-#         if address_data:
-#             for key in ['city', 'state', 'country']:
-#                 val = address_data.get(key)
-#                 if hasattr(val, 'id'):
-#                     address_data[key] = val.id
-
-#             try:
-#                 address_instance = Address.objects.get(user=user)
-#                 address_serializer = AddressSerializer(address_instance, data=address_data, partial=True)
-#             except Address.DoesNotExist:
-#                 address_serializer = AddressSerializer(data=address_data)
-
-#             address_serializer.is_valid(raise_exception=True)
-#             address_serializer.save(user=user)
-
-#         if banking_data:
-#             current_account_no = str(banking_data.get('account_no'))
-
-#             try:
-#                 banking_instance = BankingDetail.objects.get(user=user)
-#                 existing_account_no = str(banking_instance.account_no)
-
-#                 if existing_account_no == current_account_no:
-#                     banking_data.pop('account_no', None)
-#                 else:
-#                     if BankingDetail.objects.filter(account_no=current_account_no).exclude(user_id=user.id).exists():
-#                         raise serializers.ValidationError({
-#                             "banking_detail_input": {
-#                                 "account_no": ["This account number is already in use by another user."]
-#                             }
-#                         })
-
-#                 banking_serializer = BankingDetailsSerializer(banking_instance, data=banking_data, partial=True)
-#                 banking_serializer.is_valid(raise_exception=True)
-#                 banking_serializer.save(user=user)
-
-#             except BankingDetail.DoesNotExist:
-#                 if BankingDetail.objects.filter(account_no=current_account_no).exists():
-#                     raise serializers.ValidationError({
-#                         "banking_detail_input": {
-#                             "account_no": ["This account number is already in use."]
-#                         }
-#                     })
-
-#                 banking_serializer = BankingDetailsSerializer(data=banking_data)
-#                 banking_serializer.is_valid(raise_exception=True)
-#                 banking_serializer.save(user=user)
-
-#         if guardian_type:
-#             StudentGuardian.objects.update_or_create(
-#                 student=instance.student,
-#                 guardian=instance.guardian,
-#                 defaults={"guardian_type": guardian_type}
-#             )
-
-#         if year_level:
-#             instance.year_level = year_level
-#         if school_year:
-#             instance.school_year = school_year
-
-#         for attr, value in validated_data.items():
-#             setattr(instance, attr, value)
-
-#         instance.save()
-#         return instance
 
 
 
@@ -1129,14 +830,21 @@ class ClassPeriodSerializer(serializers.ModelSerializer):
 
 
 
-# Added as of 06June25 at 02:50 PM
+
+
 
 class FeeTypeSerializer(serializers.ModelSerializer):
-    # name = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = FeeType
-        fields = ['id', 'name']
+        class Meta:
+         model = FeeType
+         fields = ['id', 'name']
+
+    # ADDITION: handle create or update to avoid duplicates
+def create(self, validated_data):
+        instance, created = FeeType.objects.update_or_create(
+            name=validated_data.get("name"),  # field to check for duplicates
+            defaults=validated_data           # data to update if exists
+        )
+        return instance
 
 
 class YearLevelFeeSerializer(serializers.ModelSerializer):
@@ -1146,11 +854,10 @@ class YearLevelFeeSerializer(serializers.ModelSerializer):
     final_amount = serializers.SerializerMethodField()
     # original_amount = serializers.DecimalField(source="amount", max_digits=8, decimal_places=2, read_only=True)
 
-
     class Meta:
         model = YearLevelFee
         fields = ['id', 'year_level', 'fee_type', 'year_level_name', 'fee_type_name', 'amount',
-            'final_amount', 'year_level_id']
+                  'final_amount', 'year_level_id']
 
     def get_year_level_name(self, obj):
         return obj.year_level.level_name
@@ -1690,7 +1397,6 @@ class FeeRecordSerializer(serializers.ModelSerializer):
         return fee_record
 
 
-# # serializers.py
 # class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
 #     student_id = serializers.PrimaryKeyRelatedField(
 #         queryset=Student.objects.all(), source='student', write_only=True
@@ -1720,20 +1426,19 @@ class FeeRecordSerializer(serializers.ModelSerializer):
 #         student = data.get('student')
 #         year_level_fees = data.get('year_level_fees', [])
 #         paid_amount = data.get('paid_amount', Decimal("0.00"))
+#         payment_mode = data.get('payment_mode', '').lower()
         
-      
 #         if isinstance(paid_amount, str):
 #             paid_amount = Decimal(paid_amount)
     
-#         if data.get('payment_mode', '').lower() == 'online' and paid_amount <= 0:
+#         # Online payment validation
+#         if payment_mode == 'online' and paid_amount <= 0:
 #             raise serializers.ValidationError("Paid amount must be greater than 0 for online payment.")
 
-#         multi_month_mode = self.context.get('multi_month', False)
-
-  
+#         # Calculate total from selected fees
 #         base_total = sum(fee.amount for fee in year_level_fees) if year_level_fees else Decimal("0.00")
 
-
+#         # Apply discount
 #         try:
 #             discount = FeeDiscount.objects.get(student=student, is_allowed=True)
 #         except FeeDiscount.DoesNotExist:
@@ -1750,7 +1455,7 @@ class FeeRecordSerializer(serializers.ModelSerializer):
 
 #         discounted_total = max(base_total - total_discount, Decimal("0.00"))
 
-     
+#         # Late fee calculation
 #         today = date.today()
 #         late_fee = Decimal("0.00")
 #         if any("tuition fee" in fee.fee_type.name.lower() for fee in year_level_fees) and today.day > 15:
@@ -1758,7 +1463,7 @@ class FeeRecordSerializer(serializers.ModelSerializer):
 
 #         total = discounted_total + late_fee
 
-#         # ALLOW PARTIAL PAYMENT FOR ALL FEE TYPES
+#         # Allow partial payment
 #         due_amount = max(total - paid_amount, Decimal("0.00"))
 
 #         data['total_amount'] = discounted_total
@@ -1766,31 +1471,48 @@ class FeeRecordSerializer(serializers.ModelSerializer):
 #         data['due_amount'] = due_amount
 #         data['paid_amount'] = paid_amount
 
-#         # Payment status - ALLOW PARTIAL FOR ALL FEES
-#         if due_amount == 0 and paid_amount > 0:
-#             data['payment_status'] = 'Paid'
-#         elif paid_amount > 0:
-#             data['payment_status'] = 'Partially Paid'
+#         # FIXED: PROPER STATUS CALCULATION FOR ONLINE PAYMENTS
+#         if payment_mode == 'online':
+#             # For online payments, status should be based on paid_amount vs total
+#             if paid_amount >= total:
+#                 data['payment_status'] = 'Paid'
+#             elif paid_amount > 0:
+#                 data['payment_status'] = 'Partially Paid'
+#             else:
+#                 data['payment_status'] = 'Unpaid'
 #         else:
-#             data['payment_status'] = 'Unpaid'
+#             # Cash payment logic remains same
+#             if due_amount == 0 and paid_amount > 0:
+#                 data['payment_status'] = 'Paid'
+#             elif paid_amount > 0:
+#                 data['payment_status'] = 'Partially Paid'
+#             else:
+#                 data['payment_status'] = 'Unpaid'
 
-       
-#         data['razorpay_order_id'] = self.initial_data.get('razorpay_order_id')
-#         data['razorpay_payment_id'] = self.initial_data.get('razorpay_payment_id')
-#         data['razorpay_signature_id'] = self.initial_data.get('razorpay_signature_id')
+#         # Razorpay fields
+#         if 'razorpay_order_id' in self.initial_data:
+#             data['razorpay_order_id'] = self.initial_data.get('razorpay_order_id')
+#         if 'razorpay_payment_id' in self.initial_data:
+#             data['razorpay_payment_id'] = self.initial_data.get('razorpay_payment_id')
+#         if 'razorpay_signature_id' in self.initial_data:
+#             data['razorpay_signature_id'] = self.initial_data.get('razorpay_signature_id')
 
+#         print(f"DEBUG: Payment Mode: {payment_mode}, Status: {data.get('payment_status')}")
 #         return data
 
 #     def create(self, validated_data):
 #         year_level_fees = validated_data.pop('year_level_fees', [])
+        
+#         #  FIXED: Ensure status is preserved
 #         fee_record = FeeRecord.objects.create(**validated_data)
 #         fee_record.year_level_fees.set(year_level_fees)
 
-#         # Generate unique receipt number if not exists
+#         # Generate receipt number if not exists
 #         if not fee_record.receipt_number:
 #             fee_record.receipt_number = self.generate_unique_receipt_number()
 #             fee_record.save()
 
+#         print(f"DEBUG: Final Status Saved: {fee_record.payment_status}")
 #         return fee_record
 
 #     def generate_unique_receipt_number(self):
@@ -1803,6 +1525,7 @@ class FeeRecordSerializer(serializers.ModelSerializer):
 #         else:
 #             new_number = 1
 #         return f'REC-{today}-{new_number:05d}'
+
 class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
     student_id = serializers.PrimaryKeyRelatedField(
         queryset=Student.objects.all(), source='student', write_only=True
@@ -1837,14 +1560,16 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
         if isinstance(paid_amount, str):
             paid_amount = Decimal(paid_amount)
     
-        # Online payment validation
+       
         if payment_mode == 'online' and paid_amount <= 0:
             raise serializers.ValidationError("Paid amount must be greater than 0 for online payment.")
+        
+        year_level_fees_ids = self.initial_data.get('year_level_fees', [])
+        year_level_fees_qs = YearLevelFee.objects.filter(id__in=year_level_fees_ids)
 
-        # Calculate total from selected fees
         base_total = sum(fee.amount for fee in year_level_fees) if year_level_fees else Decimal("0.00")
 
-        # Apply discount
+        
         try:
             discount = FeeDiscount.objects.get(student=student, is_allowed=True)
         except FeeDiscount.DoesNotExist:
@@ -1861,41 +1586,64 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
 
         discounted_total = max(base_total - total_discount, Decimal("0.00"))
 
-        # Late fee calculation
+ 
         today = date.today()
         late_fee = Decimal("0.00")
         if any("tuition fee" in fee.fee_type.name.lower() for fee in year_level_fees) and today.day > 15:
             late_fee = Decimal("25.00")
 
-        total = discounted_total + late_fee
+    
+        total_with_late_fee = discounted_total + late_fee
 
-        # Allow partial payment
-        due_amount = max(total - paid_amount, Decimal("0.00"))
+   
+        due_amount = max(total_with_late_fee - paid_amount, Decimal("0.00"))
 
-        data['total_amount'] = discounted_total
+        data['total_amount'] = discounted_total  
         data['late_fee'] = late_fee
         data['due_amount'] = due_amount
         data['paid_amount'] = paid_amount
 
-        # ✅ FIXED: PROPER STATUS CALCULATION FOR ONLINE PAYMENTS
+     
+        razorpay_payment_id = self.initial_data.get('razorpay_payment_id')
+        razorpay_signature_id = self.initial_data.get('razorpay_signature_id')
+        
+        print(f"DEBUG: Payment Mode: {payment_mode}")
+        print(f"DEBUG: Razorpay Payment ID: {razorpay_payment_id}")
+        print(f"DEBUG: Razorpay Signature ID: {razorpay_signature_id}")
+        print(f"DEBUG: Paid Amount: {paid_amount}")
+        print(f"DEBUG: Base Amount: {discounted_total}")
+        print(f"DEBUG: Late Fee: {late_fee}")
+        print(f"DEBUG: Total with Late Fee: {total_with_late_fee}")
+
         if payment_mode == 'online':
-            # For online payments, status should be based on paid_amount vs total
-            if paid_amount >= total:
-                data['payment_status'] = 'Paid'
-            elif paid_amount > 0:
-                data['payment_status'] = 'Partially Paid'
+            if razorpay_payment_id and razorpay_signature_id:
+          
+                if paid_amount >= total_with_late_fee:
+                    data['payment_status'] = 'Paid'
+                    print("DEBUG: Online Payment - STATUS: Paid (Full payment with late fee verified)")
+                elif paid_amount > 0:
+                    data['payment_status'] = 'Partially Paid'
+                    print("DEBUG: Online Payment - STATUS: Partially Paid (Partial payment with late fee)")
+                else:
+                    data['payment_status'] = 'Unpaid'
+                    print("DEBUG: Online Payment - STATUS: Unpaid (No payment)")
             else:
+             
                 data['payment_status'] = 'Unpaid'
+                print("DEBUG: Online Payment - STATUS: Unpaid (Awaiting verification)")
         else:
-            # Cash payment logic remains same
+        
             if due_amount == 0 and paid_amount > 0:
                 data['payment_status'] = 'Paid'
+                print("DEBUG: Cash Payment - STATUS: Paid (Full payment with late fee)")
             elif paid_amount > 0:
                 data['payment_status'] = 'Partially Paid'
+                print("DEBUG: Cash Payment - STATUS: Partially Paid (Partial payment with late fee)")
             else:
                 data['payment_status'] = 'Unpaid'
+                print("DEBUG: Cash Payment - STATUS: Unpaid")
 
-        # Razorpay fields
+ 
         if 'razorpay_order_id' in self.initial_data:
             data['razorpay_order_id'] = self.initial_data.get('razorpay_order_id')
         if 'razorpay_payment_id' in self.initial_data:
@@ -1903,22 +1651,49 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
         if 'razorpay_signature_id' in self.initial_data:
             data['razorpay_signature_id'] = self.initial_data.get('razorpay_signature_id')
 
-        print(f"DEBUG: Payment Mode: {payment_mode}, Status: {data.get('payment_status')}")
         return data
 
     def create(self, validated_data):
         year_level_fees = validated_data.pop('year_level_fees', [])
         
-        # ✅ FIXED: Ensure status is preserved
+     
+        payment_mode = validated_data.get('payment_mode', '').lower()
+        razorpay_payment_id = validated_data.get('razorpay_payment_id')
+        paid_amount = validated_data.get('paid_amount', Decimal('0.00'))
+        base_amount = validated_data.get('total_amount', Decimal('0.00'))
+        late_fee = validated_data.get('late_fee', Decimal('0.00'))
+        
+        total_with_late_fee = base_amount + late_fee
+        
+        print(f"CREATE DEBUG: Payment Mode: {payment_mode}")
+        print(f"CREATE DEBUG: Razorpay Payment ID: {razorpay_payment_id}")
+        print(f"CREATE DEBUG: Paid Amount: {paid_amount}")
+        print(f"CREATE DEBUG: Base Amount: {base_amount}")
+        print(f"CREATE DEBUG: Late Fee: {late_fee}")
+        print(f"CREATE DEBUG: Total with Late Fee: {total_with_late_fee}")
+        print(f"CREATE DEBUG: Initial Status: {validated_data.get('payment_status')}")
+
+
+        if payment_mode == 'online' and razorpay_payment_id:
+            if paid_amount >= total_with_late_fee:
+                validated_data['payment_status'] = 'Paid'
+                print("CREATE DEBUG: Setting status to Paid (Online payment with late fee)")
+            elif paid_amount > 0:
+                validated_data['payment_status'] = 'Partially Paid'
+                print("CREATE DEBUG: Setting status to Partially Paid (Online partial payment with late fee)")
+            else:
+                validated_data['payment_status'] = 'Unpaid'
+                print("CREATE DEBUG: Setting status to Unpaid (Online payment failed)")
+
         fee_record = FeeRecord.objects.create(**validated_data)
         fee_record.year_level_fees.set(year_level_fees)
 
-        # Generate receipt number if not exists
+
         if not fee_record.receipt_number:
             fee_record.receipt_number = self.generate_unique_receipt_number()
             fee_record.save()
 
-        print(f"DEBUG: Final Status Saved: {fee_record.payment_status}")
+        print(f"CREATE DEBUG: Final Status Saved: {fee_record.payment_status}")
         return fee_record
 
     def generate_unique_receipt_number(self):
@@ -1931,8 +1706,7 @@ class FeeRecordRazorpaySerializer(serializers.ModelSerializer):
         else:
             new_number = 1
         return f'REC-{today}-{new_number:05d}'
-
-    ### Added this as of 13June25 at 11:53 AM 
+  
 class RazorpayConfirmPaymentSerializer(serializers.Serializer):
     razorpay_order_id = serializers.CharField()
     razorpay_payment_id = serializers.CharField()
