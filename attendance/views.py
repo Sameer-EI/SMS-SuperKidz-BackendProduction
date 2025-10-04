@@ -2,6 +2,8 @@ from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+
+from utils.email_notifications import send_email_notification
 from .models import  *
 from .serializers import *
 from django.utils.dateformat import format as date_format
