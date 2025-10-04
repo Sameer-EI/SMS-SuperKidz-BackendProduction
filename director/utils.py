@@ -282,7 +282,7 @@ def calculate_subject_summary(subjects_data):
 # ---------------------  Income and Expense 
 
 from rest_framework import serializers
-
+#.
 class AbsoluteURLFileField(serializers.FileField):
     def to_representation(self, value):
         if not value:
