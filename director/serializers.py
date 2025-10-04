@@ -2355,6 +2355,7 @@ class DocumentSerializer(serializers.ModelSerializer):
                 rep["student_name"] = f"{student.user.first_name} {student.user.last_name}"
                 studentyearlevel = StudentYearLevel.objects.get(student_id = student_id)
                 rep["year_level"] = studentyearlevel.level.level_name
+                rep["scholar_number"] = student.scholar_number
                 
             if teacher_id:
                 teacher = Teacher.objects.get(id = teacher_id)
