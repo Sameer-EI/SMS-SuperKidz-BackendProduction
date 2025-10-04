@@ -17,8 +17,8 @@ class Teacher(models.Model):
     user = models.OneToOneField(User, on_delete=models.DO_NOTHING)
     phone_no = models.CharField(max_length=100,null=True,blank=True)
     gender = models.CharField(max_length=50,null=True,blank=True)
-    adhaar_no = models.BigIntegerField(null=True,blank=True)
-    pan_no = models.CharField(max_length=50,null=True,blank=True)
+    adhaar_no = models.BigIntegerField(null=True,blank=True,unique=True)
+    pan_no = models.CharField(max_length=50,null=True,blank=True,unique=True)
     qualification = models.CharField(max_length=250,null=True,blank=True)
     joining_date = models.DateField(auto_now_add=True,null=True,blank=True)  #added as of 19Sep25 at 03:00 PM
     is_active = models.BooleanField(default=True)
