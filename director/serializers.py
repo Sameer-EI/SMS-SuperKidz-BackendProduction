@@ -2422,7 +2422,8 @@ class DocumentSerializer(serializers.ModelSerializer):
                 rep["student_name"] = f"{student.user.first_name} {student.user.last_name}"
                 studentyearlevel = StudentYearLevel.objects.get(student_id = student_id)
                 rep["year_level"] = studentyearlevel.level.level_name
-                
+                rep["scholar_number"] = student.scholar_number
+
             if teacher_id:
                 teacher = Teacher.objects.get(id = teacher_id)
                 rep["teacher_id"] = teacher.id
@@ -2507,19 +2508,46 @@ class ExamScheduleSerializer(serializers.Serializer):
             })
 
         # only one date can have max papers, others must have 1 each
-        max_count_dates = [d for d, cnt in date_counter.items() if cnt == max_per_date]
-        if len(max_count_dates) > 1:
+        # max_count_dates = [d for d, cnt in date_counter.items() if cnt == max_per_date]
+        # if len(max_count_dates) > 1:
+        #     raise serializers.ValidationError({
+        #         # "papers": f"Sirf ek date par maximum {max_per_date} papers ho sakte hain, baaki dates me 1 paper hi ho sakta hai."
+        #         "papers": f"For {class_obj.level_name}, only one day is allowed to have {max_per_date} exams. Every other day must have only one exam."
+        #     })
+
+        # for d, cnt in date_counter.items():
+        #     if d not in max_count_dates and cnt != 1:
+        #         raise serializers.ValidationError({
+        #             # "papers": f"{class_obj.level_name} me {d} par 1 paper hona chahiye."
+        #             "papers": f"{class_obj.level_name} can have only one subject scheduled on {d}."
+        #         })
+
+        # Flexible multiple dates validation
+        date_counter = Counter([str(p.exam_date) for p in existing_papers])
+        for p in papers:
+            date_counter[str(p["exam_date"])] += 1
+
+        if class_obj.level_order < 15:  # Pre Nursery–Class 10
+            for date, count in date_counter.items():
+                if count != 1:
+                    raise serializers.ValidationError({
+                        "papers": f"{class_obj.level_name} can have only one subject scheduled on {date}."
+                    })
+        else:  # Class 11 & 12
+            max_per_date = 3
+            over_limit_dates = [d for d, cnt in date_counter.items() if cnt > max_per_date]
+            if over_limit_dates:
+                raise serializers.ValidationError({
+                    "papers": f"Too many papers on date(s): {over_limit_dates} (max {max_per_date})"
+                })
+
+        # Duplicate subjects per date
+        subject_dates = [(paper['subject_id'], str(paper['exam_date'])) for paper in papers]
+        if len(subject_dates) != len(set(subject_dates)):
             raise serializers.ValidationError({
-                # "papers": f"Sirf ek date par maximum {max_per_date} papers ho sakte hain, baaki dates me 1 paper hi ho sakta hai."
-                "papers": f"For {class_obj.level_name}, only one day is allowed to have {max_per_date} exams. Every other day must have only one exam."
+                "papers": "Duplicate subjects scheduled on the same date are not allowed."
             })
 
-        for d, cnt in date_counter.items():
-            if d not in max_count_dates and cnt != 1:
-                raise serializers.ValidationError({
-                    # "papers": f"{class_obj.level_name} me {d} par 1 paper hona chahiye."
-                    "papers": f"{class_obj.level_name} can have only one subject scheduled on {d}."
-                })
 
         return data
 
@@ -2857,17 +2885,23 @@ class ExamPaperSerializer(serializers.ModelSerializer):
         return None
 
 
-    def get_uploaded_file_url(self, obj):
-        import os
-        from django.conf import settings
+    # def get_uploaded_file_url(self, obj):
+    #     import os
+    #     from django.conf import settings
 
-        if obj.uploaded_file:
-            file_path = os.path.join(settings.MEDIA_ROOT, obj.uploaded_file.name)
-            if os.path.exists(file_path):
-                return obj.uploaded_file.url
-            else:
-                return "File has been deleted or not found"
-        return None
+    #     if obj.uploaded_file:
+    #         file_path = os.path.join(settings.MEDIA_ROOT, obj.uploaded_file.name)
+    #         if os.path.exists(file_path):
+    #             return obj.uploaded_file.url
+    #         else:
+    #             return "File has been deleted or not found"
+    #     return None
+    def get_uploaded_file_url(self, obj):
+        # Check if file exists
+        if obj.uploaded_file and obj.uploaded_file.storage.exists(obj.uploaded_file.name):
+            request = self.context.get('request')
+            return request.build_absolute_uri(obj.uploaded_file.url)
+        return None  # ya "File has been deleted or not found"
 
 
     def validate_uploaded_file(self, value):
