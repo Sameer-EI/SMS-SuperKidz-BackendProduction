@@ -19,6 +19,8 @@ class Teacher(models.Model):
     gender = models.CharField(max_length=50,null=True,blank=True)
     adhaar_no = models.BigIntegerField(null=True,blank=True,unique=True) # added unique 04Oct25
     pan_no = models.CharField(max_length=50,null=True,blank=True,unique=True) # added unique 04Oct25
+    adhaar_no = models.BigIntegerField(null=True,blank=True,unique=True)
+    pan_no = models.CharField(max_length=50,null=True,blank=True,unique=True)
     qualification = models.CharField(max_length=250,null=True,blank=True)
     joining_date = models.DateField(auto_now_add=True,null=True,blank=True)  #added as of 19Sep25 at 03:00 PM
     is_active = models.BooleanField(default=True)
@@ -48,7 +50,7 @@ class TeacherYearLevel(models.Model):
 class TeacherAttendance(models.Model):
     teacher = models.ForeignKey('teacher.Teacher', on_delete=models.CASCADE)
     date = models.DateField()
-    status = models.CharField(max_length=10, choices=[('present', 'Present'), ('absent', 'Absent')])
+    status = models.CharField(max_length=10, choices=[('present', 'Present'), ('absent', 'Absent'), ('leave', 'Leave')])
 
     class Meta:
         unique_together = ('teacher', 'date')

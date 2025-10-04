@@ -27,7 +27,7 @@ from django.db.models import Sum, DecimalField
 from django.db.models import Count, F, ExpressionWrapper, IntegerField ,Func , Value
 # from razorpay.errors import SignatureVerificationError, InvalidOperation # as of 04Oct25
 from razorpay.errors import SignatureVerificationError
-
+from decimal import Decimal, InvalidOperation 
 
 import razorpay
 from django.conf import settings
@@ -4257,7 +4257,7 @@ class ExamPaperView(viewsets.ModelViewSet):
         user = request.user
         role_names = [role.name.lower() for role in user.role.all()]
 
-        if "director" in role_names:
+        if "director" in role_names or "office staff" in role_names:
             queryset = ExamPaper.objects.select_related('exam_type', 'term', 'subject', 'year_level', 'teacher')
         
         elif "teacher" in role_names:
@@ -4393,7 +4393,7 @@ class ExamScheduleView(viewsets.ModelViewSet):
                 grouped_data[key] = {
                     "id": group_id_counter,
                     "class": obj.class_name.level_name,
-                    "school_year": obj.term.year.year_name,
+                    "school_year": f"{obj.term.year.year_name}- Term {obj.term.term_number}",
                     "exam_type": obj.exam_type.name,
                     "papers": []
                 }
@@ -5777,12 +5777,16 @@ class SchoolExpenseView(viewsets.ModelViewSet):
             expense.status = "approved"
             expense.approved_by = user
             expense.save()
-            return Response(SchoolExpenseSerializer(expense).data, status=status.HTTP_201_CREATED)
+            # return Response(SchoolExpenseSerializer(expense).data, status=status.HTTP_201_CREATED)
+            return Response({"message": "Expense approved successfully","expense": SchoolExpenseSerializer(expense).data}, status=status.HTTP_201_CREATED)
+
 
         elif payment_method == "cheque":
             expense.status = "pending"  
             expense.save()
-            return Response(SchoolExpenseSerializer(expense).data, status=status.HTTP_201_CREATED)
+            # return Response(SchoolExpenseSerializer(expense).data, status=status.HTTP_201_CREATED)
+            return Response({"message": "Expense created and pending approval","expense": SchoolExpenseSerializer(expense).data}, status=status.HTTP_201_CREATED)
+
 
         elif payment_method == "online":
             # Call initiate_expense_payment function
