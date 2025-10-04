@@ -3804,7 +3804,7 @@ class ExamPaperView(viewsets.ModelViewSet):
         user = request.user
         role_names = [role.name.lower() for role in user.role.all()]
 
-        if "director" in role_names:
+        if "director" in role_names or "office staff" in role_names:
             queryset = ExamPaper.objects.select_related('exam_type', 'term', 'subject', 'year_level', 'teacher')
         
         elif "teacher" in role_names:
@@ -3940,7 +3940,7 @@ class ExamScheduleView(viewsets.ModelViewSet):
                 grouped_data[key] = {
                     "id": group_id_counter,
                     "class": obj.class_name.level_name,
-                    "school_year": obj.term.year.year_name,
+                    "school_year": f"{obj.term.year.year_name}- Term {obj.term.term_number}",
                     "exam_type": obj.exam_type.name,
                     "papers": []
                 }
