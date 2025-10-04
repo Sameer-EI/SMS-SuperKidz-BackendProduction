@@ -48,7 +48,7 @@ class TeacherYearLevel(models.Model):
 class TeacherAttendance(models.Model):
     teacher = models.ForeignKey('teacher.Teacher', on_delete=models.CASCADE)
     date = models.DateField()
-    status = models.CharField(max_length=10, choices=[('present', 'Present'), ('absent', 'Absent')])
+    status = models.CharField(max_length=10, choices=[('present', 'Present'), ('absent', 'Absent'), ('leave', 'Leave')])
 
     class Meta:
         unique_together = ('teacher', 'date')
