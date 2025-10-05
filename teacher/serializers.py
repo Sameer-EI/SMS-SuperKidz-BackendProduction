@@ -32,7 +32,7 @@ class TeacherSerializer(serializers.ModelSerializer):
     phone_no = serializers.CharField(required=False,allow_blank=True,
         validators=[
             RegexValidator(
-                regex=r'^\+?\d{10,15}$',
+                regex=r'^\+?(\d[\s-]?){10,15}$',
                 message="Enter a valid phone number (10-15 digits, optional + at start).")])
     adhaar_no = serializers.CharField(required=False,allow_blank=True,
         validators=[
@@ -56,7 +56,38 @@ class TeacherSerializer(serializers.ModelSerializer):
             'id', 'first_name', 'middle_name', 'last_name', 'password', 'email',
             'phone_no', 'gender', 'adhaar_no', 'pan_no', 'qualification', 'user_profile','joining_date','is_active'
         ]
+        
+    def validate_adhaar_no(self, value):
+        from director.models import OfficeStaff  # Importing here to avoid circular import issues
 
+        teacher_id = self.instance.id if self.instance else None
+        
+        # Check in Teacher
+        teacher_exists = Teacher.objects.exclude(id=teacher_id).filter(adhaar_no=value).exists()
+        
+        # Check in OfficeStaff
+        staff_exists = OfficeStaff.objects.filter(adhaar_no=value).exists()
+        
+        if teacher_exists or staff_exists:
+            raise serializers.ValidationError("This Aadhaar number is already registered.")
+        return value
+
+    def validate_pan_no(self, value):
+        from director.models import OfficeStaff  # Importing here to avoid circular import issues
+
+        teacher_id = self.instance.id if self.instance else None
+        
+        # Check in Teacher
+        teacher_exists = Teacher.objects.exclude(id=teacher_id).filter(pan_no=value).exists()
+        
+        # Check in OfficeStaff
+        staff_exists = OfficeStaff.objects.filter(pan_no=value).exists()
+        
+        if teacher_exists or staff_exists:
+            raise serializers.ValidationError("This PAN number is already registered.")
+        return value
+
+    
     def create(self, validated_data):
         user_data = {
             'first_name': validated_data.pop('first_name', ''),

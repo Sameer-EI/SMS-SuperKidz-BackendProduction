@@ -234,7 +234,7 @@ class DirectorProfileSerializer(serializers.ModelSerializer):
     phone_no = serializers.CharField(required=False,allow_blank=True,
         validators=[
             RegexValidator(
-                regex=r'^\+?\d{10,15}$',
+                regex=r'^\+?(\d[\s-]?){10,15}$',
                 message="Enter a valid contact number (10-15 digits, optional + at start).")])
     gender = serializers.ChoiceField(
         choices=[('Male','Male'),('Female','Female'),('Other','Other')],
@@ -2129,7 +2129,7 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
     phone_no = serializers.CharField(required=False,allow_blank=True,
         validators=[
             RegexValidator(
-                regex=r'^\+?\d{10,15}$',
+                regex=r'^\+?(\d[\s-]?){10,15}$',
                 message="Enter a valid phone number (10-15 digits, optional + at start).")])
     adhaar_no = serializers.CharField(required=False,allow_blank=True,
         validators=[
@@ -2151,6 +2151,33 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
     class Meta:
         model = OfficeStaff
         exclude = ["user"]
+
+    def validate_adhaar_no(self, value):
+        teacher_id = self.instance.id if self.instance else None
+        
+        # Check in Teacher
+        teacher_exists = Teacher.objects.exclude(id=teacher_id).filter(adhaar_no=value).exists()
+        
+        # Check in OfficeStaff
+        staff_exists = OfficeStaff.objects.filter(adhaar_no=value).exists()
+        
+        if teacher_exists or staff_exists:
+            raise serializers.ValidationError("This Aadhaar number is already registered.")
+        return value
+
+    def validate_pan_no(self, value):
+        teacher_id = self.instance.id if self.instance else None
+        
+        # Check in Teacher
+        teacher_exists = Teacher.objects.exclude(id=teacher_id).filter(pan_no=value).exists()
+        
+        # Check in OfficeStaff
+        staff_exists = OfficeStaff.objects.filter(pan_no=value).exists()
+        
+        if teacher_exists or staff_exists:
+            raise serializers.ValidationError("This PAN number is already registered.")
+        return value
+
 
     def create(self, validated_data):
         user_data = {

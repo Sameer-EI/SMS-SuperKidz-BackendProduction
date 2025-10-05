@@ -60,7 +60,7 @@ class StudentSerializer(serializers.ModelSerializer):
         allow_blank=True,
         validators=[
             RegexValidator(
-                regex=r'^\+?\d{10,15}$',
+                regex=r'^\+?(\d[\s-]?){10,15}$',
                 message="Enter a valid contact number (10-15 digits, optional + at start)."
             )
         ]
@@ -199,7 +199,7 @@ class GuardianSerializer(serializers.ModelSerializer):
         allow_blank=True,
         validators=[
             RegexValidator(
-                regex=r'^\+?\d{10,15}$',
+                regex=r'^\+?(\d[\s-]?){10,15}$',
                 message="Enter a valid phone number (10-15 digits, optional + at start)."
             )
         ]
