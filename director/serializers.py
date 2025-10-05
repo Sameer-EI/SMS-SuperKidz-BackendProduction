@@ -238,7 +238,8 @@ class DirectorProfileSerializer(serializers.ModelSerializer):
                 message="Enter a valid contact number (10-15 digits, optional + at start).")])
     gender = serializers.ChoiceField(
         choices=[('Male','Male'),('Female','Female'),('Other','Other')],
-        required=False
+        required=False,
+        error_messages={"invalid_choice": "Gender must be Male, Female, or Other."}
     )
 
     class Meta:
@@ -2141,6 +2142,11 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
             RegexValidator(
                 regex=r'^[A-Z]{5}[0-9]{4}[A-Z]$',
                 message="Enter a valid PAN number (e.g., ABCDE1234F).")])
+    gender = serializers.ChoiceField(
+        choices=[('Male','Male'),('Female','Female'),('Other','Other')],
+        required=False,
+        error_messages={"invalid_choice": "Gender must be Male, Female, or Other."}
+    )
     
     class Meta:
         model = OfficeStaff

@@ -47,7 +47,8 @@ class TeacherSerializer(serializers.ModelSerializer):
                 message="Enter a valid PAN number (e.g., ABCDE1234F).")])
     gender = serializers.ChoiceField(
         choices=[('Male','Male'),('Female','Female'),('Other','Other')],
-        required=False
+        required=False,
+        error_messages={"invalid_choice": "Gender must be Male, Female, or Other."}
     )
     class Meta:
         model = Teacher

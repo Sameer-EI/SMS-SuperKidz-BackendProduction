@@ -42,7 +42,8 @@ class StudentSerializer(serializers.ModelSerializer):
     date_of_birth = serializers.DateField(required=False, allow_null=True)
     gender = serializers.ChoiceField(
         choices=[('Male','Male'),('Female','Female'),('Other','Other')],
-        required=False
+        required=False,
+        error_messages={"invalid_choice": "Gender must be Male, Female, or Other."}
     )    
     religion = serializers.CharField(required=False, allow_null=True)
     category = serializers.ChoiceField(
