@@ -2441,6 +2441,14 @@ class DocumentSerializer(serializers.ModelSerializer):
             'office_staff': {'required': False, 'allow_null': True},
         }
 
+    def validate_identities(self, value):
+        # If updating, exclude the current instance
+        doc_id = self.instance.id if self.instance else None
+
+        if Document.objects.exclude(id=doc_id).filter(identities=value).exists():
+            raise serializers.ValidationError("This identity is already registered.")
+        return value
+
     def create(self, validated_data):
         document_types = validated_data.pop('document_types', [])
         instance = super().create(validated_data)

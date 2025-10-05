@@ -483,7 +483,7 @@ class OfficeStaff(models.Model):
     teacher = models.ManyToManyField("teacher.Teacher", blank=True, related_name="managed_by_staff")
     admissions = models.ManyToManyField(Admission, blank=True, related_name="handled_by_staff")
     is_active = models.BooleanField(default=True)
-    adhaar_no = models.BigIntegerField(max_length=20,null=True,blank=True,unique=True)    # added as of 09Sep25
+    adhaar_no = models.BigIntegerField(null=True,blank=True,unique=True)    # added as of 09Sep25
     pan_no = models.CharField(max_length=20,null=True,blank=True,unique=True)   # added as of 09Sep25
 
     objects = OfficeStaffManager()
@@ -519,7 +519,7 @@ class DocumentManager(models.Manager):
 
 class Document(models.Model):
     document_types = models.ManyToManyField(DocumentType)
-    identities = models.CharField(max_length=1000, blank=True, null=True)
+    identities = models.CharField(max_length=200, blank=True, null=True, unique=True)
     
     student = models.ForeignKey("student.Student", on_delete=models.SET_NULL, null=True, blank=True)
     teacher = models.ForeignKey("teacher.Teacher", on_delete=models.SET_NULL, null=True, blank=True)
