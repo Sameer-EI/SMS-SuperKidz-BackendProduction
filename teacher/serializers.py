@@ -6,7 +6,7 @@ from django.db import IntegrityError
 from django.core.exceptions import MultipleObjectsReturned
 from director.models import YearLevel , Subject
 from director.serializers import ClassPeriodSerializer , subjectSerializer, YearLevelSerializer
-
+from django.core.validators import RegexValidator
 
 
 
@@ -24,19 +24,70 @@ class TeacherSerializer(serializers.ModelSerializer):
     user_profile = serializers.ImageField(required=False, allow_null=True, write_only=True)
 
     # Teacher model explicit fields
-    phone_no = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True)
-    gender = serializers.CharField(max_length=50, required=False, allow_blank=True, allow_null=True)
-    adhaar_no = serializers.IntegerField(required=False, allow_null=True)
-    pan_no = serializers.CharField(max_length=50, required=False, allow_blank=True, allow_null=True)
+    # phone_no = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True)
+    # gender = serializers.CharField(max_length=50, required=False, allow_blank=True, allow_null=True)
+    # adhaar_no = serializers.IntegerField(required=False, allow_null=True)
+    # pan_no = serializers.CharField(max_length=50, required=False, allow_blank=True, allow_null=True)
     qualification = serializers.CharField(max_length=250, required=False, allow_blank=True, allow_null=True)
+    phone_no = serializers.CharField(required=False,allow_blank=True,
+        validators=[
+            RegexValidator(
+                regex=r'^\+?(\d[\s-]?){10,15}$',
+                message="Enter a valid phone number (10-15 digits, optional + at start).")])
+    adhaar_no = serializers.CharField(required=False,allow_blank=True,
+        validators=[
+            RegexValidator(
+                regex=r'^\d{12}$',
+                message="Enter a valid 12-digit Aadhaar number.")])
 
+    pan_no = serializers.CharField(required=False,allow_blank=True,
+        validators=[
+            RegexValidator(
+                regex=r'^[A-Z]{5}[0-9]{4}[A-Z]$',
+                message="Enter a valid PAN number (e.g., ABCDE1234F).")])
+    gender = serializers.ChoiceField(
+        choices=[('Male','Male'),('Female','Female'),('Other','Other')],
+        required=False,
+        error_messages={"invalid_choice": "Gender must be Male, Female, or Other."}
+    )
     class Meta:
         model = Teacher
         fields = [
             'id', 'first_name', 'middle_name', 'last_name', 'password', 'email',
             'phone_no', 'gender', 'adhaar_no', 'pan_no', 'qualification', 'user_profile','joining_date','is_active'
         ]
+        
+    def validate_adhaar_no(self, value):
+        from director.models import OfficeStaff  # Importing here to avoid circular import issues
 
+        teacher_id = self.instance.id if self.instance else None
+        
+        # Check in Teacher
+        teacher_exists = Teacher.objects.exclude(id=teacher_id).filter(adhaar_no=value).exists()
+        
+        # Check in OfficeStaff
+        staff_exists = OfficeStaff.objects.filter(adhaar_no=value).exists()
+        
+        if teacher_exists or staff_exists:
+            raise serializers.ValidationError("This Aadhaar number is already registered.")
+        return value
+
+    def validate_pan_no(self, value):
+        from director.models import OfficeStaff  # Importing here to avoid circular import issues
+
+        teacher_id = self.instance.id if self.instance else None
+        
+        # Check in Teacher
+        teacher_exists = Teacher.objects.exclude(id=teacher_id).filter(pan_no=value).exists()
+        
+        # Check in OfficeStaff
+        staff_exists = OfficeStaff.objects.filter(pan_no=value).exists()
+        
+        if teacher_exists or staff_exists:
+            raise serializers.ValidationError("This PAN number is already registered.")
+        return value
+
+    
     def create(self, validated_data):
         user_data = {
             'first_name': validated_data.pop('first_name', ''),

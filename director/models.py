@@ -108,8 +108,8 @@ class DirectorManager(models.Manager):
     
 class Director(models.Model):
     user = models.OneToOneField("authentication.User", on_delete=models.SET_NULL,null=True)
-    phone_no = models.CharField(max_length=250, null=True, blank=True)
-    gender = models.CharField(max_length=50,null=True, blank=True)
+    phone_no = models.CharField(max_length=15, null=True, blank=True)
+    gender = models.CharField(max_length=10,null=True, blank=True)
     is_active = models.BooleanField(default=True)
 
     objects = DirectorManager()
@@ -475,8 +475,8 @@ class OfficeStaffManager(models.Manager):
 
 class OfficeStaff(models.Model):
     user = models.OneToOneField("authentication.User", on_delete=models.SET_NULL, null=True)
-    phone_no = models.CharField(max_length=20,null=True, blank=True)   # first mistake 
-    gender = models.CharField(max_length=20,null=True, blank=True)
+    phone_no = models.CharField(max_length=15,null=True, blank=True)   # first mistake 
+    gender = models.CharField(max_length=10,null=True, blank=True)
     department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True)
     date_joined = models.DateField(auto_now_add=True)
     student = models.ManyToManyField("student.Student", blank=True, related_name="managed_by_staff")
@@ -484,7 +484,7 @@ class OfficeStaff(models.Model):
     admissions = models.ManyToManyField(Admission, blank=True, related_name="handled_by_staff")
     is_active = models.BooleanField(default=True)
     adhaar_no = models.BigIntegerField(null=True,blank=True,unique=True)    # added as of 09Sep25
-    pan_no = models.CharField(max_length=50,null=True,blank=True,unique=True)   # added as of 09Sep25
+    pan_no = models.CharField(max_length=20,null=True,blank=True,unique=True)   # added as of 09Sep25
 
     objects = OfficeStaffManager()
 
@@ -519,7 +519,7 @@ class DocumentManager(models.Manager):
 
 class Document(models.Model):
     document_types = models.ManyToManyField(DocumentType)
-    identities = models.CharField(max_length=1000, blank=True, null=True)
+    identities = models.CharField(max_length=200, blank=True, null=True, unique=True)
     
     student = models.ForeignKey("student.Student", on_delete=models.SET_NULL, null=True, blank=True)
     teacher = models.ForeignKey("teacher.Teacher", on_delete=models.SET_NULL, null=True, blank=True)
