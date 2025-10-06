@@ -519,7 +519,7 @@ class DocumentManager(models.Manager):
 
 class Document(models.Model):
     document_types = models.ManyToManyField(DocumentType)
-    identities = models.CharField(max_length=1000, blank=True, null=True)
+    identities = models.CharField(max_length=1000, blank=True, null=True,unique=True)
     
     student = models.ForeignKey("student.Student", on_delete=models.SET_NULL, null=True, blank=True)
     teacher = models.ForeignKey("teacher.Teacher", on_delete=models.SET_NULL, null=True, blank=True)
