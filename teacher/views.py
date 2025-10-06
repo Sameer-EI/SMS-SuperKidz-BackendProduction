@@ -90,6 +90,11 @@ class TeacherView(viewsets.ModelViewSet):
         periods = Period.objects.filter(id__in=period_ids)
         if periods.count() != len(period_ids):
             return Response({"error": "One or more invalid period_ids."}, status=status.HTTP_400_BAD_REQUEST)
+        
+         # Check teacher's current period load # added back as of 06Oct25
+        existing_classperiods = ClassPeriod.objects.filter(teacher=teacher)
+        if existing_classperiods.count() + len(subject_ids) > 6:
+            return Response({"error": "Teacher cannot be assigned more than 6 periods."}, status=status.HTTP_400_BAD_REQUEST)
 
         assigned = []
     
@@ -103,11 +108,19 @@ class TeacherView(viewsets.ModelViewSet):
                 )
 
             for period in periods:
+                #Lunch/Break validation
+                lunch_names = ["lunch", "lunch break", "midday break", "recess", "break"]
+                if period.name.lower() in lunch_names:
+                    return Response(
+                        {"error": f"Teacher cannot be assigned during {period.name}"},
+                        status=status.HTTP_400_BAD_REQUEST
+                        )
                 #Prevent teacher period conflict
                 if ClassPeriod.objects.filter(teacher=teacher, start_time=period, end_time=period).exists():
                     return Response(
                         {"error": f"Teacher is already assigned in period {period.name} ({period.start_period_time} - {period.end_period_time})."},
                         status=status.HTTP_400_BAD_REQUEST
+                        
                     )
 
                 # Assign teacher to subject + period

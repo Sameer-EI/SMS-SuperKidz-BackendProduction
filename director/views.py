@@ -25,6 +25,7 @@ from django.db.models import Sum, DecimalField
 # views.py
 
 from django.db.models import Count, F, ExpressionWrapper, IntegerField ,Func , Value
+# from razorpay.errors import SignatureVerificationError, InvalidOperation # as of 04Oct25
 from razorpay.errors import SignatureVerificationError
 from decimal import Decimal, InvalidOperation 
 
@@ -57,6 +58,10 @@ from django.db.models.functions import Coalesce
 from django.db.models import Q
 from django.db.models import Q, Sum, Value, FloatField
 from django.db.models.fields import DateField  # This avoids shadowing
+from decimal import Decimal, InvalidOperation # added as of 04Oct25
+from razorpay.errors import SignatureVerificationError  # added as of 04Oct25
+
+
 
 
 

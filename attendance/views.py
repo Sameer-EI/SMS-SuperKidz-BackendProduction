@@ -2,6 +2,8 @@ from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+
+#from utils.email_notifications import send_email_notification #commented as of 04Oct25
 from .models import  *
 from .serializers import *
 from django.utils.dateformat import format as date_format
@@ -55,19 +57,19 @@ class MultipleAttendanceViewSet1(ModelViewSet):
         # ==================================================================
         
         # Validate teacher
-        teacher_id = data.get("teacher")
+        teacher_id = data.get("teacher_id")
         if not teacher_id:
-            return Response({"error": "teacher is required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "teacher id is required."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             teacher = Teacher.objects.get(id=teacher_id)
         except Teacher.DoesNotExist:
-            return Response({"error": "Invalid teacher_id."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": "Invalid teacher id."}, status=status.HTTP_404_NOT_FOUND)
 
         # Validate year level
-        year_level_id = data.get("year_level")
+        year_level_id = data.get("year_level_id")
         if not year_level_id:
-            return Response({"error": "year_level is required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "year level id is required."}, status=status.HTTP_400_BAD_REQUEST)
 
         # Validate presence of at least one status
         allowed_statuses = {'P', 'A', 'L'}
