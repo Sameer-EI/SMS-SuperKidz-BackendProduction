@@ -183,12 +183,16 @@ class TeacherView(viewsets.ModelViewSet):
                 }
                 for yl in teacher.year_levels.all()
             }
+            # if teacher got no year level, make a fallback bucket
+            if not yearlevel_map:
+                yearlevel_map["unassigned"] = {
+                    "year_level_id": None,
+                    "year_level_name": "Unassigned class",
+                    "periods": []
+                }
+            year_level_ids = list(yearlevel_map.keys())
     
             # Step 2: Assign each period in sorted order (round-robin year_levels)
-            year_level_ids = list(yearlevel_map.keys())
-            if not year_level_ids:
-                continue  # skip if teacher has no assigned year level
-            
             index = 0
             for period in teacher.assigned_periods.all():
                 assigned_year_level_id = year_level_ids[index % len(year_level_ids)]
