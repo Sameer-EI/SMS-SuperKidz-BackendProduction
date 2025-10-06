@@ -19,7 +19,7 @@ class Student(models.Model):
     father_name=models.CharField(max_length=250,null=True, blank=True)
     mother_name=models.CharField(max_length=250,null=True, blank=True)
     date_of_birth = models.DateField(null=True, blank=True)
-    gender = models.CharField(max_length=50,null=True, blank=True)
+    gender = models.CharField(max_length=10,null=True, blank=True)
     # enrolment_date = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     religion = models.CharField(max_length=50,null=True, blank=True)
@@ -75,7 +75,7 @@ class Guardian(models.Model):
         null=True,
         related_name="guardian_relation"
     )
-    phone_no = models.CharField(max_length=50,null=True, blank=True)
+    phone_no = models.CharField(max_length=15,null=True, blank=True)
     annual_income = models.IntegerField(null=True, blank=True)
     
     means_of_livelihood = models.CharField(

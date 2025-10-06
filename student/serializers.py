@@ -25,6 +25,7 @@ class GuardianTypeSerializer(serializers.ModelSerializer):
 
 
 # ***********************new*********************
+from django.core.validators import RegexValidator
 
 class StudentSerializer(serializers.ModelSerializer):
     # User fields (write-only)
@@ -39,7 +40,11 @@ class StudentSerializer(serializers.ModelSerializer):
     father_name = serializers.CharField(required=False, allow_null=True)
     mother_name = serializers.CharField(required=False, allow_null=True)
     date_of_birth = serializers.DateField(required=False, allow_null=True)
-    gender = serializers.CharField(required=False, allow_null=True)
+    gender = serializers.ChoiceField(
+        choices=[('Male','Male'),('Female','Female'),('Other','Other')],
+        required=False,
+        error_messages={"invalid_choice": "Gender must be Male, Female, or Other."}
+    )    
     religion = serializers.CharField(required=False, allow_null=True)
     category = serializers.ChoiceField(
         choices=[('SC', 'Scheduled Caste'), ('ST', 'Scheduled Tribe'), ('OBC', 'Other Backward Class'), ('GEN', 'General')],
@@ -50,7 +55,16 @@ class StudentSerializer(serializers.ModelSerializer):
     blood_group = serializers.CharField(required=False, allow_null=True)
     number_of_siblings = serializers.IntegerField(required=False, allow_null=True)
     roll_number = serializers.CharField(required=False, allow_null=True) 
-    contact_number = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    contact_number = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        validators=[
+            RegexValidator(
+                regex=r'^\+?(\d[\s-]?){10,15}$',
+                message="Enter a valid contact number (10-15 digits, optional + at start)."
+            )
+        ]
+    )
     scholar_number = serializers.CharField(read_only=True, allow_null=False)  # Read-only field
 
 
@@ -180,7 +194,16 @@ class GuardianSerializer(serializers.ModelSerializer):
     user_profile = serializers.ImageField(required=False, allow_null=True, write_only=True)
     
     # Guardian Fields (include here)
-    phone_no = serializers.CharField(required=False, allow_null=True,max_length=50)
+    phone_no = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        validators=[
+            RegexValidator(
+                regex=r'^\+?(\d[\s-]?){10,15}$',
+                message="Enter a valid phone number (10-15 digits, optional + at start)."
+            )
+        ]
+    )
     annual_income = serializers.IntegerField(required=False, allow_null=True,)
     means_of_livelihood = serializers.ChoiceField(choices=[('Govt', 'Government'), ('Non-Govt', 'Non-Government')], default='Govt')
     qualification = serializers.CharField(required=False, allow_null=True,max_length=300)

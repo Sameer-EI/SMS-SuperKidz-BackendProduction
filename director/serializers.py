@@ -231,8 +231,16 @@ class DirectorProfileSerializer(serializers.ModelSerializer):
     user_profile = serializers.ImageField(required=False, allow_null=True, write_only=True)
 
     # Director fields
-    phone_no = serializers.CharField(max_length=250, required=False, allow_blank=True)
-    gender = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    phone_no = serializers.CharField(required=False,allow_blank=True,
+        validators=[
+            RegexValidator(
+                regex=r'^\+?(\d[\s-]?){10,15}$',
+                message="Enter a valid contact number (10-15 digits, optional + at start).")])
+    gender = serializers.ChoiceField(
+        choices=[('Male','Male'),('Female','Female'),('Other','Other')],
+        required=False,
+        error_messages={"invalid_choice": "Gender must be Male, Female, or Other."}
+    )
 
     class Meta:
         model = Director
@@ -2118,10 +2126,58 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
     student = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all(), many=True, required=False)
     teacher = serializers.PrimaryKeyRelatedField(queryset=Teacher.objects.all(), many=True, required=False)
     admissions = serializers.PrimaryKeyRelatedField(queryset=Admission.objects.all(), many=True, required=False)
+    phone_no = serializers.CharField(required=False,allow_blank=True,
+        validators=[
+            RegexValidator(
+                regex=r'^\+?(\d[\s-]?){10,15}$',
+                message="Enter a valid phone number (10-15 digits, optional + at start).")])
+    adhaar_no = serializers.CharField(required=False,allow_blank=True,
+        validators=[
+            RegexValidator(
+                regex=r'^\d{12}$',
+                message="Enter a valid 12-digit Aadhaar number.")])
 
+    pan_no = serializers.CharField(required=False,allow_blank=True,
+        validators=[
+            RegexValidator(
+                regex=r'^[A-Z]{5}[0-9]{4}[A-Z]$',
+                message="Enter a valid PAN number (e.g., ABCDE1234F).")])
+    gender = serializers.ChoiceField(
+        choices=[('Male','Male'),('Female','Female'),('Other','Other')],
+        required=False,
+        error_messages={"invalid_choice": "Gender must be Male, Female, or Other."}
+    )
+    
     class Meta:
         model = OfficeStaff
         exclude = ["user"]
+
+    def validate_adhaar_no(self, value):
+        teacher_id = self.instance.id if self.instance else None
+        
+        # Check in Teacher
+        teacher_exists = Teacher.objects.exclude(id=teacher_id).filter(adhaar_no=value).exists()
+        
+        # Check in OfficeStaff
+        staff_exists = OfficeStaff.objects.filter(adhaar_no=value).exists()
+        
+        if teacher_exists or staff_exists:
+            raise serializers.ValidationError("This Aadhaar number is already registered.")
+        return value
+
+    def validate_pan_no(self, value):
+        teacher_id = self.instance.id if self.instance else None
+        
+        # Check in Teacher
+        teacher_exists = Teacher.objects.exclude(id=teacher_id).filter(pan_no=value).exists()
+        
+        # Check in OfficeStaff
+        staff_exists = OfficeStaff.objects.filter(pan_no=value).exists()
+        
+        if teacher_exists or staff_exists:
+            raise serializers.ValidationError("This PAN number is already registered.")
+        return value
+
 
     def create(self, validated_data):
         user_data = {
@@ -2384,6 +2440,14 @@ class DocumentSerializer(serializers.ModelSerializer):
             'guardian': {'required': False, 'allow_null': True},
             'office_staff': {'required': False, 'allow_null': True},
         }
+
+    def validate_identities(self, value):
+        # If updating, exclude the current instance
+        doc_id = self.instance.id if self.instance else None
+
+        if Document.objects.exclude(id=doc_id).filter(identities=value).exists():
+            raise serializers.ValidationError("This identity is already registered.")
+        return value
 
     def create(self, validated_data):
         document_types = validated_data.pop('document_types', [])
