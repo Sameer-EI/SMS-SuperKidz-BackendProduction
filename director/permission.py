@@ -386,3 +386,74 @@ class IsDirectororOfficeStaff(BasePermission):
     def has_permission(self, request, view):
         return request.user.is_authenticated and request.user.role.filter(name="director").exists() or request.user.role.filter(name="office_staff").exists()
     
+
+# from rest_framework.permissions import BasePermission
+
+# class ReportCardPermission(BasePermission):
+#     """Custom permission for Report Card operations based on roles"""
+
+#     def has_permission(self, request, view):
+#         user = request.user
+#         if not user.is_authenticated:
+#             return False
+
+#         role_names = [role.name.lower() for role in user.role.all()]
+#         action = getattr(view, 'action', None)
+
+#         # Access rules for each view action
+#         access_rules = {
+#             'list': ['director', 'office staff', 'teacher'],
+#             'retrieve': ['director', 'office staff', 'teacher', 'student', 'guardian'],
+#             'create': ['director', 'office staff', 'teacher'],
+#             'update': ['director', 'office staff', 'teacher'],
+#             'partial_update': ['director', 'office staff', 'teacher'],
+#             'destroy': ['director'],
+#             'generate_report_card': ['director', 'office staff'],
+#             'bulk_generate': ['director', 'office staff'],
+#             'print_format': ['director', 'office staff', 'teacher', 'student', 'guardian'],
+#         }
+
+#         allowed_roles = access_rules.get(action, [])
+#         return any(role in allowed_roles for role in role_names)
+
+#     def has_object_permission(self, request, view, obj):
+#         user = request.user
+#         role_names = [role.name.lower() for role in user.role.all()]
+
+#         # Director and Office Staff can access all report cards
+#         if 'director' in role_names or 'office staff' in role_names:
+#             return True
+
+#         # Teacher can only access report cards of students they teach
+#         if 'teacher' in role_names:
+#             from teacher.models import Teacher  # adjust import if needed
+#             try:
+#                 teacher = Teacher.objects.get(user=user)
+#             except Teacher.DoesNotExist:
+#                 return False
+
+#             teacher_levels = teacher.year_levels.values_list('id', flat=True)
+#             return obj.student_level.level_id in teacher_levels
+
+#         # Student can access only their own report card
+#         if 'student' in role_names:
+#             from student.models import Student
+#             try:
+#                 student = Student.objects.get(user=user)
+#             except Student.DoesNotExist:
+#                 return False
+
+#             return obj.student_level.student_id == student.id
+
+#         # Guardian can access only their children's report cards
+#         if 'guardian' in role_names:
+#             from student.models import StudentGuardian
+#             try:
+#                 guardian = StudentGuardian.objects.get(user=user)
+#             except StudentGuardian.DoesNotExist:
+#                 return False
+
+#             children_ids = guardian.student.values_list('student_id', flat=True)
+#             return obj.student_level.student_id in children_ids
+
+#         return False

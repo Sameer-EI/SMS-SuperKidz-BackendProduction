@@ -5248,27 +5248,33 @@ class ReportCardViewSet(viewsets.ModelViewSet):
     def get_subject_score(self, report_card):
         from collections import defaultdict
 
+        # Step 1: Get the StudentYearLevel linked to the report card
+        student_level = report_card.student_level  # THIS is a StudentYearLevel instance
+
+        # Step 2: Fetch all marks linked to that student_level
+        marks_qs = StudentMarks.objects.select_related(
+            "exam_type", "subject", "term", "student"
+        ).filter(student=student_level)  # must pass StudentYearLevel instance
+
+        if not marks_qs.exists():
+            return []
+
+        # Step 3: Group marks by exam type and subject
         temp = defaultdict(dict)
+        for mark in marks_qs:
+            exam_type = mark.exam_type.name.lower()
+            subject = mark.subject.subject_name
+            temp[exam_type][subject] = float(mark.marks_obtained or 0)
 
-        for score in report_card.subject_scores.select_related(
-            "marks_obtained__student",
-            "marks_obtained__subject",
-            "marks_obtained__exam_type"
-        ).all():
-            mark = score.marks_obtained
-            if mark and mark.subject and mark.exam_type:
-                exam_type = mark.exam_type.name.lower()  # normalize to lowercase
-                subject = mark.subject.subject_name
-                temp[exam_type][subject] = float(mark.marks_obtained or 0)
-
-        examwise_subjects = []
+        # Step 4: Compute totals + grades
+        examwise_summary = []
         for exam_type, subjects in temp.items():
             subject_count = len(subjects)
-            is_fa = exam_type.startswith("fa")  # check if it's FA
-            max_per_subject = 10 if is_fa else 100  # apply correct max marks
-            total = sum(subjects.values())
-            max_marks = subject_count * max_per_subject
-            percentage = round((total / max_marks) * 100, 2) if max_marks else 0
+            is_fa = exam_type.startswith("fa")  # FA1/FA2 -> 10 marks per subject
+            max_per_subject = 10 if is_fa else 100
+            total_obtained = sum(subjects.values())
+            total_possible = subject_count * max_per_subject
+            percentage = round((total_obtained / total_possible) * 100, 2) if total_possible else 0
 
             #  Add grading logic
             if percentage >= 90:
@@ -5284,17 +5290,17 @@ class ReportCardViewSet(viewsets.ModelViewSet):
             else:
                 grade = "F"
 
-            #  Append full exam summary
-            examwise_subjects.append({
-                "exam_type": exam_type,
+            examwise_summary.append({
+                "exam_type": exam_type.upper(),
                 "subjects": subjects,
-                "total": total,
-                "max_marks": max_marks,
+                "total_obtained": total_obtained,
+                "total_possible": total_possible,
                 "percentage": percentage,
                 "grade": grade
             })
 
-        return examwise_subjects
+        return examwise_summary
+
 
     def sync_subject_scores(self, report_card):
         terms = Term.objects.filter(year=report_card.student_level.year)
