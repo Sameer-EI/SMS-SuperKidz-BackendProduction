@@ -2100,7 +2100,7 @@ def send_whatsapp_message(message_text):
 class FeeDiscountView(viewsets.ModelViewSet):
     queryset = FeeDiscount.objects.all()
     serializer_class = FeeDiscountSerializer
-    # permission_classes = [IsAuthenticated,IsDirector]
+    permission_classes = [IsAuthenticated,IsDirector]
 
 class FeeRecordView(viewsets.ModelViewSet):
     serializer_class = FeeRecordSerializer
@@ -3802,7 +3802,7 @@ from authentication.models import UserStatusLog
 from authentication.serializers import UserSerializer
 
 @api_view(["POST"])
-# @permission_classes([RoleBasedUserManagementPermission])
+@permission_classes([RoleBasedUserManagementPermission])
 def deactivate_user(request):
     deactivate_user.api_section = "deactivate_user" 
     try:
@@ -3962,7 +3962,7 @@ def deactivate_user(request):
 from django.core.exceptions import ObjectDoesNotExist
 
 @api_view(["POST"])
-# @permission_classes([RoleBasedUserManagementPermission])
+@permission_classes([RoleBasedUserManagementPermission])
 def reactivate_user(request):
     reactivate_user.api_section = "reactivate_user" 
     try:
@@ -4970,7 +4970,7 @@ from collections import defaultdict
 class PersonalSocialQualityView(viewsets.ModelViewSet):
     queryset = PersonalSocialQuality.objects.all()
     serializer_class = PersonalSocialQualitySerializer
-    # permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
 
 class PersonalSocialGradeViewSet(viewsets.ModelViewSet):
     queryset = PersonalSocialQualityTermWise.objects.all()
@@ -5214,7 +5214,6 @@ from director.permission import RoleBasedPermission
 class ReportCardViewSet(viewsets.ModelViewSet):
     queryset = ReportCard.objects.all()
     serializer_class = ReportCardSerializer
-    permission_classes = [IsAuthenticated, RoleBasedPermission]
     permission_classes = [IsAuthenticated, RoleBasedPermission]
 
     def get_user_roles(self):
@@ -5781,7 +5780,7 @@ def get_current_school_year():
 class SchoolExpenseView(viewsets.ModelViewSet):
     queryset = SchoolExpense.objects.all()
     serializer_class = SchoolExpenseSerializer
-    # permission_classes = [IsAuthenticated, ExpensePermission]
+    permission_classes = [IsAuthenticated, ExpensePermission]
 
     # def get_queryset(self):
     #     current_year = get_current_school_year()
