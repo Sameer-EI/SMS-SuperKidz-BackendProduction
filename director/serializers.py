@@ -2464,7 +2464,7 @@ class DocumentSerializer(serializers.ModelSerializer):
         representation = super().to_representation(instance)
         document_types = instance.document_types.all()
         
-        identities_read = representation.pop("identities")
+        # identities_read = representation.pop("identities")
         
         # it shows the which type of document user have.
         representation['document_types_read'] = [
