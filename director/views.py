@@ -2045,7 +2045,6 @@ class FeeRecordView(viewsets.ModelViewSet):
             teacher_year_levels = user.teacher.teacheryearlevel_set.values_list("year_level_id", flat=True)
             qs = qs.filter(student__student_year_levels__level_id__in=teacher_year_levels)
         elif hasattr(user, "student"):
-            
             qs = qs.filter(student=user.student)
         elif hasattr(user, "guardian_relation"):
             children_ids = user.guardian_relation.studentguardian.values_list("student_id", flat=True)
@@ -2106,11 +2105,9 @@ class FeeRecordView(viewsets.ModelViewSet):
         """
         data = request.data.copy()
 
-   
         student_id = data.get('student_id')
         selected_fees = data.get('selected_fees', [])
         
-      
         fee_ids = []
         if selected_fees:
             for fee_data in selected_fees:
@@ -2147,7 +2144,7 @@ class FeeRecordView(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        #  FIX: Add year_level_fees to data
+        # FIX: Add year_level_fees to data
         data['year_level_fees'] = fee_ids
 
         # Validate data
@@ -2189,10 +2186,6 @@ class FeeRecordView(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-
-   # fees/views.py
-
-
     @action(detail=False, methods=["post"], url_path="confirm-payment")
     def confirm_payment(self, request):
         """
@@ -2220,22 +2213,17 @@ class FeeRecordView(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-    
         selected_fees_data = data.get("month")
         print(" SELECTED FEES DATA:", selected_fees_data)
 
-
         processed_fees_data = []
         
- 
         if isinstance(selected_fees_data, list):
             processed_fees_data = selected_fees_data
             print(" CASE 1: Already a list")
         
- 
         elif isinstance(selected_fees_data, str):
             try:
-       
                 cleaned_data = selected_fees_data.replace("'", '"').replace("None", "null")
                 processed_fees_data = json.loads(cleaned_data)
                 print(" CASE 2: Parsed from string")
@@ -2258,7 +2246,6 @@ class FeeRecordView(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-   
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
         try:
             client.utility.verify_payment_signature({
@@ -2273,7 +2260,6 @@ class FeeRecordView(viewsets.ModelViewSet):
             return Response({"error": f"Payment verification error: {str(e)}"}, 
                             status=status.HTTP_400_BAD_REQUEST)
 
-
         if FeeRecord.objects.filter(razorpay_payment_id=data["razorpay_payment_id"]).exists():
             existing_record = FeeRecord.objects.get(razorpay_payment_id=data["razorpay_payment_id"])
             return Response({
@@ -2281,20 +2267,17 @@ class FeeRecordView(viewsets.ModelViewSet):
                 "existing_record_id": existing_record.id
             }, status=status.HTTP_400_BAD_REQUEST)
 
-    
         try:
             total_paid_amount = Decimal(str(data["paid_amount"]))
         except (ValueError, TypeError):
             return Response({"error": "Invalid paid_amount format"}, 
                             status=status.HTTP_400_BAD_REQUEST)
 
-
         saved_records = []
         receipt_number = self.generate_receipt_number()
 
         try:
             student = Student.objects.get(id=data["student_id"])
-            
 
             total_payable = Decimal("0.00")
             fee_month_details = {}
@@ -2316,10 +2299,8 @@ class FeeRecordView(viewsets.ModelViewSet):
                 except (ValueError, TypeError, YearLevelFee.DoesNotExist):
                     continue
                 
-     
                 base_amount = fee.amount
                 
-     
                 try:
                     discount = FeeDiscount.objects.get(student=student, is_allowed=True)
                     total_discount = Decimal("0.00")
@@ -2332,24 +2313,24 @@ class FeeRecordView(viewsets.ModelViewSet):
                 except FeeDiscount.DoesNotExist:
                     discounted_amount = base_amount
                 
-   
-                today = date.today()
-                current_month = today.strftime('%B')
-                all_months = ['January', 'February', 'March', 'April', 'May', 'June', 
-                             'July', 'August', 'September', 'October', 'November', 'December']
+                # LATE FEE LOGIC COMMENTED OUT - ALWAYS SET TO 0
+                # today = date.today()
+                # current_month = today.strftime('%B')
+                # all_months = ['January', 'February', 'March', 'April', 'May', 'June', 
+                #              'July', 'August', 'September', 'October', 'November', 'December']
                 
-                current_month_index = all_months.index(current_month) if current_month in all_months else 0
-                record_month_index = all_months.index(month_name) if month_name in all_months else 0
+                # current_month_index = all_months.index(current_month) if current_month in all_months else 0
+                # record_month_index = all_months.index(month_name) if month_name in all_months else 0
                 
                 late_fee = Decimal("0.00")
-                if ("tuition fee" in fee.fee_type.name.lower() and 
-                    today.day > 15 and 
-                    record_month_index <= current_month_index):
-                    late_fee = Decimal("25.00")
+                # LATE FEE LOGIC COMMENTED OUT
+                # if ("tuition fee" in fee.fee_type.name.lower() and 
+                #     today.day > 15 and 
+                #     record_month_index <= current_month_index):
+                #     late_fee = Decimal("25.00")
                 
                 total_for_fee = discounted_amount + late_fee
                 
-    
                 existing_payments = FeeRecord.objects.filter(
                     student_id=data["student_id"],
                     month=month_name,
@@ -2375,7 +2356,6 @@ class FeeRecordView(viewsets.ModelViewSet):
             print(f" TOTAL PAYABLE FOR ALL SELECTED FEES: ₹{total_payable}")
             print(f" PAID AMOUNT: ₹{total_paid_amount}")
 
-        
             if total_payable > 0 and total_paid_amount > 0:
                 payment_distribution = {}
                 for key, item in fee_month_details.items():
@@ -2416,8 +2396,6 @@ class FeeRecordView(viewsets.ModelViewSet):
                         "razorpay_signature_id": data["razorpay_signature"],
                         "payment_status": payment_status
                     }
-
-                    # print(f" CREATING RECORD: {month_name} - {item['fee'].fee_type.name} - ₹{allocated_amount} - {payment_status}")
 
                     serializer = FeeRecordRazorpaySerializer(data=record_data)
                     if serializer.is_valid():
@@ -2486,7 +2464,6 @@ class FeeRecordView(viewsets.ModelViewSet):
                         f"Months: {', '.join(set(record.month for record in saved_records))}\n"
                         f"Thank you!"
                     )
-       
                 except Exception as e:
                     print(f"WhatsApp sending failed: {e}")
 
@@ -2581,11 +2558,13 @@ class FeeRecordView(viewsets.ModelViewSet):
                         )
                         total_paid = fee_payments.aggregate(Sum('paid_amount'))['paid_amount__sum'] or Decimal('0.00')
 
-                        month_index = all_months.index(month) if month in all_months else 0
+                        # LATE FEE LOGIC COMMENTED OUT - ALWAYS SET TO 0
+                        # month_index = all_months.index(month) if month in all_months else 0
                         late_fee = "0"
-                        if fee_type == "tuition fee":
-                            if month_index < current_month_index or (month_index == current_month_index and today.day > 15):
-                                late_fee = "25"
+                        # LATE FEE LOGIC COMMENTED OUT
+                        # if fee_type == "tuition fee":
+                        #     if month_index < current_month_index or (month_index == current_month_index and today.day > 15):
+                        #         late_fee = "25"
 
                         total_payable = base_amount + Decimal(late_fee)
                         if total_paid >= total_payable:
@@ -2608,14 +2587,11 @@ class FeeRecordView(viewsets.ModelViewSet):
 
         return Response(result)
 
-
-
     @action(detail=False, methods=['post'], url_path='submit-multi-month-fees')
     def submit_multi_month_fees(self, request):
         student_id = request.data.get('student_id')
         selected_fees = request.data.get('selected_fees', [])
         
-   
         paid_amount_str = request.data.get('paid_amount', "0.00")
         try:
             total_paid_amount = Decimal(str(paid_amount_str))
@@ -2626,7 +2602,6 @@ class FeeRecordView(viewsets.ModelViewSet):
         remarks = request.data.get('remarks')
         received_by = request.data.get('received_by')
 
-     
         admission = Admission.objects.filter(student_id=student_id).first()
         if admission and admission.is_rte and admission.rte_number:
             return Response(
@@ -2649,7 +2624,6 @@ class FeeRecordView(viewsets.ModelViewSet):
             if month and fee_id:
                 month_fee_groups[(month, fee_id)].append(fee_data)
 
-      
         all_months = [
             'January', 'February', 'March', 'April', 'May', 'June',
             'July', 'August', 'September', 'October', 'November', 'December'
@@ -2670,20 +2644,20 @@ class FeeRecordView(viewsets.ModelViewSet):
                 total_already_paid = existing_payments.aggregate(Sum('paid_amount'))['paid_amount__sum'] or Decimal('0.00')
                 base_amount = fee.amount
                 
-            
-                today = date.today()
-                current_month = today.strftime('%B')
-                current_month_index = all_months.index(current_month) if current_month in all_months else 0
-                month_index = all_months.index(month) if month in all_months else 0
+                # LATE FEE LOGIC COMMENTED OUT - ALWAYS SET TO 0
+                # today = date.today()
+                # current_month = today.strftime('%B')
+                # current_month_index = all_months.index(current_month) if current_month in all_months else 0
+                # month_index = all_months.index(month) if month in all_months else 0
 
                 late_fee = Decimal("0.00")
-                if fee_type == "tuition fee":
-                    if month_index < current_month_index:
-                        late_fee = Decimal("25.00")
-                    elif month_index == current_month_index and today.day > 15:
-                        late_fee = Decimal("25.00")
+                # LATE FEE LOGIC COMMENTED OUT
+                # if fee_type == "tuition fee":
+                #     if month_index < current_month_index:
+                #         late_fee = Decimal("25.00")
+                #     elif month_index == current_month_index and today.day > 15:
+                #         late_fee = Decimal("25.00")
                 
-              
                 total_payable = base_amount + late_fee
                 remaining_payable = max(total_payable - total_already_paid, Decimal('0.00'))
                 
@@ -2703,7 +2677,6 @@ class FeeRecordView(viewsets.ModelViewSet):
         if not fee_totals:
             return Response({"error": "No valid fees found."}, status=status.HTTP_400_BAD_REQUEST)
 
-   
         remaining_paid_amount = total_paid_amount
         payment_distribution = {}
         total_remaining = sum(item['remaining_payable'] for item in fee_totals.values())
@@ -2722,7 +2695,6 @@ class FeeRecordView(viewsets.ModelViewSet):
                 for key in fee_totals.keys():
                     payment_distribution[key] = equal_amount
 
-     
         total_allocated = Decimal("0.00")
         for (month, fee_id), allocated_amount in payment_distribution.items():
             if allocated_amount <= 0:
@@ -2749,7 +2721,6 @@ class FeeRecordView(viewsets.ModelViewSet):
             except (InvalidOperation, ValueError):
                 allocated_amount_decimal = Decimal("0.00")
 
-        
             serializer_data = {
                 "student_id": student_id,
                 "month": month,
@@ -2781,7 +2752,6 @@ class FeeRecordView(viewsets.ModelViewSet):
                     "month": month, "fee_id": fee_id, "errors": serializer.errors
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-   
         if saved_records:
             first_record = saved_records[0]
             total_amount = total_base_amount + total_late_fee
@@ -2809,7 +2779,6 @@ class FeeRecordView(viewsets.ModelViewSet):
             }
             print(" COMBINED RESPONSE:", combined_response)
 
-      
             try:
                 message_text = (
                     f"Dear {first_record.student.user.get_full_name()},\n"
@@ -2831,7 +2800,6 @@ class FeeRecordView(viewsets.ModelViewSet):
             return Response(combined_response, status=status.HTTP_200_OK)
         else:
             return Response({"error": "No fee records created."}, status=status.HTTP_400_BAD_REQUEST)
-
 
     # @action(detail=False, methods=['post'], url_path='submit-multi-month-fees')
     # def submit_multi_month_fees(self, request):

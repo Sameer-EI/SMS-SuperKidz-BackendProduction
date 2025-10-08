@@ -2013,7 +2013,6 @@ class RazorpayConfirmPaymentSerializer(serializers.Serializer):
     razorpay_payment_id = serializers.CharField()
     razorpay_signature_id = serializers.CharField()
 
-
 # ********************OfficeStaffSerializer profile*******************************
 # class OfficeStaffSerializer(serializers.ModelSerializer):
 #     first_name = serializers.CharField(max_length=100, write_only=True)
