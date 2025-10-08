@@ -613,10 +613,6 @@ class StudentMarks(models.Model):
 
 """------------------------------------------RESULT----------(code to push)--------------------------------"""
 class ReportCard(models.Model):
-    # student = models.ForeignKey(Student, on_delete=models.CASCADE)#student
-    # standard = models.ForeignKey(StudentYearLevel,on_delete=models.CASCADE,related_name="reportcards_as_standard")#as class is a reserved keyword i used 'standard' instead of 'class'
-    # academic_year = models.ForeignKey(StudentYearLevel, on_delete=models.CASCADE,related_name="reportcards_as_acadmic_year")
-    
     student_level = models.ForeignKey(StudentYearLevel, on_delete=models.CASCADE, null=True, blank=True)
     total_marks = models.IntegerField()    #fetch from sa1+sa2 of all subj
     max_marks = models.IntegerField()      #subj->len*100
@@ -630,9 +626,6 @@ class ReportCard(models.Model):
     supplementary_in = models.CharField(max_length=100, null=True, blank=True)
     school_reopen_date = models.DateField()
 
-    # class Meta:
-    #     unique_together = ('student_level','promoted_to_class')
-
     def __str__(self):
         student = self.student_level.student.user
         return f"{student.first_name} {student.last_name} - {self.student_level.year.year_name} - {self.student_level.level.level_name}"
@@ -644,9 +637,11 @@ class SubjectScore(models.Model):
     def __str__(self):
         return f"{self.marks_obtained} -{self.marks_obtained.subject.subject_name}- {self.report_card.student_level.year.year_name} - {self.report_card.student_level.level.level_name}"
     
+
 class ReportCardDocument(models.Model):
     report_card = models.ForeignKey(ReportCard, on_delete=models.CASCADE, related_name='documents')
     documents = models.ForeignKey(Document, on_delete=models.CASCADE,null=True, blank=True, related_name='report_card_documents')
+
 
 class NonScholasticGradeTermWise(models.Model):
     non_scholastic_subject = models.ForeignKey(Subject, on_delete=models.CASCADE,null=True, blank=True ,related_name='term_grades')

@@ -2448,7 +2448,7 @@ class DocumentSerializer(serializers.ModelSerializer):
         if Document.objects.exclude(id=doc_id).filter(identities=value).exists():
             raise serializers.ValidationError("This identity is already registered.")
         return value
-
+    
     def create(self, validated_data):
         document_types = validated_data.pop('document_types', [])
         instance = super().create(validated_data)
@@ -2464,7 +2464,7 @@ class DocumentSerializer(serializers.ModelSerializer):
         representation = super().to_representation(instance)
         document_types = instance.document_types.all()
         
-        identities_read = representation.pop("identities")
+        # identities_read = representation.pop("identities")
         
         # it shows the which type of document user have.
         representation['document_types_read'] = [
@@ -2508,6 +2508,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             rep["user"] = "This user doesn't exist..!"
         
         return rep
+
 # --------------------exam module
 class ExamPaperItemSerializer(serializers.Serializer):
     subject_id = serializers.IntegerField()
