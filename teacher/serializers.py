@@ -191,7 +191,7 @@ class TeacherYearLevelSerializer(serializers.ModelSerializer):
         year_level = data.get('year_level')
         instance = self.instance  # None if create, else update
 
-        # 🔹 Check if this teacher already has any year_level assigned
+        # Check if this teacher already has any year_level assigned
         qs = TeacherYearLevel.objects.filter(teacher=teacher)
         if instance:
             qs = qs.exclude(pk=instance.pk)  # exclude current record if updating
@@ -201,6 +201,18 @@ class TeacherYearLevelSerializer(serializers.ModelSerializer):
             teacher_name = f"{teacher.user.get_full_name()}" if teacher and hasattr(teacher, 'user') else str(teacher)
             raise serializers.ValidationError({
                 'teacher': f"Teacher {teacher_name} is already assigned to '{assigned_year_level}'. Cannot assign another class."
+            })
+
+        # Check if this year_level is already assigned to another teacher
+        qs_year_level = TeacherYearLevel.objects.filter(year_level=year_level)
+        if instance:
+            qs_year_level = qs_year_level.exclude(pk=instance.pk)
+
+        if qs_year_level.exists():
+            assigned_teacher = qs_year_level.first().teacher
+            teacher_name = f"{assigned_teacher.user.get_full_name()}" if assigned_teacher and hasattr(assigned_teacher, 'user') else str(assigned_teacher)
+            raise serializers.ValidationError({
+                'year_level': f"'{year_level}' is already assigned to teacher '{teacher_name}'. Cannot assign to another teacher."
             })
 
         return data

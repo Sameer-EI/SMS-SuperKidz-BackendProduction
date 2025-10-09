@@ -53,7 +53,8 @@ class StudentSerializer(serializers.ModelSerializer):
     height = serializers.FloatField(required=False, allow_null=True)
     weight = serializers.FloatField(required=False, allow_null=True)
     blood_group = serializers.CharField(required=False, allow_null=True)
-    number_of_siblings = serializers.IntegerField(required=False, allow_null=True)
+    number_of_siblings = serializers.IntegerField(required=False,allow_null=True,min_value=0,max_value=15,
+                                                  error_messages={"max_value": "Max 15 siblings allowed","invalid": "Enter a valid number."})
     roll_number = serializers.CharField(required=False, allow_null=True) 
     contact_number = serializers.CharField(
         required=False,

@@ -1830,6 +1830,77 @@ class FileView(viewsets.ModelViewSet):
 from django.db import transaction
 
 
+# class DocumentView(viewsets.ModelViewSet):
+#     queryset = Document.objects.prefetch_related('files', 'document_types')
+#     serializer_class = DocumentSerializer
+
+#     @transaction.atomic
+#     def create(self, request, *args, **kwargs):
+#         # Validate files
+#         files = request.FILES.getlist('files')
+#         if not files:
+#             return Response({"error": "Files required"}, status=status.HTTP_400_BAD_REQUEST)
+
+#         # Get and validate document types
+#         doc_types = request.data.getlist('document_types', []) or [request.data.get('document_types')]
+#         doc_types = [dt for dt in doc_types if dt and str(dt).isdigit()]
+#         if not doc_types:
+#             return Response({"error": "Valid document types required"}, status=status.HTTP_400_BAD_REQUEST)
+
+#         # Handle identities - accept both single value and array
+#         identities = request.data.getlist('identities', []) or [request.data.get('identities')]
+#         identities = [i for i in identities if i]  # Remove empty values
+#         identities_str = ", ".join(identities) if identities else None
+
+#         # Prepare data with null handling
+#         data = {
+#             'document_types': doc_types,
+#             'identities': identities_str,  # Store all identities as comma-separated string
+#             **{f: int(request.data[f]) if request.data.get(f) and str(request.data[f]).isdigit() else None 
+#                for f in ['student', 'teacher', 'guardian', 'office_staff']}
+#         }
+
+#         # Find existing document
+#         existing = self._find_existing_document(data)
+        
+#         # Create or update document
+#         if existing:
+#             # Delete old files first, so new ones replace them
+#             existing.files.all().delete()
+#             serializer = self.get_serializer(existing, data=data, partial=True)
+#             action = 'replaced'
+#         else:
+#             serializer = self.get_serializer(data=data)
+#             action = 'created'
+
+#         serializer.is_valid(raise_exception=True)
+#         doc = serializer.save()
+
+#         # Save all uploaded files
+#         for file in files:
+#             File.objects.create(document=doc, file=file)
+
+#         return Response({
+#             'status': action,
+#             'document': self.get_serializer(doc, context={'request': request}).data
+#         }, status=status.HTTP_201_CREATED)
+
+#     def _find_existing_document(self, data):
+#         """Helper method to find existing document matching criteria"""
+#         filter_params = {
+#             **{f: data.get(f) for f in ['student', 'teacher', 'guardian', 'office_staff'] 
+#                if data.get(f) is not None}
+#         }
+        
+#         # If identities exist in data, include them in filter
+#         if data.get('identities'):
+#             filter_params['identities'] = data['identities']
+        
+#         for doc in Document.objects.filter(**filter_params).prefetch_related('document_types'):
+#             if set(doc.document_types.values_list('id', flat=True)) == set(map(int, data['document_types'])):
+#                 return doc
+#         return None
+
 class DocumentView(viewsets.ModelViewSet):
     queryset = Document.objects.prefetch_related('files', 'document_types')
     serializer_class = DocumentSerializer
@@ -1862,42 +1933,55 @@ class DocumentView(viewsets.ModelViewSet):
 
         # Find existing document
         existing = self._find_existing_document(data)
-        
-        # Create or update document
-        if existing:
-            serializer = self.get_serializer(existing, data=data, partial=True)
-            existing.files.all().delete()
-            action = 'replaced'
-        else:
-            serializer = self.get_serializer(data=data)
-            action = 'created'
 
+        # Create or update document
+        # --- CASE 1: Existing doc found → replace files only ---
+        if existing:
+            #  Restrict changing identity if document already exists
+            if identities_str and identities_str != existing.identities:
+                return Response({
+                    "error": "You can't modify the identity of an existing document."
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Delete old files → replace with new
+            existing.files.all().delete()
+            for file in files:
+                File.objects.create(document=existing, file=file)
+
+            return Response({
+                "status": "replaced",
+                "document": self.get_serializer(existing, context={'request': request}).data
+            }, status=status.HTTP_200_OK)
+
+        # --- CASE 2: No existing doc → create new one ---
+        serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
         doc = serializer.save()
 
-        # Save all uploaded files
         for file in files:
             File.objects.create(document=doc, file=file)
 
         return Response({
-            'status': action,
-            'document': self.get_serializer(doc, context={'request': request}).data
+            "status": "created",
+            "document": self.get_serializer(doc, context={'request': request}).data
         }, status=status.HTTP_201_CREATED)
 
     def _find_existing_document(self, data):
-        """Helper method to find existing document matching criteria"""
+        """Find existing document for same user + document type"""
         filter_params = {
-            **{f: data.get(f) for f in ['student', 'teacher', 'guardian', 'office_staff'] 
-               if data.get(f) is not None}
+            f: data.get(f)
+            for f in ['student', 'teacher', 'guardian', 'office_staff']
+            if data.get(f) is not None
         }
-        
-        # If identities exist in data, include them in filter
-        if data.get('identities'):
-            filter_params['identities'] = data['identities']
-        
-        for doc in Document.objects.filter(**filter_params).prefetch_related('document_types'):
-            if set(doc.document_types.values_list('id', flat=True)) == set(map(int, data['document_types'])):
+
+        existing_docs = Document.objects.filter(**filter_params).prefetch_related('document_types')
+
+        for doc in existing_docs:
+            existing_types = set(doc.document_types.values_list('id', flat=True))
+            incoming_types = set(map(int, data['document_types']))
+            if existing_types & incoming_types:  # intersection found
                 return doc
+
         return None
 
 
@@ -2016,7 +2100,7 @@ def send_whatsapp_message(message_text):
 class FeeDiscountView(viewsets.ModelViewSet):
     queryset = FeeDiscount.objects.all()
     serializer_class = FeeDiscountSerializer
-    # permission_classes = [IsAuthenticated,IsDirector]
+    permission_classes = [IsAuthenticated,IsDirector]
 
 class FeeRecordView(viewsets.ModelViewSet):
     serializer_class = FeeRecordSerializer
@@ -3686,7 +3770,7 @@ from authentication.models import UserStatusLog
 from authentication.serializers import UserSerializer
 
 @api_view(["POST"])
-# @permission_classes([RoleBasedUserManagementPermission])
+@permission_classes([RoleBasedUserManagementPermission])
 def deactivate_user(request):
     deactivate_user.api_section = "deactivate_user" 
     try:
@@ -3846,7 +3930,7 @@ def deactivate_user(request):
 from django.core.exceptions import ObjectDoesNotExist
 
 @api_view(["POST"])
-# @permission_classes([RoleBasedUserManagementPermission])
+@permission_classes([RoleBasedUserManagementPermission])
 def reactivate_user(request):
     reactivate_user.api_section = "reactivate_user" 
     try:
@@ -4854,7 +4938,7 @@ from collections import defaultdict
 class PersonalSocialQualityView(viewsets.ModelViewSet):
     queryset = PersonalSocialQuality.objects.all()
     serializer_class = PersonalSocialQualitySerializer
-    # permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
+    permission_classes = [IsAuthenticated,IsDirectororOfficeStaff]
 
 class PersonalSocialGradeViewSet(viewsets.ModelViewSet):
     queryset = PersonalSocialQualityTermWise.objects.all()
@@ -5099,7 +5183,6 @@ class ReportCardViewSet(viewsets.ModelViewSet):
     queryset = ReportCard.objects.all()
     serializer_class = ReportCardSerializer
     permission_classes = [IsAuthenticated, RoleBasedPermission]
-    permission_classes = [IsAuthenticated, RoleBasedPermission]
 
     def get_user_roles(self):
         user = self.request.user
@@ -5216,27 +5299,33 @@ class ReportCardViewSet(viewsets.ModelViewSet):
     def get_subject_score(self, report_card):
         from collections import defaultdict
 
+        # Step 1: Get the StudentYearLevel linked to the report card
+        student_level = report_card.student_level  # THIS is a StudentYearLevel instance
+
+        # Step 2: Fetch all marks linked to that student_level
+        marks_qs = StudentMarks.objects.select_related(
+            "exam_type", "subject", "term", "student"
+        ).filter(student=student_level)  # must pass StudentYearLevel instance
+
+        if not marks_qs.exists():
+            return []
+
+        # Step 3: Group marks by exam type and subject
         temp = defaultdict(dict)
+        for mark in marks_qs:
+            exam_type = mark.exam_type.name.lower()
+            subject = mark.subject.subject_name
+            temp[exam_type][subject] = float(mark.marks_obtained or 0)
 
-        for score in report_card.subject_scores.select_related(
-            "marks_obtained__student",
-            "marks_obtained__subject",
-            "marks_obtained__exam_type"
-        ).all():
-            mark = score.marks_obtained
-            if mark and mark.subject and mark.exam_type:
-                exam_type = mark.exam_type.name.lower()  # normalize to lowercase
-                subject = mark.subject.subject_name
-                temp[exam_type][subject] = float(mark.marks_obtained or 0)
-
-        examwise_subjects = []
+        # Step 4: Compute totals + grades
+        examwise_summary = []
         for exam_type, subjects in temp.items():
             subject_count = len(subjects)
-            is_fa = exam_type.startswith("fa")  # check if it's FA
-            max_per_subject = 10 if is_fa else 100  # apply correct max marks
-            total = sum(subjects.values())
-            max_marks = subject_count * max_per_subject
-            percentage = round((total / max_marks) * 100, 2) if max_marks else 0
+            is_fa = exam_type.startswith("fa")  # FA1/FA2 -> 10 marks per subject
+            max_per_subject = 10 if is_fa else 100
+            total_obtained = sum(subjects.values())
+            total_possible = subject_count * max_per_subject
+            percentage = round((total_obtained / total_possible) * 100, 2) if total_possible else 0
 
             #  Add grading logic
             if percentage >= 90:
@@ -5252,17 +5341,17 @@ class ReportCardViewSet(viewsets.ModelViewSet):
             else:
                 grade = "F"
 
-            #  Append full exam summary
-            examwise_subjects.append({
-                "exam_type": exam_type,
+            examwise_summary.append({
+                "exam_type": exam_type.upper(),
                 "subjects": subjects,
-                "total": total,
-                "max_marks": max_marks,
+                "total_obtained": total_obtained,
+                "total_possible": total_possible,
                 "percentage": percentage,
                 "grade": grade
             })
 
-        return examwise_subjects
+        return examwise_summary
+
 
     def sync_subject_scores(self, report_card):
         terms = Term.objects.filter(year=report_card.student_level.year)
@@ -5659,7 +5748,7 @@ def get_current_school_year():
 class SchoolExpenseView(viewsets.ModelViewSet):
     queryset = SchoolExpense.objects.all()
     serializer_class = SchoolExpenseSerializer
-    # permission_classes = [IsAuthenticated, ExpensePermission]
+    permission_classes = [IsAuthenticated, ExpensePermission]
 
     # def get_queryset(self):
     #     current_year = get_current_school_year()
