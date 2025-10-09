@@ -4,8 +4,9 @@ from rest_framework.decorators import api_view
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.response import Response
 
-
-from director.models import Address, Role, YearLevel
+from director.models import *
+from director.models import Address, Admission, BankingDetail, Role, YearLevel
+from director.serializers import BankingDetailsSerializer
 
 from .models import GuardianType, Student, StudentYearLevel, StudentGuardian
 from .serializers import GuardianTypeSerializer, StudentSerializer, StudentYearLevelSerializer
@@ -245,10 +246,85 @@ class StudentView(ModelViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+    @action(detail=False, methods=['get'], url_path='student_details')
+    def get_student_details(self, request):
+        student_id = request.query_params.get('student_id')
 
+        # If specific student id is given
+        if student_id:
+            student = Student.objects.filter(id=student_id).first()
+            if not student:
+                return Response({"error": "Student not found"}, status=status.HTTP_404_NOT_FOUND)
+            students = [student]
+        else:
+            students = Student.objects.all()
 
+        data = []
+        for student in students:
+            user = getattr(student, 'user', None)
+            address_obj = Address.objects.filter(user=user).first()
+            full_address = (
+                f"{address_obj.house_no}, {address_obj.address_line}, {address_obj.city.name}, "
+                f"{address_obj.state.name}, {address_obj.country.name}, Area Code: {address_obj.area_code}"
+                if address_obj else "N/A"
+            )
 
+            admission = Admission.objects.filter(student=student).first()
+            guardian_name = (
+                admission.guardian.user.get_full_name() if admission and admission.guardian else "N/A"
+            )
+            
+            def get_banking_detail(self,student):
+                banking = BankingDetail.objects.filter(user=user).first()
+                return BankingDetailsSerializer(banking).data if banking else None
 
+            def get_adhaar_no(self, student):
+                doc= Document.objects.filter(student=student, document_types__name__iexact="aadhaar").first()
+                return doc.identities if doc else "N/A"
+            
+            def annual_income(self, student):
+                guardian = Guardian.objects.filter(studentguardian__student=student).first()
+                return guardian.annual_income if guardian else "N/A"
+            
+            def get_school_year(self, admission):
+                if not admission or not admission.student:
+                    return "N/A"
+
+                student_year = StudentYearLevel.objects.filter(student=admission.student).first()
+                return student_year.year.year_name if student_year and student_year.year else "N/A"
+
+            data.append({
+                "student_id": student.id,
+                "student_name": f"{user.first_name} {user.last_name}" if user else "N/A",
+                "age": self.calculate_age(student.date_of_birth) if student.date_of_birth else "N/A",
+                "gender": student.gender or "N/A",
+                "contact_number": student.contact_number or "N/A",
+                "email": user.email or "N/A",
+                "date_of_birth": student.date_of_birth or "N/A",
+                "religion": student.religion or "N/A",
+                "father_name": student.father_name or "N/A",
+                "mother_name": student.mother_name or "N/A",
+                "guardian_name": guardian_name,
+                "full_address": full_address,
+                "class": admission.year_level.level_name if admission and admission.year_level else "N/A",
+                "adhaar number":get_adhaar_no(self, student) or "N/A",
+                "scholar number": student.scholar_number or "N/A",
+                "enrollment_no": getattr(admission, "enrollment_no", "N/A"),
+                "bank details": get_banking_detail(self, student) or "N/A",
+                "no. of siblings": getattr(student, "number_of_siblings", "N/A"),
+                "annual income": annual_income(self, student) or "N/A",
+                "guardian's contact no.":  admission.guardian.phone_no if admission and admission.guardian else "N/A",
+                "is_active": student.is_active,
+                "is_rte": admission.is_rte if admission else "N/A",
+                "rte number": admission.rte_number if admission else "N/A",
+                "school year": get_school_year(self, admission) or "N/A",
+                "category": getattr(student, "category", "N/A")
+            })
+
+        # If a single student was requested, return one dict; else a list
+        if student_id:
+            return Response(data[0], status=status.HTTP_200_OK)
+        return Response(data, status=status.HTTP_200_OK)
 
 
 
