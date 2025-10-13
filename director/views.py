@@ -3284,7 +3284,8 @@ class FeeRecordView(viewsets.ModelViewSet):
                 "school_year__year__year_name",
                 "student__user__first_name",
                 "student__user__last_name",
-                "student__student_year_levels__level__level_name"
+                "student__student_year_levels__level__level_name",
+                "student__scholar_number"
             )
             .annotate(
                 total_amount=Coalesce(Sum("total_amount", output_field=FloatField()), Value(0.0)),
@@ -3297,7 +3298,6 @@ class FeeRecordView(viewsets.ModelViewSet):
         for item in summary:
             total = item["total_amount"] #+ item["late_fee"]#is se do baar late fee add ho rahi he
             due = max(0, total - item["paid_amount"])
-            
             formatted_summary.append({
                 "month": item["month"],
                 "school_year": item["school_year__year__year_name"] or "N/A",
@@ -3306,7 +3306,8 @@ class FeeRecordView(viewsets.ModelViewSet):
                 "total_amount": float(total),
                 "paid_amount": float(item["paid_amount"]),
                 "due_amount": float(due),
-                "late_fee": float(item["late_fee"])  #  now included
+                "late_fee": float(item["late_fee"]),  #  now included
+                "scholar_number":item["student__scholar_number"], 
             })
 
         return Response(formatted_summary, status=status.HTTP_200_OK)
