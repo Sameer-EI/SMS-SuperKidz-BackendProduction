@@ -3204,6 +3204,7 @@ class SchoolExpenseSerializer(serializers.ModelSerializer):
     # razorpay_order_id = serializers.CharField(read_only=True)
     # razorpay_signature = serializers.CharField(read_only=True)
     attachment_url = serializers.SerializerMethodField()
+    created_at = serializers.SerializerMethodField()
 
     class Meta:
         model = SchoolExpense
@@ -3236,6 +3237,9 @@ class SchoolExpenseSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(obj.attachment.url)
             # fallback agar request nahi mila
             return obj.attachment.url
+    
+    def get_created_at(self, obj):
+        return timezone.localtime(obj.created_at).strftime("%d-%m-%Y %I:%M %p")
 
     def validate_attachment(self, value):
         if not value:
@@ -3636,6 +3640,7 @@ class SchoolIncomeSerializer(serializers.ModelSerializer):
     creator = serializers.SerializerMethodField()
     school_year_value = serializers.SerializerMethodField()
     attachment = serializers.SerializerMethodField()
+    created_at = serializers.SerializerMethodField()
 
     class Meta:
         model = SchoolIncome
@@ -3657,6 +3662,10 @@ class SchoolIncomeSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(obj.attachment.url)
             # fallback agar request nahi mila
             return obj.attachment.url
+
+    
+    def get_created_at(self, obj):
+        return timezone.localtime(obj.created_at).strftime("%d-%m-%Y %I:%M %p")
 
     def validate_attachment(self, value):
         if not value:
@@ -3690,15 +3699,19 @@ class SchoolIncomeSerializer(serializers.ModelSerializer):
         # Ensure amount is positive (skip for Monthly Fees, it gets auto-set later)
         if category and category.name != "Monthly Fees":
             if data.get("amount", 0) <= 0:
-                raise serializers.ValidationError({
-                    "amount": "Amount must be a positive number."
-                })
+                raise serializers.ValidationError(
+                    "Amount must be a positive number."
+                )
 
         # Ensure income date is not in the future
         if income_date and income_date > date.today():
-            raise serializers.ValidationError({
-                "income_date": "Income date cannot be in the future."
-            })
+            raise serializers.ValidationError(
+                "Income date cannot be in the future.")
+
+        #Ensure income date should be of current year
+        if income_date and income_date < date(date.today().year, 1, 1):
+            raise serializers.ValidationError(
+                "Income date should be of current year.")
 
         # Ensure one category per month per school_year
         if category and month and school_year:
