@@ -3650,7 +3650,7 @@ class SchoolIncomeSerializer(serializers.ModelSerializer):
     def get_school_year_value(self, obj):
         return obj.school_year.year_name if obj.school_year else None
 
-    def get_attachment_url(self, obj):
+    def get_attachment(self, obj):
         request = self.context.get("request")
         if obj.attachment:
             if request:
