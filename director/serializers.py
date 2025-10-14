@@ -3631,12 +3631,11 @@ class IncomeCategorySerializer(serializers.ModelSerializer):
         model = IncomeCategory
         fields = "__all__"
 
-from director.utils import AbsoluteURLFileField
 class SchoolIncomeSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     creator = serializers.SerializerMethodField()
     school_year_value = serializers.SerializerMethodField()
-    attachment = AbsoluteURLFileField(required=False, allow_null=True)
+    attachment = serializers.SerializerMethodField()
 
     class Meta:
         model = SchoolIncome
@@ -3650,6 +3649,14 @@ class SchoolIncomeSerializer(serializers.ModelSerializer):
 
     def get_school_year_value(self, obj):
         return obj.school_year.year_name if obj.school_year else None
+
+    def get_attachment_url(self, obj):
+        request = self.context.get("request")
+        if obj.attachment:
+            if request:
+                return request.build_absolute_uri(obj.attachment.url)
+            # fallback agar request nahi mila
+            return obj.attachment.url
 
     def validate_attachment(self, value):
         if not value:
