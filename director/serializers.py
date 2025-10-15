@@ -3400,28 +3400,16 @@ class EmployeeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Employee
         # fields = "__all__"
-        fields = ["id", "user", "name", "role", "joining_date", "base_salary"]
+        fields = ["id", "user", "name", "role", "base_salary"]
         read_only_fields = ["user"]  
+
     def get_role(self, obj):
         return [role.name for role in obj.user.role.all()]
 
-    def validate(self, data):
-        if data.get('base_salary', 0) <= 0:
-            raise serializers.ValidationError({"base_salary": "Amount must be a positive number."})
-        
-        # Joining date check
-        joining_date = data.get("joining_date")
-        today = date.today()
-        two_months_ago = today - relativedelta(months=2)  # This will take the date of last 2 months
-
-        if joining_date > today:
-            raise serializers.ValidationError({"joining_date": "Future date is not allowed."})
-        if joining_date < two_months_ago:
-            raise serializers.ValidationError({"joining_date": "Joining date cannot be older than 2 months."})
-
-
-
-        return data
+    def validate_base_salary(self, value):
+        if not (1000 <= value <= 100000):
+            raise serializers.ValidationError('Base salary must be between 1,000 and 100,000.')
+        return value
 
 
 class EmployeeSalarySerializer(serializers.ModelSerializer):
@@ -3639,13 +3627,13 @@ class SchoolIncomeSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     creator = serializers.SerializerMethodField()
     school_year_value = serializers.SerializerMethodField()
-    attachment = serializers.SerializerMethodField()
+    attachment_url = serializers.SerializerMethodField()
     created_at = serializers.SerializerMethodField()
 
     class Meta:
         model = SchoolIncome
         fields = "__all__"
-        read_only_fields = ["created_at", "creator","school_year_value"]
+        read_only_fields = ["created_at", "creator","school_year_value","attachment_url"]
 
     def get_creator(self, obj):
         if obj.created_by:
@@ -3655,7 +3643,7 @@ class SchoolIncomeSerializer(serializers.ModelSerializer):
     def get_school_year_value(self, obj):
         return obj.school_year.year_name if obj.school_year else None
 
-    def get_attachment(self, obj):
+    def get_attachment_url(self, obj):
         request = self.context.get("request")
         if obj.attachment:
             if request:

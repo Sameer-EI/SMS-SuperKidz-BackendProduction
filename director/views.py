@@ -6021,6 +6021,9 @@ class EmployeeView(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["post"], url_path="create_emp")
     def create_emp(self, request):
+        serializer = self.get_serializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+
         user_id = request.data.get("user")
         if not user_id:
             return Response({"error": "user is required."}, status=400)
@@ -6042,8 +6045,8 @@ class EmployeeView(viewsets.ModelViewSet):
 
         employee = Employee.objects.create(
             user=user,
-            joining_date=request.data.get("joining_date"),
-            base_salary=request.data.get("base_salary"),
+            # joining_date=request.data.get("joining_date"),
+            base_salary=serializer.validated_data["base_salary"],
         )
 
         serializer = self.get_serializer(employee)

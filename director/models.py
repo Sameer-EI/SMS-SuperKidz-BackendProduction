@@ -715,7 +715,6 @@ class SchoolExpense(models.Model):
     
 class Employee(models.Model):
     user = models.OneToOneField("authentication.User", on_delete=models.CASCADE)
-    joining_date = models.DateField()
     base_salary = models.DecimalField(max_digits=10, decimal_places=2)
 
     def __str__(self):
