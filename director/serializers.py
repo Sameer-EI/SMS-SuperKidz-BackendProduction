@@ -3395,9 +3395,7 @@ class EmployeeSalarySerializer(serializers.ModelSerializer):
 
         return attrs
     def validate_created_at(self, value):
-        """
-        Agar user sirf date bhejta hai (YYYY-MM-DD), to time set karke datetime banaye.
-        """
+        
         if isinstance(value, str) and len(value) == 10:  # YYYY-MM-DD
             value = datetime.strptime(value, "%Y-%m-%d")
         return value
