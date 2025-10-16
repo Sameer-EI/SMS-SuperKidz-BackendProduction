@@ -4373,11 +4373,11 @@ class ExamPaperView(viewsets.ModelViewSet):
             except ValueError:
                 return Response({"error": "Invalid year_level value."}, status=400)
 
-            if class_name not in assigned_class_ids:
-                return Response({"error": "You can only create papers for your assigned classes."}, status=403)
+            # if class_name not in assigned_class_ids:
+            #     return Response("You can only create papers for your assigned classes.", status=403)
         
         else:
-            return Response({"error": "You do not have permission to create exam papers."}, status=403)
+            return Response("You do not have permission to create exam papers.", status=403)
 
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
@@ -6026,12 +6026,12 @@ class EmployeeView(viewsets.ModelViewSet):
 
         user_id = request.data.get("user")
         if not user_id:
-            return Response({"error": "user is required."}, status=400)
+            return Response({"error": "Employee is required."}, status=400)
 
         try:
             user = User.objects.get(id=user_id)
         except User.DoesNotExist:
-            return Response({"error": "Invalid user id."}, status=400)
+            return Response({"error": "Invalid employee id."}, status=400)
 
         roles = [r.name.lower() for r in user.role.all()]
         if not any(r in ["teacher", "office staff"] for r in roles):
@@ -6041,7 +6041,7 @@ class EmployeeView(viewsets.ModelViewSet):
             )
 
         if Employee.objects.filter(user=user).exists():
-            return Response({"error": "Employee already exists."}, status=400)
+            return Response(f"Salary is already created for {user.first_name} {user.last_name}".strip(), status=400)
 
         employee = Employee.objects.create(
             user=user,

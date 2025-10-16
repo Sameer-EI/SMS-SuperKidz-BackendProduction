@@ -57,7 +57,7 @@ class MultipleAttendanceViewSet1(ModelViewSet):
         # ==================================================================
         
         # Validate teacher
-        teacher_id = data.get("teacher_id")
+        teacher_id = data.get("teacher")
         if not teacher_id:
             return Response({"error": "teacher id is required."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -67,7 +67,7 @@ class MultipleAttendanceViewSet1(ModelViewSet):
             return Response({"error": "Invalid teacher id."}, status=status.HTTP_404_NOT_FOUND)
 
         # Validate year level
-        year_level_id = data.get("year_level_id")
+        year_level_id = data.get("year_level")
         if not year_level_id:
             return Response({"error": "year level id is required."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -107,7 +107,7 @@ class MultipleAttendanceViewSet1(ModelViewSet):
 
         if already_marked_ids:
             return Response({
-                "error": "Attendance for one or more students already exists on this date.",
+                "error": "Attendance already marked for this day.",
                 "student_ids": list(already_marked_ids)
             }, status=status.HTTP_400_BAD_REQUEST)
 

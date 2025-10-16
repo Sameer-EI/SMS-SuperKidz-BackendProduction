@@ -605,7 +605,7 @@ class StudentMarks(models.Model):
         unique_together = ['student', 'exam_type', 'term','subject']
 
     def __str__(self):
-        return f"{self.student} - {self.exam_type.name} - {self.marks_obtained}"
+        return f"{self.student} - {self.exam_type.name} - {self.subject.subject_name}"
 
 
 
