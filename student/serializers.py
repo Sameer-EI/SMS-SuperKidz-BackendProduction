@@ -316,28 +316,31 @@ class GuardianSerializer(serializers.ModelSerializer):
 
 ## As of 29May25 at 02:30 PM
 class StudentYearLevelSerializer(serializers.ModelSerializer):
-    student_name = serializers.SerializerMethodField(read_only=True)
+    # student_name = serializers.SerializerMethodField(read_only=True)
+    student_name = serializers.CharField(source='student.user.get_full_name', read_only=True)
     level_name = serializers.CharField(source='level.level_name', read_only=True)
     year_name = serializers.CharField(source='year.year_name', read_only=True)
     student_id = serializers.IntegerField(source='student.id', read_only=True)  # added as of 24June25 at 04:13 PM
-    student_email = serializers.SerializerMethodField(read_only=True)  # Added email as of 26June25 at 02:07 PM
+    #student_email = serializers.SerializerMethodField(read_only=True)  # Added email as of 26June25 at 02:07 PM
+    student_email = serializers.CharField(source='student.user.email', read_only=True)
+    scholar_number = serializers.CharField(source='student.scholar_number', read_only=True) # added as of 14Oct25
 
     class Meta:
         model = StudentYearLevel
-        fields = ['id', 'student', 'level', 'year','student_id', 'student_name','student_email', 'level_name', 'year_name']
+        fields = ['id', 'student', 'level', 'year','student_id', 'student_name','student_email','scholar_number', 'level_name', 'year_name']
         extra_kwargs = {
             'student': {'write_only': True},
             'level': {'write_only': True},
             'year': {'write_only': True},
         }
 
-    def get_student_name(self, obj):
-        first_name = obj.student.user.first_name or ''
-        last_name = obj.student.user.last_name or ''
-        return f"{first_name} {last_name}".strip()
+    # def get_student_name(self, obj):
+    #     first_name = obj.student.user.first_name or ''
+    #     last_name = obj.student.user.last_name or ''
+    #     return f"{first_name} {last_name}".strip()
     
-    def get_student_email(self, obj):           #  Added email as of 26June25 at 02:07 PM
-        return obj.student.user.email if obj.student and obj.student.user else ''
+    # def get_student_email(self, obj):           #  Added email as of 26June25 at 02:07 PM
+    #     return obj.student.user.email if obj.student and obj.student.user else ''
 
 
 

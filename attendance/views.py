@@ -107,7 +107,7 @@ class MultipleAttendanceViewSet1(ModelViewSet):
 
         if already_marked_ids:
             return Response({
-                "error": "Attendance for one or more students already exists on this date.",
+                "error": "Attendance already marked for this date.",
                 "student_ids": list(already_marked_ids)
             }, status=status.HTTP_400_BAD_REQUEST)
 
