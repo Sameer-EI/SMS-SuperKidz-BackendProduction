@@ -47,5 +47,6 @@ admin.site.register(
         EmployeeSalary,
         Employee,
         SchoolTurnOver,
+        Payment,
     ]
 )

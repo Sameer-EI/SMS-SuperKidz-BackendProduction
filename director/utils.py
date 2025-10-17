@@ -280,6 +280,7 @@ def calculate_subject_summary(subjects_data):
 
 
 # ---------------------  Income and Expense 
+
 def income_attachments(instance, filename):
     category_name = instance.category.name.replace(" ", "_").lower()
     return os.path.join(
@@ -288,6 +289,7 @@ def income_attachments(instance, filename):
         str(datetime.now().month).zfill(2),       
         f"{category_name}_{filename}"  
         )
+
 
 def expense_attachments(instance, filename):
     category_name = instance.category.name.replace(" ", "_").lower()

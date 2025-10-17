@@ -4,8 +4,8 @@ from authentication . models import User
 from director . models import Role
 from django.db import IntegrityError
 from django.core.exceptions import MultipleObjectsReturned
-from director.models import YearLevel , Subject
-from director.serializers import ClassPeriodSerializer , subjectSerializer, YearLevelSerializer
+from director.models import *    #YearLevel , Subject
+from director.serializers import *  # ClassPeriodSerializer , subjectSerializer, YearLevelSerializer
 from django.core.validators import RegexValidator
 
 
@@ -17,100 +17,158 @@ from django.core.validators import RegexValidator
 class TeacherSerializer(serializers.ModelSerializer):
     # User-related fields (write_only)
     first_name = serializers.CharField(max_length=250, write_only=True)
-    middle_name = serializers.CharField(max_length=250, write_only=True, required=False, allow_blank=True)
+    middle_name = serializers.CharField(
+        max_length=250, write_only=True, required=False, allow_blank=True
+    )
     last_name = serializers.CharField(max_length=250, write_only=True)
     password = serializers.CharField(max_length=250, write_only=True, required=False)
     email = serializers.EmailField(max_length=250, write_only=True)
-    user_profile = serializers.ImageField(required=False, allow_null=True, write_only=True)
+    user_profile = serializers.ImageField(
+        required=False, allow_null=True, write_only=True
+    )
 
     # Teacher model explicit fields
     # phone_no = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True)
     # gender = serializers.CharField(max_length=50, required=False, allow_blank=True, allow_null=True)
     # adhaar_no = serializers.IntegerField(required=False, allow_null=True)
     # pan_no = serializers.CharField(max_length=50, required=False, allow_blank=True, allow_null=True)
-    qualification = serializers.CharField(max_length=250, required=False, allow_blank=True, allow_null=True)
-    phone_no = serializers.CharField(required=False,allow_blank=True,
-        validators=[
-            RegexValidator(
-                regex=r'^\+?(\d[\s-]?){10,15}$',
-                message="Enter a valid phone number (10-15 digits, optional + at start).")])
-    adhaar_no = serializers.CharField(required=False,allow_blank=True,
-        validators=[
-            RegexValidator(
-                regex=r'^\d{12}$',
-                message="Enter a valid 12-digit Aadhaar number.")])
-
-    pan_no = serializers.CharField(required=False,allow_blank=True,
-        validators=[
-            RegexValidator(
-                regex=r'^[A-Z]{5}[0-9]{4}[A-Z]$',
-                message="Enter a valid PAN number (e.g., ABCDE1234F).")])
-    gender = serializers.ChoiceField(
-        choices=[('Male','Male'),('Female','Female'),('Other','Other')],
-        required=False,
-        error_messages={"invalid_choice": "Gender must be Male, Female, or Other."}
+    qualification = serializers.CharField(
+        max_length=250, required=False, allow_blank=True, allow_null=True
     )
+    phone_no = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        validators=[
+            RegexValidator(
+                regex=r"^\+?(\d[\s-]?){10,15}$",
+                message="Enter a valid phone number (10-15 digits, optional + at start).",
+            )
+        ],
+    )
+    adhaar_no = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        validators=[
+            RegexValidator(
+                regex=r"^\d{12}$", message="Enter a valid 12-digit Aadhaar number."
+            )
+        ],
+    )
+
+    pan_no = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        validators=[
+            RegexValidator(
+                regex=r"^[A-Z]{5}[0-9]{4}[A-Z]$",
+                message="Enter a valid PAN number (e.g., ABCDE1234F).",
+            )
+        ],
+    )
+    gender = serializers.ChoiceField(
+        choices=[("Male", "Male"), ("Female", "Female"), ("Other", "Other")],
+        required=False,
+        error_messages={"invalid_choice": "Gender must be Male, Female, or Other."},
+    )
+    address_input = AddressSerializer(write_only=True, required=False, allow_null=True)
+    banking_detail_input = BankingDetailsSerializer(
+        write_only=True, required=False, allow_null=True
+    )
+
     class Meta:
         model = Teacher
         fields = [
-            'id', 'first_name', 'middle_name', 'last_name', 'password', 'email',
-            'phone_no', 'gender', 'adhaar_no', 'pan_no', 'qualification', 'user_profile','joining_date','is_active'
+            "id",
+            "first_name",
+            "middle_name",
+            "last_name",
+            "password",
+            "email",
+            "phone_no",
+            "gender",
+            "adhaar_no",
+            "pan_no",
+            "qualification",
+            "user_profile",
+            "joining_date",
+            "is_active",
+            "banking_detail_input",
+            "address_input",
         ]
-        
+
+    def get_address(self, obj):
+        address = Address.objects.filter(user=obj.student.user).first()
+        return AddressSerializer(address).data if address else None
+
+    def get_banking_detail(self, obj):
+        banking = BankingDetail.objects.filter(user=obj.student.user).first()
+        return BankingDetailsSerializer(banking).data if banking else None
+
     def validate_adhaar_no(self, value):
-        from director.models import OfficeStaff  # Importing here to avoid circular import issues
+        from director.models import (
+            OfficeStaff,
+        )  # Importing here to avoid circular import issues
 
         teacher_id = self.instance.id if self.instance else None
-        
+
         # Check in Teacher
-        teacher_exists = Teacher.objects.exclude(id=teacher_id).filter(adhaar_no=value).exists()
-        
+        teacher_exists = (
+            Teacher.objects.exclude(id=teacher_id).filter(adhaar_no=value).exists()
+        )
+
         # Check in OfficeStaff
         staff_exists = OfficeStaff.objects.filter(adhaar_no=value).exists()
-        
+
         if teacher_exists or staff_exists:
-            raise serializers.ValidationError("This Aadhaar number is already registered.")
+            raise serializers.ValidationError(
+                "This Aadhaar number is already registered."
+            )
         return value
 
     def validate_pan_no(self, value):
-        from director.models import OfficeStaff  # Importing here to avoid circular import issues
+        from director.models import (
+            OfficeStaff,
+        )  # Importing here to avoid circular import issues
 
         teacher_id = self.instance.id if self.instance else None
-        
+
         # Check in Teacher
-        teacher_exists = Teacher.objects.exclude(id=teacher_id).filter(pan_no=value).exists()
-        
+        teacher_exists = (
+            Teacher.objects.exclude(id=teacher_id).filter(pan_no=value).exists()
+        )
+
         # Check in OfficeStaff
         staff_exists = OfficeStaff.objects.filter(pan_no=value).exists()
-        
+
         if teacher_exists or staff_exists:
             raise serializers.ValidationError("This PAN number is already registered.")
         return value
 
-    
     def create(self, validated_data):
         user_data = {
-            'first_name': validated_data.pop('first_name', ''),
-            'middle_name': validated_data.pop('middle_name', ''),
-            'last_name': validated_data.pop('last_name', ''),
-            'password': validated_data.pop('password', ''),
-            'email': validated_data.pop('email', ''),
-            'user_profile': validated_data.pop('user_profile', None),
+            "first_name": validated_data.pop("first_name", ""),
+            "middle_name": validated_data.pop("middle_name", ""),
+            "last_name": validated_data.pop("last_name", ""),
+            "password": validated_data.pop("password", ""),
+            "email": validated_data.pop("email", ""),
+            "user_profile": validated_data.pop("user_profile", None),
         }
 
         try:
-            role, _ = Role.objects.get_or_create(name='teacher')
+            role, _ = Role.objects.get_or_create(name="teacher")
         except MultipleObjectsReturned:
             raise serializers.ValidationError("Multiple 'teacher' roles found.")
 
-        existing_user = User.objects.filter(email=user_data['email']).first()
+        existing_user = User.objects.filter(email=user_data["email"]).first()
 
         if existing_user:
-            if not existing_user.role.filter(name='teacher').exists():
+            if not existing_user.role.filter(name="teacher").exists():
                 existing_user.role.add(role)
                 existing_user.save()
             else:
-                raise serializers.ValidationError("User email already exists with this role.")
+                raise serializers.ValidationError(
+                    "User email already exists with this role."
+                )
             user = existing_user
         else:
             user = User.objects.create_user(**user_data)
@@ -122,6 +180,27 @@ class TeacherSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         user = instance.user
+        address_data = validated_data.pop("address_input", None)
+        banking_data = validated_data.pop("banking_detail_input", None)
+        # --- Address and banking ---
+        if address_data:
+            Address.objects.update_or_create(user=user, defaults=address_data)
+        # if banking_data:
+        #     BankingDetail.objects.update_or_create(user=user, defaults=banking_data)
+
+        if banking_data:
+            try:
+                BankingDetail.objects.update_or_create(user=user, defaults=banking_data)
+            except IntegrityError:
+                raise serializers.ValidationError(
+                    {
+                        "banking_detail_input": {
+                            "non_field_errors": [
+                                "The fields account_no, ifsc_code must make a unique set. This combination already exists for another user."
+                            ]
+                        }
+                    }
+                )
 
         # Update user fields
         user.first_name = validated_data.get("first_name", user.first_name)
@@ -145,26 +224,52 @@ class TeacherSerializer(serializers.ModelSerializer):
         instance.gender = validated_data.get("gender", instance.gender)
         instance.adhaar_no = validated_data.get("adhaar_no", instance.adhaar_no)
         instance.pan_no = validated_data.get("pan_no", instance.pan_no)
-        instance.qualification = validated_data.get("qualification", instance.qualification)
+        instance.qualification = validated_data.get(
+            "qualification", instance.qualification
+        )
+        instance.joining_date = validated_data.get(
+            "joining_date", instance.joining_date
+        )
+
         instance.save()
 
         return instance
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
-        representation.update({
-            'first_name': instance.user.first_name,
-            'middle_name': instance.user.middle_name,
-            'last_name': instance.user.last_name,
-            'email': instance.user.email,
-            'user_profile': instance.user.user_profile.url if instance.user.user_profile else None,
-            'phone_no': instance.phone_no,
-            'gender': instance.gender,
-            'adhaar_no': instance.adhaar_no,
-            'pan_no': instance.pan_no,
-            'qualification': instance.qualification,
-        })
+        # Banking detail
+        banking = getattr(instance.user, "bankingdetail", None)
+        representation["banking_data"] = (
+            BankingDetailsSerializer(banking).data if banking else None
+        )
+
+        # Address
+        last_address = instance.user.address_set.last()
+        representation["address_data"] = (
+            AddressSerializer(last_address).data if last_address else None
+        )
+
+        representation.update(
+            {
+                "first_name": instance.user.first_name,
+                "middle_name": instance.user.middle_name,
+                "last_name": instance.user.last_name,
+                "email": instance.user.email,
+                "user_profile": (
+                    instance.user.user_profile.url
+                    if instance.user.user_profile
+                    else None
+                ),
+                "phone_no": instance.phone_no,
+                "gender": instance.gender,
+                "adhaar_no": instance.adhaar_no,
+                "pan_no": instance.pan_no,
+                "qualification": instance.qualification,
+            }
+        )
         return representation
+
+
 
 
 # ******************TeacherYearLevelSerializer***********************************
@@ -212,10 +317,11 @@ class TeacherYearLevelSerializer(serializers.ModelSerializer):
             assigned_teacher = qs_year_level.first().teacher
             teacher_name = f"{assigned_teacher.user.get_full_name()}" if assigned_teacher and hasattr(assigned_teacher, 'user') else str(assigned_teacher)
             raise serializers.ValidationError({
-                'year_level': f"'{year_level}' is already assigned to teacher '{teacher_name}'. Cannot assign to another teacher."
+                'year_level': [
+                    f"Class '{year_level}' is already assigned to teacher '{teacher_name}'.",
+                    "Cannot assign the same class to another teacher."
+                ]
             })
-
-        return data
 
 
 

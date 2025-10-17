@@ -678,6 +678,37 @@ class PersonalSocialQualityTermWise(models.Model):
 # Expense Models 
 #------------------- 
 
+
+class Payment(models.Model):
+    PAYMENT_METHOD_CHOICES = [
+        ('Cash', 'Cash'), ('Cheque', 'Cheque'), ('Online', 'Online')
+    ]
+    STATUS_CHOICES = [
+        ('Pending', 'Pending'), ('Success', 'Success'), ('Failed', 'Failed')
+    ]
+
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Pending')
+    remarks = models.TextField(max_length=225,blank=True, null=True)
+    payment_date = models.DateTimeField()
+
+    cheque_number = models.CharField(max_length=50, blank=True, null=True, unique=True)
+   
+    razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
+    razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)#
+    razorpay_signature = models.CharField(max_length=255, blank=True, null=True)#
+    
+    # RazorpayX
+    payout_id = models.CharField(max_length=100, blank=True, null=True)
+    fund_account_id = models.CharField(max_length=100, blank=True, null=True)
+    contact_id = models.CharField(max_length=100, blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.payment_method} - ₹{self.amount} ({self.status})"
+
+
+
 class ExpenseCategory(models.Model): 
     name = models.CharField(max_length=100, unique=True)
     # description = models.TextField(blank=True, null=True)
@@ -686,39 +717,27 @@ class ExpenseCategory(models.Model):
         return self.name 
     
 class SchoolExpense(models.Model): 
-    PAYMENT_METHOD_CHOICES = [ 
-        ('cash', 'Cash'), 
-        ('cheque', 'Cheque'), 
-        ('online', 'Online'),] 
-    STATUS_CHOICES = [ 
-        ('pending', 'Pending'), 
-        ('approved', 'Approved'), 
-        ('rejected', 'Rejected'), ] 
     school_year = models.ForeignKey(SchoolYear, on_delete=models.CASCADE)
-    category = models.ForeignKey(ExpenseCategory, on_delete=models.PROTECT, related_name='expenses')# 
-    amount = models.DecimalField(max_digits=12, decimal_places=2)# 
-    description = models.TextField(max_length=225,blank=True, null=True)# 
-    expense_date = models.DateField()# 
-    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='cash') 
-    attachment = models.FileField(upload_to=expense_attachments, blank=True, null=True) 
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending') 
-    approved_by = models.ForeignKey("authentication.User", on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_expenses')# 
+    category = models.ForeignKey(ExpenseCategory, on_delete=models.PROTECT, related_name='expenses')
+    description = models.TextField(max_length=225,blank=True, null=True)
+    approved_by = models.ForeignKey("authentication.User", on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_expenses')
     created_by = models.ForeignKey("authentication.User", on_delete=models.SET_NULL, null=True, blank=True, related_name='created_expenses') 
-    created_at = models.DateTimeField(auto_now_add=True)# 
+    created_at = models.DateTimeField(auto_now_add=True)
+    payment = models.OneToOneField(Payment,on_delete=models.SET_NULL,null=True,blank=True)
 
-    razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)
-    razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
-    razorpay_signature = models.CharField(max_length=255, blank=True, null=True)
+    # def __str__(self): 
+    #     return f"{self.category.name} - ₹{self.amount} on {self.expense_date}" 
+    def __str__(self):
+        payment_amount = self.payment.amount if self.payment else "No Payment"
+        return f"{self.category.name} - ₹{payment_amount}"
 
-    def __str__(self): 
-        return f"{self.category.name} - ₹{self.amount} on {self.expense_date}" 
-    
+
 class Employee(models.Model):
     user = models.OneToOneField("authentication.User", on_delete=models.CASCADE)
     base_salary = models.DecimalField(max_digits=10, decimal_places=2)
 
     def __str__(self):
-        return self.user.get_full_name()
+        return f"{self.user.get_full_name()} - base_salary {self.base_salary}"
 
 class EmployeeSalary(models.Model):
     MONTH_CHOICES = [
@@ -731,22 +750,18 @@ class EmployeeSalary(models.Model):
     user = models.ForeignKey(Employee, on_delete=models.CASCADE)  
     gross_amount = models.DecimalField(max_digits=10, decimal_places=2)  # base salary
     deductions = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    bonus = models.DecimalField(max_digits=10, decimal_places=2, default=0)  
     net_amount = models.DecimalField(max_digits=10, decimal_places=2)  # after deductions or bonus
     month = models.CharField(max_length=20, choices=MONTH_CHOICES)
     school_year = models.ForeignKey(SchoolYear, on_delete=models.CASCADE)
-    payment_date = models.DateField()
-    payment_method = models.CharField(max_length=20,choices=[('cash', 'Cash'), ('cheque', 'Cheque'), ('online','Online')],)
     paid_by = models.ForeignKey("authentication.User", on_delete=models.SET_NULL, null=True, blank=True) #jisne salary issue ki
     remarks = models.TextField(max_length=225,null=True, blank=True)
-    status = models.CharField(max_length=20,choices=[('paid', 'Paid'), ('pending', 'Pending')],default='pending')
-    created_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField()
+    payment = models.OneToOneField(Payment,on_delete=models.SET_NULL,null=True,blank=True)
 
-    razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
-    razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)
-    razorpay_signature = models.CharField(max_length=255, blank=True, null=True)
 
     def __str__(self):
-        return f"{self.user.user.first_name} {self.month} - {self.net_amount}"
+        return f"{self.user.user.first_name} {self.month}  {self.net_amount}"
     class Meta:
         unique_together = ['user', 'month', 'school_year']
 
