@@ -2993,7 +2993,6 @@ class FeeRecordView(viewsets.ModelViewSet):
         for item in summary:
             total = item["total_amount"] #+ item["late_fee"]#is se do baar late fee add ho rahi he
             due = max(0, total - item["paid_amount"])
-            
             formatted_summary.append({
                 "month": item["month"],
                 "school_year": item["school_year__year__year_name"] or "N/A",

@@ -59,9 +59,14 @@ class ClassRoomSerializer(serializers.ModelSerializer):
 
 
 class BankingDetailsSerializer(serializers.ModelSerializer):
+    
+    account_no = serializers.IntegerField(required=False, allow_null=True)
+    ifsc_code = serializers.CharField(required=False, allow_blank=True)
+    holder_name = serializers.CharField(required=False, allow_blank=True)
+
     class Meta:
         model = BankingDetail
-        fields = ["id", "account_no", "ifsc_code", "holder_name"]
+        fields = ['id', 'account_no', 'ifsc_code', 'holder_name']
         extra_kwargs = {
             "user": {"read_only": True}
         }
@@ -3303,6 +3308,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
         # fields = "__all__"
         fields = ["id", "user", "name", "role", "base_salary"]
         read_only_fields = ["user"]  
+
     def get_role(self, obj):
         return [role.name for role in obj.user.role.all()]
 
@@ -3457,6 +3463,14 @@ class SchoolIncomeSerializer(serializers.ModelSerializer):
             # fallback agar request nahi mila
             return obj.attachment.url
         
+    def get_attachment_url(self, obj):
+        request = self.context.get("request")
+        if obj.attachment:
+            if request:
+                return request.build_absolute_uri(obj.attachment.url)
+            # fallback agar request nahi mila
+            return obj.attachment.url
+  
     def get_created_at(self, obj):
         return timezone.localtime(obj.created_at).strftime("%d-%m-%Y %I:%M %p")
 

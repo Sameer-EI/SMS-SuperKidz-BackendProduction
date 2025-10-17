@@ -131,10 +131,10 @@ class BankingDetailsManager(models.Manager):
         return super().get_queryset()
     
 class BankingDetail(models.Model):
-    account_no = models.BigIntegerField( )
+    account_no = models.BigIntegerField(null=True, blank=True)
     # account_no = models.BigIntegerField(primary_key=True, unique=True)
-    ifsc_code = models.CharField(max_length=225)
-    holder_name = models.CharField(max_length=255)
+    ifsc_code = models.CharField(max_length=11,null=True, blank=True)
+    holder_name = models.CharField(max_length=50,null=True, blank=True)
     user = models.OneToOneField("authentication.User", on_delete=models.DO_NOTHING)
     is_active = models.BooleanField(default=True)
 
