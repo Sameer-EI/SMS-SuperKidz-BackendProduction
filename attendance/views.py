@@ -15,7 +15,7 @@ from student.models import Guardian,StudentGuardian, StudentYearLevel, Student
 from django.shortcuts import get_object_or_404
 import holidays
 from director.views import send_whatsapp_message
-
+from calendar import monthrange
 
 #payload for MultipleAttendance
 # {
@@ -634,11 +634,21 @@ class MonthlyCalendarView(APIView):
         month = int(month)
         year = int(year)
 
-        # Filter holidays
-        holidays = SchoolHoliday.objects.filter(date__month=month, date__year=year).order_by('date')
-        holiday_data = SchoolHolidaySerializer(holidays, many=True).data
+        # School holidays (single-day)
+        school_holidays = SchoolHoliday.objects.filter(
+            date__month=month, date__year=year
+        ).order_by('date')
+        school_holiday_data = SchoolHolidaySerializer(school_holidays, many=True).data
 
-        # Filter events (range overlap within that month)
+        # Multi-day holidays overlapping this month
+        start_of_month = f"{year}-{month:02d}-01"
+        end_of_month = f"{year}-{month:02d}-{monthrange(year, month)[1]}"
+        holidays = Holiday.objects.filter(
+            Q(start_date__lte=end_of_month) & Q(end_date__gte=start_of_month)
+        ).order_by('-start_date')
+        holiday_data = HolidaySerializer(holidays, many=True).data
+
+        # School events
         events = SchoolEvent.objects.filter(
             start_date__year=year,
             start_date__month=month
@@ -648,7 +658,8 @@ class MonthlyCalendarView(APIView):
         return Response({
             "year": year,
             "month": month,
-            "holidays": holiday_data,
+            "school_holidays": school_holiday_data,
+            "custom_holidays": holiday_data,
             "events": event_data
         }, status=status.HTTP_200_OK)
         
