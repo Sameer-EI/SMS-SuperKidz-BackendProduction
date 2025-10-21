@@ -19,6 +19,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from director.views import send_whatsapp_message 
 # from permission import RoleBasedPermission
+from attendance.views import Holiday
 
 
 
@@ -532,6 +533,18 @@ class TeacherAttendanceAPIView(APIView):
             teacher = Teacher.objects.get(id=teacher_id)
         except Teacher.DoesNotExist:
             return Response({'error': 'Teacher not found'}, status=404)
+        
+        # Holiday check
+        holiday_exists = Holiday.objects.filter(
+            start_date__lte=attendance_date,
+            end_date__gte=attendance_date
+        ).exists()
+
+        if holiday_exists:
+            return Response({
+                'error': 'Cannot mark attendance on a holiday',
+                'date': attendance_date
+            }, status=400)
 
         # Check if already marked
         if TeacherAttendance.objects.filter(teacher=teacher, date=attendance_date).exists():
@@ -579,6 +592,16 @@ class TeacherAttendanceGetAPI(APIView):
             print(id)
         except TeacherAttendance.DoesNotExist:
             return Response({'error': 'Attendance record not found'}, status=404)
+        
+        # Holiday check
+        attendance_date_str = request.data.get('date', str(attendance_record.date))
+        attendance_date = datetime.strptime(attendance_date_str, "%Y-%m-%d").date()
+
+        if Holiday.objects.filter(start_date__lte=attendance_date, end_date__gte=attendance_date).exists():
+            return Response({
+                'error': 'Cannot update attendance on a holiday',
+                'date': attendance_date
+            }, status=400)
 
         serializer = TeacherAttendanceSerializer(attendance_record, data=request.data, partial=True)
         print(request.data)
