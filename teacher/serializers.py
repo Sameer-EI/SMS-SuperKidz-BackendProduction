@@ -322,6 +322,7 @@ class TeacherYearLevelSerializer(serializers.ModelSerializer):
                     "Cannot assign the same class to another teacher."
                 ]
             })
+        return data
 
 
 
