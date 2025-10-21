@@ -1909,8 +1909,7 @@ class DocumentView(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         # Validate files
         files = request.FILES.getlist('files')
-        if not files:
-            return Response({"error": "Files required"}, status=status.HTTP_400_BAD_REQUEST)
+        has_files = bool(files)
 
         # Get and validate document types
         doc_types = request.data.getlist('document_types', []) or [request.data.get('document_types')]
@@ -1935,24 +1934,37 @@ class DocumentView(viewsets.ModelViewSet):
         existing = self._find_existing_document(data)
 
         # Create or update document
-        # --- CASE 1: Existing doc found → replace files only ---
+         # --- CASE 1: Update existing document ---
         if existing:
-            #  Restrict changing identity if document already exists
-            if identities_str and identities_str != existing.identities:
-                return Response({
-                    "error": "You can't modify the identity of an existing document."
-                }, status=status.HTTP_400_BAD_REQUEST)
+            msg_parts = []
 
-            # Delete old files → replace with new
-            existing.files.all().delete()
-            for file in files:
-                File.objects.create(document=existing, file=file)
+            # Update identity if changed
+            if identities_str and identities_str != existing.identities:
+                existing.identities = identities_str
+                existing.save(update_fields=['identities'])
+                msg_parts.append("Identity updated")
+
+            # Replace files if provided
+            if has_files:
+                existing.files.all().delete()
+                for file in files:
+                    File.objects.create(document=existing, file=file)
+                msg_parts.append("Files replaced")
+
+            # If no files or identity changes → show message
+            if not msg_parts:
+                return Response({
+                    "status": "no_change",
+                    "message": "No updates were made — identity and files are same as before.",
+                    "document": self.get_serializer(existing, context={'request': request}).data
+                }, status=status.HTTP_200_OK)
 
             return Response({
-                "status": "replaced",
+                "status": "updated",
+                "message": " and ".join(msg_parts) + " successfully.",
                 "document": self.get_serializer(existing, context={'request': request}).data
             }, status=status.HTTP_200_OK)
-
+        
         # --- CASE 2: No existing doc → create new one ---
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
