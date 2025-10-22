@@ -4886,6 +4886,13 @@ class NonScholasticGradeViewSet(viewsets.ModelViewSet):
                 return Response({"error": "Not authorized to delete this grade."}, status=403)
 
         return Response({"error": "Not allowed for your role."}, status=403)
+    
+    @action(detail=False, methods=["get"], url_path="non_schl_subject")
+    def get_non_scholastic_subject(self, request):
+        subjects = Subject.objects.filter(department__department_name__iexact="Non-Scholastic")
+        serializer = subjectSerializer(subjects, many=True)
+        return Response(serializer.data) 
+
 
 class ReportCardViewSet(viewsets.ModelViewSet):
     queryset = ReportCard.objects.all()
