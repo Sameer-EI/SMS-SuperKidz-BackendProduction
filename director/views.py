@@ -4642,6 +4642,7 @@ class StudentMarksView(viewsets.ModelViewSet):
 """-------------------------------------------RESULT---------------------------------------------------"""
 from rest_framework.exceptions import PermissionDenied
 from collections import defaultdict
+from director.permission import RoleBasedPermission
 
 class PersonalSocialQualityView(viewsets.ModelViewSet):
     queryset = PersonalSocialQuality.objects.all()
@@ -4885,7 +4886,6 @@ class NonScholasticGradeViewSet(viewsets.ModelViewSet):
                 return Response({"error": "Not authorized to delete this grade."}, status=403)
 
         return Response({"error": "Not allowed for your role."}, status=403)
-from director.permission import RoleBasedPermission
 
 class ReportCardViewSet(viewsets.ModelViewSet):
     queryset = ReportCard.objects.all()
