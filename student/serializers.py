@@ -67,7 +67,7 @@ class StudentSerializer(serializers.ModelSerializer):
         ]
     )
     scholar_number = serializers.CharField(read_only=True, allow_null=False)  # Read-only field
-
+    is_active = serializers.BooleanField(read_only=True)
 
     # Classes many-to-many
     classes = serializers.PrimaryKeyRelatedField(queryset=ClassPeriod.objects.all(), many=True,required=False,allow_empty=True,default=[])
@@ -161,6 +161,8 @@ class StudentSerializer(serializers.ModelSerializer):
 
         if 'classes' in validated_data:
             instance.classes.set(validated_data.pop('classes'))
+
+        # validated_data['is_active'] = True
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
