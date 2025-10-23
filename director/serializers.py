@@ -1,6 +1,8 @@
 from datetime import *
 import re
 from rest_framework import serializers
+
+from utils.email_notification import send_email_notification
 from .models import *
 from django.core.exceptions import MultipleObjectsReturned
 from django.db import IntegrityError
@@ -79,15 +81,19 @@ class BankingDetailsSerializer(serializers.ModelSerializer):
         return BankingDetail.objects.create(user=user, **validated_data)
 
     def update(self, instance, validated_data):
-        account_no = validated_data.get("account_no")
-        if account_no and account_no != instance.account_no:
+        account_no = validated_data.get("account_no", instance.account_no)
+
+        # Only check for duplicates if account_no is provided and not null
+        if account_no not in [None, ""] and account_no != instance.account_no:
             if BankingDetail.objects.filter(account_no=account_no).exclude(id=instance.id).exists():
                 raise serializers.ValidationError({
                     "account_no": "This account number is already in use by another user."
                 })
-        instance.account_no = validated_data.get("account_no", instance.account_no)
-        instance.ifsc_code = validated_data.get("ifsc_code", instance.ifsc_code)
-        instance.holder_name = validated_data.get("holder_name", instance.holder_name)
+
+        # Apply even if user clears the field
+        instance.account_no = validated_data.get("account_no", None)
+        instance.ifsc_code = validated_data.get("ifsc_code", "")
+        instance.holder_name = validated_data.get("holder_name", "")
         instance.save()
         return instance
 
@@ -368,8 +374,8 @@ class AdmissionSerializer(serializers.ModelSerializer):
     )
 
     # These are write-only inputs for creating/updating admission
-    student = StudentSerializer(write_only=True, required=True)
-    guardian = GuardianSerializer(write_only=True, required=True)
+    student = StudentSerializer(write_only=True, required=False)
+    guardian = GuardianSerializer(write_only=True, required=False)
     address_input = AddressSerializer(write_only=True, required=False, allow_null=True)
     banking_detail_input = BankingDetailsSerializer(write_only=True, required=False, allow_null=True)
 
@@ -549,6 +555,29 @@ class AdmissionSerializer(serializers.ModelSerializer):
                 student=student, level=year_level, year=school_year
             )
 
+        # --- Send email notification to the guardian ---
+        try:
+            subject = "Admission Confirmation "
+            message = (
+                f"Dear {guardian_user.first_name} {guardian_user.last_name},\n\n"
+                f"We are pleased to inform you that the admission for "
+                f"{student.user.first_name} {student.user.last_name} "
+                f"has been successfully processed.\n\n"
+                f"Scholar Number: {student.scholar_number}\n"
+                f"Year Level: {year_level}\n"
+                f"School Year: {school_year}\n\n"
+                f"Thank you for trusting our institution!\n"
+                f"- School Administration"
+            )
+
+            send_email_notification(
+                to_email=guardian_user.email,
+                subject=subject,
+                message=message
+            )
+        except Exception as e:
+            print(f"Email sending failed: {e}")
+
         return admission
 
 
@@ -625,38 +654,36 @@ class AdmissionSerializer(serializers.ModelSerializer):
             address_serializer.is_valid(raise_exception=True)
             address_serializer.save(user=user)
 
-        if banking_data:
-            current_account_no = str(banking_data.get('account_no'))
+        if banking_data is not None:
+            account_no = banking_data.get('account_no', None)
 
             try:
                 banking_instance = BankingDetail.objects.get(user=user)
-                existing_account_no = str(banking_instance.account_no)
 
-                if existing_account_no == current_account_no:
-                    banking_data.pop('account_no', None)
+                # Handle NULL (reset) or changed account number
+                if account_no is None:
+                    banking_instance.account_no = None
                 else:
-                    if BankingDetail.objects.filter(account_no=current_account_no).exclude(user_id=user.id).exists():
+                    # Check for duplicates only if valid number provided
+                    if BankingDetail.objects.filter(account_no=account_no).exclude(user_id=user.id).exists():
                         raise serializers.ValidationError({
                             "banking_detail_input": {
                                 "account_no": ["This account number is already in use by another user."]
                             }
                         })
+                    banking_instance.account_no = account_no
 
-                banking_serializer = BankingDetailsSerializer(banking_instance, data=banking_data, partial=True)
-                banking_serializer.is_valid(raise_exception=True)
-                banking_serializer.save(user=user)
+                # Update rest of fields even if blank
+                banking_instance.ifsc_code = banking_data.get('ifsc_code', '')
+                banking_instance.holder_name = banking_data.get('holder_name', '')
+                banking_instance.save()
 
             except BankingDetail.DoesNotExist:
-                if BankingDetail.objects.filter(account_no=current_account_no).exists():
-                    raise serializers.ValidationError({
-                        "banking_detail_input": {
-                            "account_no": ["This account number is already in use."]
-                        }
-                    })
-
-                banking_serializer = BankingDetailsSerializer(data=banking_data)
-                banking_serializer.is_valid(raise_exception=True)
-                banking_serializer.save(user=user)
+                # Create new only if at least one value is given
+                if any(v not in [None, ''] for v in banking_data.values()):
+                    banking_serializer = BankingDetailsSerializer(data=banking_data)
+                    banking_serializer.is_valid(raise_exception=True)
+                    banking_serializer.save(user=user)
 
         if guardian_type:
             StudentGuardian.objects.update_or_create(

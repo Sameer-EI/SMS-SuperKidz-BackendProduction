@@ -355,7 +355,7 @@ class SubstituteAssignmentSerializer(serializers.ModelSerializer):
         year_level = attrs.get("year_level")
         date = attrs.get("date")
 
-        # ✅ agar date missing ho to today set karo
+        # agar date missing ho to today set karo
         if not date:
             date = timezone.now().date()
             attrs["date"] = date  
@@ -374,7 +374,7 @@ class SubstituteAssignmentSerializer(serializers.ModelSerializer):
         if duplicate_qs.exists():
             raise serializers.ValidationError(
                 {"errors": [
-                    f"❌ Duplicate not allowed: "
+                    f"Duplicate not allowed: "
                     f"Absent Teacher '{absent_teacher.user.first_name} {absent_teacher.user.last_name}' "
                     f"already assigned on {period} ({date}) for Year {year_level} "
                     f"with Substitute '{duplicate_qs.first().substitute_teacher.user.first_name} {duplicate_qs.first().substitute_teacher.user.last_name}'"

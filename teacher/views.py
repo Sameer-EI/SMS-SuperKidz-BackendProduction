@@ -655,17 +655,39 @@ class SubstituteAssignmentView(APIView):
         if serializer.is_valid():
             assignments = serializer.save()
 
-            # ✅ Notification Part
+            # Notification Part
             notifications = []
+
+            # Send email & WhatsApp notifications
+            def notify(assignment):
+                absent_teacher_email = assignment.absent_teacher.user.email  # Adjust field accordingly
+                substitute_teacher_email = assignment.substitute_teacher.user.email  # Adjust field accordingly
+
+                subject = "Substitute Assignment Notification"
+                message = (
+                    f"Dear Teacher,\n\n"
+                    f"On {assignment.date}, during period {assignment.period},\n"
+                    f"Teacher {assignment.absent_teacher} is absent.\n"
+                    f"Substitute assigned: {assignment.substitute_teacher}.\n\n"
+                    "Regards,\nSchool Admin"
+                )
+
+                # Send email to absent teacher
+                if absent_teacher_email:
+                    send_email_notification(absent_teacher_email, subject, message)
+
+                # Send email to substitute teacher
+                if substitute_teacher_email:
+                    send_email_notification(substitute_teacher_email, subject, message)
+
+                # Send WhatsApp notification
+                response = send_whatsapp_message(message)
+
+                return response
+
             if many:
                 for assignment in assignments:
-                    msg = (
-                        f"📢 Notification:\n"
-                        f"On {assignment.date}, period {assignment.period},\n"
-                        f"Teacher {assignment.absent_teacher} is absent.\n"
-                        f"Substitute assigned: {assignment.substitute_teacher}."
-                    )
-                    response = send_whatsapp_message(msg)  # <-- your WhatsApp fn
+                    response = notify(assignment)
                     notifications.append({
                         "absent_teacher": str(assignment.absent_teacher),
                         "substitute_teacher": str(assignment.substitute_teacher),
@@ -675,14 +697,7 @@ class SubstituteAssignmentView(APIView):
                     })
             else:
                 assignment = assignments
-                msg = (
-                    f" Notification:\n"
-                    f"On {assignment.date},  {assignment.period},\n"
-                    f"Teacher {assignment.absent_teacher} is absent.\n"
-                    f"Substitute assigned: {assignment.substitute_teacher}."
-                )
-                print(msg)
-                response = send_whatsapp_message(msg)
+                response = notify(assignment)
                 notifications.append({
                     "absent_teacher": str(assignment.absent_teacher),
                     "substitute_teacher": str(assignment.substitute_teacher),
@@ -690,12 +705,10 @@ class SubstituteAssignmentView(APIView):
                     "period": assignment.period,
                     "response": response
                 })
-                print(response)
-                print(notifications)
 
             return Response({
                 "assignments": serializer.data,
-                "notifications": notifications
+                # "notifications": notifications
             }, status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
