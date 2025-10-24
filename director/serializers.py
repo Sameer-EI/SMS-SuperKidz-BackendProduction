@@ -582,63 +582,52 @@ class AdmissionSerializer(serializers.ModelSerializer):
 
 
     def update(self, instance, validated_data):
-        instance.is_rte = validated_data.get('is_rte', instance.is_rte)
-        instance.rte_number = validated_data.get('rte_number', instance.rte_number)
+        user = self.context.get("user") or instance.student.user
+
+        # --- Pop nested fields ---
         student_data = validated_data.pop('student', None)
         guardian_data = validated_data.pop('guardian', None)
         address_data = validated_data.pop('address_input', None)
         banking_data = validated_data.pop('banking_detail_input', None)
         guardian_type = validated_data.pop('guardian_type_input', None)
-        year_level = validated_data.pop('year_level', None)
-        school_year = validated_data.pop('school_year', None)
 
-        user = self.context.get("user") or instance.student.user
+        # --- Update direct fields (allow None) ---
+        for field in ['is_rte', 'rte_number', 'year_level', 'school_year',
+                    'previous_school_name', 'previous_standard_studied',
+                    'tc_letter', 'emergency_contact_no',
+                    'entire_road_distance_from_home_to_school',
+                    'obtain_marks', 'total_marks']:
+            if field in validated_data:
+                setattr(instance, field, validated_data[field])
 
+        # --- Student update ---
         if student_data:
+            classes_data = student_data.pop('classes', None)
             student_serializer = StudentSerializer(instance.student, data=student_data, partial=True)
             student_serializer.is_valid(raise_exception=True)
             student_serializer.save()
 
-            classes_data = student_data.get('classes')
-            if isinstance(classes_data, str):
-                try:
+            if classes_data is not None:
+                if isinstance(classes_data, str):
                     classes_data = [int(classes_data)]
-                except ValueError:
-                    raise serializers.ValidationError({"student.classes": "Invalid class ID format."})
-
-            if classes_data:
                 instance.student.classes.set(classes_data)
 
+        # --- Guardian update ---
         if guardian_data:
-            # FIXED: Guardian update with proper password handling
             guardian_user = instance.guardian.user
-            guardian_user_data = {
-                'first_name': guardian_data.pop('first_name', ''),
-                'middle_name': guardian_data.pop('middle_name', ''),
-                'last_name': guardian_data.pop('last_name', ''),
-                'email': guardian_data.pop('email', ''),
-                'password': guardian_data.pop('password', None),
-                'user_profile': guardian_data.pop('user_profile', None),
-            }
-            
-            password = guardian_user_data.pop('password', None)
-            
-            # Only update non-empty values
-            for attr, value in guardian_user_data.items():
-                if value:
-                    setattr(guardian_user, attr, value)
-            
-            # Only set password if explicitly provided
+            password = guardian_data.pop('password', None)
+            for attr in ['first_name', 'middle_name', 'last_name', 'email', 'user_profile']:
+                if attr in guardian_data and guardian_data[attr] not in [None, '']:
+                    setattr(guardian_user, attr, guardian_data[attr])
             if password:
                 guardian_user.set_password(password)
-            
             guardian_user.save()
-            
-            # Update guardian model
+
             guardian_serializer = GuardianSerializer(instance.guardian, data=guardian_data, partial=True)
             guardian_serializer.is_valid(raise_exception=True)
             guardian_serializer.save()
 
+        # --- Address update ---
         if address_data:
             for key in ['city', 'state', 'country']:
                 val = address_data.get(key)
@@ -654,17 +643,14 @@ class AdmissionSerializer(serializers.ModelSerializer):
             address_serializer.is_valid(raise_exception=True)
             address_serializer.save(user=user)
 
+        # --- Banking update ---
         if banking_data is not None:
             account_no = banking_data.get('account_no', None)
-
             try:
                 banking_instance = BankingDetail.objects.get(user=user)
-
-                # Handle NULL (reset) or changed account number
                 if account_no is None:
                     banking_instance.account_no = None
                 else:
-                    # Check for duplicates only if valid number provided
                     if BankingDetail.objects.filter(account_no=account_no).exclude(user_id=user.id).exists():
                         raise serializers.ValidationError({
                             "banking_detail_input": {
@@ -673,32 +659,23 @@ class AdmissionSerializer(serializers.ModelSerializer):
                         })
                     banking_instance.account_no = account_no
 
-                # Update rest of fields even if blank
                 banking_instance.ifsc_code = banking_data.get('ifsc_code', '')
                 banking_instance.holder_name = banking_data.get('holder_name', '')
                 banking_instance.save()
 
             except BankingDetail.DoesNotExist:
-                # Create new only if at least one value is given
                 if any(v not in [None, ''] for v in banking_data.values()):
                     banking_serializer = BankingDetailsSerializer(data=banking_data)
                     banking_serializer.is_valid(raise_exception=True)
                     banking_serializer.save(user=user)
 
-        if guardian_type:
+        # --- Guardian type ---
+        if guardian_type is not None:
             StudentGuardian.objects.update_or_create(
                 student=instance.student,
                 guardian=instance.guardian,
                 defaults={"guardian_type": guardian_type}
             )
-
-        if year_level:
-            instance.year_level = year_level
-        if school_year:
-            instance.school_year = school_year
-
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
 
         instance.save()
         return instance

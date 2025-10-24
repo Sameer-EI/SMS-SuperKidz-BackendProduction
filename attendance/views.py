@@ -3,7 +3,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-#from utils.email_notifications import send_email_notification #commented as of 04Oct25
+from utils.email_notification import send_email_notification
+
 from .models import  *
 from .serializers import *
 from django.utils.dateformat import format as date_format
@@ -149,18 +150,34 @@ class MultipleAttendanceViewSet1(ModelViewSet):
                 if status_code in ["A", "L"]:
                     absent_leave_students.append(student)
 
-        # === Send Notification for Absent / Leave Students ===
+        # === Send Notifications for Absent / Leave Students ===
         for student in absent_leave_students:
             student_name = f"{student.user.first_name} {student.user.last_name}"
+            
+            # Get the guardian linked to this student
+            try:
+                student_guardian = StudentGuardian.objects.filter(student=student).first()
+                guardian_user = student_guardian.guardian.user if student_guardian else None
+            except StudentGuardian.DoesNotExist:
+                guardian_user = None
+
             msg = (
                 f"Dear Parent,\n\n"
-                f"{student_name} was marked as Absent "
-                f"on {marked_at.strftime('%d-%m-%Y')}.\n"
+                f"{student_name} was marked as Absent on {marked_at.strftime('%d-%m-%Y')}.\n"
                 f"Kindly ensure regular attendance.\n\n"
                 f"Regards,\nSchool Management"
             )
+
+            # Send WhatsApp Message
             send_whatsapp_message(msg)
 
+            # Send Email if guardian email exists
+            if guardian_user and getattr(guardian_user, "email", None):
+                send_email_notification(
+                    to_email=guardian_user.email,
+                    subject=f"Attendance Alert: {student_name} Absent on {marked_at.strftime('%d-%m-%Y')}",
+                    message=msg
+                )
         serializer = self.get_serializer(created_records, many=True)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
