@@ -2078,7 +2078,6 @@ def send_whatsapp_message(message_text):
     
     phone_numbers = [
        '+918109145639',
-        # '+918847418400',
         '+918102637122',
         '+919981993064'
     ]

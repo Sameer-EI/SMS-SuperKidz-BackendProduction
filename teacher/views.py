@@ -620,7 +620,7 @@ class SubstituteAssignmentView(APIView):
 
     def post(self, request):
         data = request.data
-        print(data)
+        # print(data)
 
         # Single dict -> wrap in list for iteration
         if isinstance(data, dict):
@@ -660,13 +660,13 @@ class SubstituteAssignmentView(APIView):
 
             # Send email & WhatsApp notifications
             def notify(assignment):
-                absent_teacher_email = assignment.absent_teacher.user.email  # Adjust field accordingly
-                substitute_teacher_email = assignment.substitute_teacher.user.email  # Adjust field accordingly
+                absent_teacher_email = assignment.absent_teacher.user.email  
+                substitute_teacher_email = assignment.substitute_teacher.user.email  
 
-                subject = "Substitute Assignment Notification"
+                subject = "Substitute Teacher Assignment"
                 message = (
                     f"Dear Teacher,\n\n"
-                    f"On {assignment.date}, during period {assignment.period},\n"
+                    f"On {assignment.date}, during {assignment.period},\n"
                     f"Teacher {assignment.absent_teacher} is absent.\n"
                     f"Substitute assigned: {assignment.substitute_teacher}.\n\n"
                     "Regards,\nSchool Admin"
@@ -708,7 +708,6 @@ class SubstituteAssignmentView(APIView):
 
             return Response({
                 "assignments": serializer.data,
-                # "notifications": notifications
             }, status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
