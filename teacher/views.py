@@ -668,7 +668,7 @@ class SubstituteAssignmentView(APIView):
                     f"Dear Teacher,\n\n"
                     f"On {assignment.date}, during {assignment.period},\n"
                     f"Teacher {assignment.absent_teacher} is absent.\n"
-                    f"Substitute assigned: {assignment.substitute_teacher}.\n\n"
+                    f"Substitute assigned:- {assignment.substitute_teacher}.\n\n"
                     "Regards,\nSchool Admin"
                 )
 
