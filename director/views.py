@@ -1,4 +1,6 @@
 from django.forms import DateField, ValidationError
+import requests
+from requests.auth import HTTPBasicAuth
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.db.models import Count
@@ -2078,7 +2080,6 @@ def send_whatsapp_message(message_text):
     
     phone_numbers = [
        '+918109145639',
-        # '+918847418400',
         '+918102637122',
         '+919981993064'
     ]
