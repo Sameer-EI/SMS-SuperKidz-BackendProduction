@@ -4380,6 +4380,9 @@ class StudentMarksView(viewsets.ModelViewSet):
         school_year_filter = request.query_params.get("school_year")
         year_level_filter = request.query_params.get("year_level")
         exam_type_filter = request.query_params.get("exam_type")
+        student_id = request.query_params.get("student_id")  
+        if student_id:
+            marks_qs = marks_qs.filter(student_id=student_id)
 
         if school_year_filter:
             marks_qs = marks_qs.filter(term__year__year_name=school_year_filter)
