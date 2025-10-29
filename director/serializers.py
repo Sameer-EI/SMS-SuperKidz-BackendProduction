@@ -2030,6 +2030,9 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
         error_messages={"invalid_choice": "Gender must be Male, Female, or Other."}
     )
     
+    address_input = AddressSerializer(write_only=True, required=False, allow_null=True)
+    banking_detail_input = BankingDetailsSerializer(write_only=True, required=False, allow_null=True)
+    
     class Meta:
         model = OfficeStaff
         exclude = ["user"]
