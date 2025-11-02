@@ -2037,56 +2037,33 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
         model = OfficeStaff
         exclude = ["user"]
 
-    # def validate_adhaar_no(self, value):
-    #     teacher_id = self.instance.id if self.instance else None
-        
-    #     # Check in Teacher
-    #     teacher_exists = Teacher.objects.exclude(id=teacher_id).filter(adhaar_no=value).exists()
-        
-    #     # Check in OfficeStaff
-    #     staff_exists = OfficeStaff.objects.filter(adhaar_no=value).exists()
-        
-    #     if teacher_exists or staff_exists:
-    #         raise serializers.ValidationError("This Aadhaar number is already registered.")
-    #     return value
-
-    # def validate_pan_no(self, value):
-    #     teacher_id = self.instance.id if self.instance else None
-        
-    #     # Check in Teacher
-    #     teacher_exists = Teacher.objects.exclude(id=teacher_id).filter(pan_no=value).exists()
-        
-    #     # Check in OfficeStaff
-    #     staff_exists = OfficeStaff.objects.filter(pan_no=value).exists()
-        
-    #     if teacher_exists or staff_exists:
-    #         raise serializers.ValidationError("This PAN number is already registered.")
-    #     return value
-    
-    ### just corrected it
-    
     def validate_adhaar_no(self, value):
-        staff_id = self.instance.id if self.instance else None
-
-        teacher_exists = Teacher.objects.filter(adhaar_no=value).exclude(id=staff_id).exists()
-        staff_exists = OfficeStaff.objects.filter(adhaar_no=value).exclude(id=staff_id).exists()
+        # Get the current instance ID (works for both Teacher and OfficeStaff)
+        instance_id = self.instance.id if self.instance else None
+        
+        # Check if any other Teacher has this Aadhaar number
+        teacher_exists = Teacher.objects.filter(adhaar_no=value).exclude(id=instance_id).exists()
+        
+        # Check if any other OfficeStaff has this Aadhaar number
+        staff_exists = OfficeStaff.objects.filter(adhaar_no=value).exclude(id=instance_id).exists()
 
         if teacher_exists or staff_exists:
             raise serializers.ValidationError("This Aadhaar number is already registered.")
         return value
 
-
     def validate_pan_no(self, value):
-        staff_id = self.instance.id if self.instance else None
-
-        teacher_exists = Teacher.objects.filter(pan_no=value).exclude(id=staff_id).exists()
-        staff_exists = OfficeStaff.objects.filter(pan_no=value).exclude(id=staff_id).exists()
+        # Get the current instance ID (works for both Teacher and OfficeStaff)
+        instance_id = self.instance.id if self.instance else None
+        
+        # Check if any other Teacher has this PAN number
+        teacher_exists = Teacher.objects.filter(pan_no=value).exclude(id=instance_id).exists()
+        
+        # Check if any other OfficeStaff has this PAN number
+        staff_exists = OfficeStaff.objects.filter(pan_no=value).exclude(id=instance_id).exists()
 
         if teacher_exists or staff_exists:
             raise serializers.ValidationError("This PAN number is already registered.")
         return value
-
-    
 
 
     def create(self, validated_data):
