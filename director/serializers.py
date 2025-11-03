@@ -49,14 +49,13 @@ class ClassRoomTypeSerializer(serializers.ModelSerializer):
         model = ClassRoomType
         fields = "__all__"
         
- 
-
 
 class ClassRoomSerializer(serializers.ModelSerializer):
     class Meta:
         model = ClassRoom
         fields = ['id', 'room_type', 'room_name', 'capacity']
         read_only_fields = ['id']
+
 
 #choices for bank details
 INDIAN_BANK_CHOICES = [
@@ -475,35 +474,41 @@ class AdmissionSerializer(serializers.ModelSerializer):
             except ValueError:
                 raise serializers.ValidationError({"student.classes": "Invalid class ID format."})
 
+        # Scholar number check first
+        scholar_number = student_data.get('scholar_number')
+        if not scholar_number:
+            # Auto-generate if not passed
+            last_student = Student.objects.order_by('-id').first()
+            next_number = int(last_student.scholar_number) + 1 if last_student and last_student.scholar_number.isdigit() else 1
+            scholar_number = str(next_number).zfill(4)
+        student_data['scholar_number'] = scholar_number
+
+        # Check if student already exists via scholar number
+        existing_student = Student.objects.filter(scholar_number=scholar_number).first()
+        if existing_student:
+            raise serializers.ValidationError({"student": f"Scholar number {scholar_number} already exists."})
+
+        # --- Create user linked to student ---
         user_data = {
             'first_name': student_data.pop('first_name', ''),
             'middle_name': student_data.pop('middle_name', ''),
             'last_name': student_data.pop('last_name', ''),
-            'email': student_data.pop('email'),
+            'email': student_data.pop('email', None),
             'password': student_data.pop('password', None),
             'user_profile': student_data.pop('user_profile', None),
         }
 
-        user = User.objects.filter(email__iexact=user_data['email']).first()
-        if not user:
-            role, _ = Role.objects.get_or_create(name='student')
-            user = User.objects.create_user(**user_data)
-            user.role.add(role)
+        # fallback email if missing
+        if not user_data.get('email'):
+            user_data['email'] = f"{scholar_number}@school.local"
+
+        role, _ = Role.objects.get_or_create(name='student')
+        user = User.objects.create_user(**user_data)
+        user.role.add(role)
 
 
-        # ===== Generate scholar_number here =====
-        last_student = Student.objects.order_by('-id').first()
-        
-        if last_student and last_student.scholar_number and last_student.scholar_number.isdigit():
-            next_number = int(last_student.scholar_number) + 1
-        else:
-            next_number = 1
-        student_data['scholar_number'] = str(next_number).zfill(4)
-
-        student, created = Student.objects.get_or_create(user=user, defaults=student_data)
-        if not created:
-            raise serializers.ValidationError({"student": "Student already exists for this user."})
-
+        # Create the student
+        student = Student.objects.create(user=user, **student_data)
         if classes_data:
             student.classes.set(classes_data)
 
@@ -518,10 +523,14 @@ class AdmissionSerializer(serializers.ModelSerializer):
             'first_name': guardian_data.pop('first_name', ''),
             'middle_name': guardian_data.pop('middle_name', ''),
             'last_name': guardian_data.pop('last_name', ''),
-            'email': guardian_data.pop('email'),
+            'email': guardian_data.pop('email', None),
             'password': guardian_data.pop('password', None),
             'user_profile': guardian_data.pop('user_profile', None),
         }
+
+        # fallback email for guardian if not given
+        if not guardian_user_data.get('email'):
+            guardian_user_data['email'] = f"{scholar_number}guardian@school.local"
 
         guardian_user = User.objects.filter(email__iexact=guardian_user_data['email']).first()
         

@@ -32,7 +32,7 @@ class StudentSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(max_length=100, write_only=True, required=True, allow_blank=False)
     middle_name = serializers.CharField(max_length=100, write_only=True, required=False, allow_blank=True)
     last_name = serializers.CharField(max_length=100, write_only=True, required=True, allow_blank=False)
-    email = serializers.EmailField(write_only=True, required=False, allow_blank=True)
+    email = serializers.EmailField(write_only=True,required=False,allow_blank=True,default="N/A")
     password = serializers.CharField(max_length=100, write_only=True, required=False, allow_blank=True)
     user_profile = serializers.ImageField(required=False, allow_null=True, write_only=True)
 
@@ -48,7 +48,10 @@ class StudentSerializer(serializers.ModelSerializer):
     religion = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     category = serializers.ChoiceField(
         choices=[('SC', 'Scheduled Caste'), ('ST', 'Scheduled Tribe'), ('OBC', 'Other Backward Class'), ('GEN', 'General')],
-        required=False, allow_null=True
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        error_messages={"invalid_choice": "choose correct category."}
     )
     height = serializers.FloatField(required=False, allow_null=True)
     weight = serializers.FloatField(required=False, allow_null=True)
@@ -96,7 +99,7 @@ class StudentSerializer(serializers.ModelSerializer):
             'first_name': user.first_name,
             'middle_name': user.middle_name,
             'last_name': user.last_name,
-            'email': user.email,
+            'email': "N/A",
             'user_profile': user.user_profile.url if user.user_profile else None,
         })
         return rep
@@ -201,7 +204,7 @@ class GuardianSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(max_length=100, write_only=True, required=True, allow_blank=False)
     middle_name = serializers.CharField(max_length=100, write_only=True, required=False, allow_blank=True)
     last_name = serializers.CharField(max_length=100, write_only=True, required=True, allow_blank=False)
-    email = serializers.EmailField(write_only=True, required=False, allow_blank=True)
+    email = serializers.EmailField(write_only=True,required=False,allow_blank=True,default="N/A")
     password = serializers.CharField(max_length=100, write_only=True, required=False, allow_blank=True)
     user_profile = serializers.ImageField(required=False, allow_null=True, write_only=True)
 

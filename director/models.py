@@ -82,9 +82,9 @@ class Address(models.Model):
     district = models.CharField(max_length=100,null=True, blank=True)
     division = models.CharField(max_length=100,null=True, blank=True)
     area_code = models.IntegerField(null=True, blank=True)
-    country = models.ForeignKey(Country, on_delete=models.DO_NOTHING)
-    state = models.ForeignKey(State, on_delete=models.DO_NOTHING)
-    city = models.ForeignKey(City, on_delete=models.DO_NOTHING)
+    country = models.ForeignKey(Country, on_delete=models.DO_NOTHING, null=True, blank=True)
+    state = models.ForeignKey(State, on_delete=models.DO_NOTHING, null=True, blank=True)
+    city = models.ForeignKey(City, on_delete=models.DO_NOTHING, null=True, blank=True)
     address_line = models.CharField(max_length=250,null=True, blank=True)
     is_active = models.BooleanField(default=True)
 
@@ -326,10 +326,10 @@ class Admission(models.Model):
             
             self.enrollment_no = f"{prefix}-{new_seq_num:04d}"
 
-        if self.total_marks > 0:
-            self.previous_percentage = (self.obtain_marks / self.total_marks) * 100
-        else:
-            self.previous_percentage = 0
+        # if self.total_marks > 0:
+        #     self.previous_percentage = (self.obtain_marks / self.total_marks) * 100
+        # else:
+        #     self.previous_percentage = 0
 
         super().save(*args, **kwargs)
 
