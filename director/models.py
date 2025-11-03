@@ -343,10 +343,6 @@ class Admission(models.Model):
 
 
 
-    class Meta:
-        db_table = "Admission"
-
-
 
 from django.db import models
 import random

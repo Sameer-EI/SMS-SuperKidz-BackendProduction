@@ -85,6 +85,8 @@ class BankingDetailsSerializer(serializers.ModelSerializer):
     bank_name = serializers.ChoiceField(
         choices=INDIAN_BANK_CHOICES,
         required=False,
+        allow_null=True,
+        allow_blank=True,
         error_messages={"invalid_choice": "Select a valid bank name."}
     )
 
@@ -92,10 +94,11 @@ class BankingDetailsSerializer(serializers.ModelSerializer):
         model = BankingDetail
         fields = ['id', 'account_no', 'ifsc_code', 'holder_name', 'bank_name']
         extra_kwargs = {
-            "user": {"read_only": True}
+            "user": {"read_only": True},
         }
 
-    
+        
+
     def create(self, validated_data):
         user = self.context.get("user")
         if not user:
@@ -116,7 +119,7 @@ class BankingDetailsSerializer(serializers.ModelSerializer):
         instance.account_no = validated_data.get("account_no", None)
         instance.ifsc_code = validated_data.get("ifsc_code", "")
         instance.holder_name = validated_data.get("holder_name", "")
-        instance.bank_name = validated_data.get("bank_name", instance.bank_name)
+        instance.bank_name = validated_data.get("bank_name","")
         instance.save()
         return instance
 
@@ -168,11 +171,16 @@ class CitySerializer(serializers.ModelSerializer):
 
 
 
-
 class AddressSerializer(serializers.ModelSerializer):
-    country = serializers.PrimaryKeyRelatedField(queryset=Country.objects.all(),write_only=True)
-    state = serializers.PrimaryKeyRelatedField(queryset=State.objects.all(),write_only=True)
-    city = serializers.PrimaryKeyRelatedField(queryset=City.objects.all(),write_only=True)
+    country = serializers.PrimaryKeyRelatedField(
+        queryset=Country.objects.all(), write_only=True, required=False, allow_null=True
+    )
+    state = serializers.PrimaryKeyRelatedField(
+        queryset=State.objects.all(), write_only=True, required=False, allow_null=True
+    )
+    city = serializers.PrimaryKeyRelatedField(
+        queryset=City.objects.all(), write_only=True, required=False, allow_null=True
+    )
 
     country_name = serializers.CharField(source='country.name', read_only=True)
     state_name = serializers.CharField(source='state.name', read_only=True)
@@ -367,13 +375,13 @@ class DirectorProfileSerializer(serializers.ModelSerializer):
 class AdmissionSerializer(serializers.ModelSerializer):
     # enrollment_no = serializers.ReadOnlyField()
     # Use SerializerMethodField to output nested student and guardian data
-    student_input = serializers.SerializerMethodField(read_only=True)
-    guardian_input = serializers.SerializerMethodField(read_only=True)
+    student_input = serializers.SerializerMethodField(read_only=True,required=False)
+    guardian_input = serializers.SerializerMethodField(read_only=True,required=False)
     
-    address = serializers.SerializerMethodField(read_only=True)
-    banking_detail = serializers.SerializerMethodField(read_only=True)
+    address = serializers.SerializerMethodField(read_only=True,required=False)
+    banking_detail = serializers.SerializerMethodField(read_only=True, required=False, allow_null=True)
 
-    guardian_type = serializers.SerializerMethodField(read_only=True)
+    guardian_type = serializers.SerializerMethodField(read_only=True,required=False)
     guardian_type_input = serializers.SlugRelatedField(
         slug_field='name',
         queryset=GuardianType.objects.all(),
@@ -385,15 +393,12 @@ class AdmissionSerializer(serializers.ModelSerializer):
     year_level = serializers.SlugRelatedField(
         slug_field='level_name',
         queryset=YearLevel.objects.all(),
-        required=False,
-        allow_null=True,
+        required=True
     )
-    
     school_year = serializers.SlugRelatedField(
         slug_field='year_name',
         queryset=SchoolYear.objects.all(),
-        required=False,
-        allow_null=True,
+        required=True
     )
 
     # These are write-only inputs for creating/updating admission
