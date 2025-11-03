@@ -2563,8 +2563,19 @@ class FeeRecordView(viewsets.ModelViewSet):
                         f"Months: {', '.join(set(record.month for record in saved_records))}\n"
                         f"Thank you!"
                     )
+
+                    # send WhatsApp
+                    send_whatsapp_message(student.user.phoneNo, message_text)
+
+                    # send email
+                    send_email_notification(
+                        to_email=student.user.email,
+                        subject="Payment Confirmation - Fee Receipt",
+                        message=message_text
+                    )
+
                 except Exception as e:
-                    print(f"WhatsApp sending failed: {e}")
+                    print(f"WhatsApp/Email sending failed: {e}")
 
                 return Response(response_data, status=status.HTTP_201_CREATED)
             else:
@@ -2892,6 +2903,11 @@ class FeeRecordView(viewsets.ModelViewSet):
                     f"Thank you!"
                 )
                 send_whatsapp_message(message_text)
+                send_email_notification(
+                    to_email=first_record.student.user.email,
+                    subject="Payment Recieved - Fee Receipt",
+                    message=message_text
+                )
             except Exception as e:
                 print(message_text)
                 print(f"WhatsApp sending failed: {e}")
