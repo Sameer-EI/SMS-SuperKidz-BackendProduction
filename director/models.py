@@ -290,22 +290,20 @@ class AdmissionManager(models.Manager):
 
 class Admission(models.Model):
     enrollment_no = models.CharField( max_length=20,blank=True, null=True)
-    student = models.ForeignKey(Student, on_delete=models.DO_NOTHING)
-    admission_date = models.DateField(auto_now_add=True)
-    previous_school_name = models.CharField(max_length=200)
-    previous_standard_studied = models.CharField(max_length=200)
-    tc_letter = models.CharField(max_length=200)
-    guardian = models.ForeignKey(Guardian, on_delete=models.DO_NOTHING)
-    year_level = models.ForeignKey('YearLevel', on_delete=models.SET_NULL, null=True, blank=True)
-    # year_level = models.ForeignKey('YearLevel', on_delete=models.DO_NOTHING)
-
-    school_year = models.ForeignKey(SchoolYear, on_delete=models.DO_NOTHING)
-    is_rte = models.BooleanField(default=False)
+    student = models.ForeignKey(Student, on_delete=models.DO_NOTHING)#-----------------
+    admission_date = models.DateField(auto_now_add=True,blank=True, null=True)
+    previous_school_name = models.CharField(max_length=200,blank=True, null=True)
+    previous_standard_studied = models.CharField(max_length=200,blank=True, null=True)
+    tc_letter = models.CharField(max_length=200,blank=True, null=True)
+    guardian = models.ForeignKey(Guardian, on_delete=models.DO_NOTHING,blank=True, null=True)
+    year_level = models.ForeignKey('YearLevel', on_delete=models.SET_NULL)#---------------------
+    school_year = models.ForeignKey(SchoolYear, on_delete=models.DO_NOTHING)#---------------------
+    is_rte = models.BooleanField(default=False,blank=True, null=True)
     rte_number = models.CharField(max_length=50, blank=True, null=True)
-    emergency_contact_no = models.CharField(max_length=100)
-    entire_road_distance_from_home_to_school = models.CharField(max_length=100)
-    obtain_marks = models.FloatField()
-    total_marks = models.FloatField()
+    emergency_contact_no = models.CharField(max_length=100,blank=True, null=True)
+    entire_road_distance_from_home_to_school = models.CharField(max_length=100,blank=True, null=True)
+    obtain_marks = models.FloatField(blank=True, null=True)
+    total_marks = models.FloatField(blank=True, null=True)
     previous_percentage = models.FloatField(blank=True, null=True)  # Allow null/blank since auto-calculated
     is_active = models.BooleanField(default=True)
 
