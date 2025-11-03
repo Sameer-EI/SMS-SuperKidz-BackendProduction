@@ -137,6 +137,7 @@ class BankingDetail(models.Model):
     holder_name = models.CharField(max_length=50,null=True, blank=True)
     user = models.OneToOneField("authentication.User", on_delete=models.DO_NOTHING)
     is_active = models.BooleanField(default=True)
+    bank_name = models.CharField(max_length=50,null=True, blank=True)
 
     objects = BankingDetailsManager()
 
@@ -296,7 +297,7 @@ class Admission(models.Model):
     previous_standard_studied = models.CharField(max_length=200,blank=True, null=True)
     tc_letter = models.CharField(max_length=200,blank=True, null=True)
     guardian = models.ForeignKey(Guardian, on_delete=models.DO_NOTHING,blank=True, null=True)
-    year_level = models.ForeignKey('YearLevel', on_delete=models.SET_NULL)#---------------------
+    year_level = models.ForeignKey('YearLevel', on_delete=models.DO_NOTHING)#---------------------
     school_year = models.ForeignKey(SchoolYear, on_delete=models.DO_NOTHING)#---------------------
     is_rte = models.BooleanField(default=False,blank=True, null=True)
     rte_number = models.CharField(max_length=50, blank=True, null=True)

@@ -58,17 +58,39 @@ class ClassRoomSerializer(serializers.ModelSerializer):
         fields = ['id', 'room_type', 'room_name', 'capacity']
         read_only_fields = ['id']
 
+#choices for bank details
+INDIAN_BANK_CHOICES = [
+    ('Axis Bank', 'Axis Bank'),
+    ('Bank of Baroda', 'Bank of Baroda'),
+    ('Bank of India', 'Bank of India'),
+    ('Canara Bank', 'Canara Bank'),
+    ('Central Bank of India', 'Central Bank of India'),
+    ('HDFC Bank', 'HDFC Bank'),
+    ('ICICI Bank', 'ICICI Bank'),
+    ('IDFC First Bank', 'IDFC First Bank'),
+    ('IndusInd Bank', 'IndusInd Bank'),
+    ('Kotak Mahindra Bank', 'Kotak Mahindra Bank'),
+    ('Punjab National Bank', 'Punjab National Bank'),
+    ('State Bank of India', 'State Bank of India'),
+    ('UCO Bank', 'UCO Bank'),
+    ('Union Bank of India', 'Union Bank of India'),
+    ('Yes Bank', 'Yes Bank'),
+    ('other', 'Other'),
+]
 
-
-class BankingDetailsSerializer(serializers.ModelSerializer):
-    
+class BankingDetailsSerializer(serializers.ModelSerializer): 
     account_no = serializers.IntegerField(required=False, allow_null=True)
     ifsc_code = serializers.CharField(required=False, allow_blank=True)
     holder_name = serializers.CharField(required=False, allow_blank=True)
+    bank_name = serializers.ChoiceField(
+        choices=INDIAN_BANK_CHOICES,
+        required=False,
+        error_messages={"invalid_choice": "Select a valid bank name."}
+    )
 
     class Meta:
         model = BankingDetail
-        fields = ['id', 'account_no', 'ifsc_code', 'holder_name']
+        fields = ['id', 'account_no', 'ifsc_code', 'holder_name', 'bank_name']
         extra_kwargs = {
             "user": {"read_only": True}
         }
@@ -94,6 +116,7 @@ class BankingDetailsSerializer(serializers.ModelSerializer):
         instance.account_no = validated_data.get("account_no", None)
         instance.ifsc_code = validated_data.get("ifsc_code", "")
         instance.holder_name = validated_data.get("holder_name", "")
+        instance.bank_name = validated_data.get("bank_name", instance.bank_name)
         instance.save()
         return instance
 
