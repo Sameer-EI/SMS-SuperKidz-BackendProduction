@@ -152,6 +152,7 @@ class BankingDetail(models.Model):
         verbose_name_plural = "Banking Details"
         db_table = "BankingDetail"
         indexes = [models.Index(fields=['is_active'])]
+        unique_together = ('account_no', 'ifsc_code')
 
 
 class SchoolYear(models.Model):
