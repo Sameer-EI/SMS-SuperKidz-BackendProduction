@@ -129,7 +129,18 @@ class BankingDetailsManager(models.Manager):
     
     def all_including_inactive(self):
         return super().get_queryset()
-    
+
+class BankName(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        verbose_name = "Bank Name"
+        verbose_name_plural = "Bank Names"
+        db_table = "BankName"
+
 class BankingDetail(models.Model):
     account_no = models.BigIntegerField(null=True, blank=True)
     # account_no = models.BigIntegerField(primary_key=True, unique=True)
@@ -137,7 +148,7 @@ class BankingDetail(models.Model):
     holder_name = models.CharField(max_length=50,null=True, blank=True)
     user = models.OneToOneField("authentication.User", on_delete=models.DO_NOTHING)
     is_active = models.BooleanField(default=True)
-    bank_name = models.CharField(max_length=50,null=True, blank=True)
+    bank_name = models.ForeignKey(BankName,on_delete=models.DO_NOTHING,null=True, blank=True)
 
     objects = BankingDetailsManager()
 

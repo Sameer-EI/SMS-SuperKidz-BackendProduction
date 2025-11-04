@@ -32,7 +32,7 @@ class StudentSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(max_length=100, write_only=True, required=True, allow_blank=False)
     middle_name = serializers.CharField(max_length=100, write_only=True, required=False, allow_blank=True)
     last_name = serializers.CharField(max_length=100, write_only=True, required=True, allow_blank=False)
-    email = serializers.EmailField(write_only=True,required=False,allow_blank=True,default="N/A")
+    email = serializers.EmailField(write_only=True,required=False,allow_blank=True)
     password = serializers.CharField(max_length=100, write_only=True, required=False, allow_blank=True)
     user_profile = serializers.ImageField(required=False, allow_null=True, write_only=True)
 
@@ -99,7 +99,7 @@ class StudentSerializer(serializers.ModelSerializer):
             'first_name': user.first_name,
             'middle_name': user.middle_name,
             'last_name': user.last_name,
-            'email': "N/A",
+            'email': user.email,
             'user_profile': user.user_profile.url if user.user_profile else None,
         })
         return rep
@@ -204,7 +204,7 @@ class GuardianSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(max_length=100, write_only=True, required=True, allow_blank=False)
     middle_name = serializers.CharField(max_length=100, write_only=True, required=False, allow_blank=True)
     last_name = serializers.CharField(max_length=100, write_only=True, required=True, allow_blank=False)
-    email = serializers.EmailField(write_only=True,required=False,allow_blank=True,default="N/A")
+    email = serializers.EmailField(write_only=True,required=False,allow_blank=True)
     password = serializers.CharField(max_length=100, write_only=True, required=False, allow_blank=True)
     user_profile = serializers.ImageField(required=False, allow_null=True, write_only=True)
 

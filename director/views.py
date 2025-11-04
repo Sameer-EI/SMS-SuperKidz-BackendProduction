@@ -768,7 +768,7 @@ def student_category(request):
     total_students = Student.objects.count()
 
     # Map category codes to their display names
-    category_display_map = dict(Student._meta.get_field('category').choices)
+    category_display_map = dict(Student._meta.get_field('category').choices or [])
 
     result = [
         {
@@ -1613,6 +1613,10 @@ class DirectorView(viewsets.ModelViewSet):
 class BankingDetailView(viewsets.ModelViewSet):
     queryset = BankingDetail.objects.all()
     serializer_class = BankingDetailsSerializer
+
+class BankNameView(viewsets.ModelViewSet):
+    queryset = BankName.objects.all()
+    serializer_class = BankNameSerializer
 
 
 class DirectorView(viewsets.ModelViewSet):

@@ -50,6 +50,8 @@ router.register(r'Employee',EmployeeView,basename=Employee)
 router.register(r'Employee-salary',EmployeeSalaryView)
 router.register(r'school-turnover',SchoolTurnOverViewSet,basename='school-turnover')
 router.register(r'payment',PaymentView)
+router.register(r'bank_name', BankNameView, basename='bankname')
+
 
 urlpatterns = [
     path('download-file/', DownloadFileView.as_view()), 

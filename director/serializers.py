@@ -57,36 +57,15 @@ class ClassRoomSerializer(serializers.ModelSerializer):
         read_only_fields = ['id']
 
 
-#choices for bank details
-INDIAN_BANK_CHOICES = [
-    ('Axis Bank', 'Axis Bank'),
-    ('Bank of Baroda', 'Bank of Baroda'),
-    ('Bank of India', 'Bank of India'),
-    ('Canara Bank', 'Canara Bank'),
-    ('Central Bank of India', 'Central Bank of India'),
-    ('HDFC Bank', 'HDFC Bank'),
-    ('ICICI Bank', 'ICICI Bank'),
-    ('IDFC First Bank', 'IDFC First Bank'),
-    ('IndusInd Bank', 'IndusInd Bank'),
-    ('Kotak Mahindra Bank', 'Kotak Mahindra Bank'),
-    ('Punjab National Bank', 'Punjab National Bank'),
-    ('State Bank of India', 'State Bank of India'),
-    ('UCO Bank', 'UCO Bank'),
-    ('Union Bank of India', 'Union Bank of India'),
-    ('Yes Bank', 'Yes Bank'),
-    ('other', 'Other'),
-]
 
-class BankingDetailsSerializer(serializers.ModelSerializer): 
+class BankingDetailsSerializer(serializers.ModelSerializer):
     account_no = serializers.IntegerField(required=False, allow_null=True)
     ifsc_code = serializers.CharField(required=False, allow_blank=True)
     holder_name = serializers.CharField(required=False, allow_blank=True)
-    bank_name = serializers.ChoiceField(
-        choices=INDIAN_BANK_CHOICES,
+    bank_name = serializers.PrimaryKeyRelatedField(
+        queryset=BankName.objects.all(),
         required=False,
-        allow_null=True,
-        allow_blank=True,
-        error_messages={"invalid_choice": "Select a valid bank name."}
+        allow_null=True
     )
 
     class Meta:
@@ -95,8 +74,6 @@ class BankingDetailsSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             "user": {"read_only": True},
         }
-
-        
 
     def create(self, validated_data):
         user = self.context.get("user")
@@ -107,21 +84,26 @@ class BankingDetailsSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         account_no = validated_data.get("account_no", instance.account_no)
 
-        # Only check for duplicates if account_no is provided and not null
+        # Check for duplicates only when a new account number is given
         if account_no not in [None, ""] and account_no != instance.account_no:
             if BankingDetail.objects.filter(account_no=account_no).exclude(id=instance.id).exists():
                 raise serializers.ValidationError({
                     "account_no": "This account number is already in use by another user."
                 })
 
-        # Apply even if user clears the field
+        # Allow fields to be blank or null safely
         instance.account_no = validated_data.get("account_no", None)
         instance.ifsc_code = validated_data.get("ifsc_code", "")
         instance.holder_name = validated_data.get("holder_name", "")
-        instance.bank_name = validated_data.get("bank_name","")
+        instance.bank_name = validated_data.get("bank_name", None)
+
         instance.save()
         return instance
-
+    
+class BankNameSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BankName
+        fields = ['id', 'name']
 
 class RoleSerializer(serializers.ModelSerializer):
     class Meta:
@@ -468,6 +450,7 @@ class AdmissionSerializer(serializers.ModelSerializer):
 
         # --- Student processing ---
         classes_data = student_data.pop('classes', [])
+
         if isinstance(classes_data, str):
             try:
                 classes_data = [int(classes_data)]
@@ -640,10 +623,34 @@ class AdmissionSerializer(serializers.ModelSerializer):
         # --- Student update ---
         if student_data:
             classes_data = student_data.pop('classes', None)
+            email = student_data.pop('email', None)
+            password = student_data.pop('password', None)
+
+            student_user = instance.student.user
+
+            # Update basic info
+            for attr in ['first_name', 'middle_name', 'last_name', 'user_profile']:
+                if attr in student_data and student_data[attr] not in [None, '']:
+                    setattr(student_user, attr, student_data[attr])
+
+            # Handle email safely
+            if email:
+                student_user.email = email
+            elif not student_user.email:
+                student_user.email = f"{instance.student.scholar_number}@school.local"
+
+            # Handle password if provided
+            if password:
+                student_user.set_password(password)
+
+            student_user.save()
+
+            # Save student model fields
             student_serializer = StudentSerializer(instance.student, data=student_data, partial=True)
             student_serializer.is_valid(raise_exception=True)
             student_serializer.save()
 
+            # Handle classes
             if classes_data is not None:
                 if isinstance(classes_data, str):
                     classes_data = [int(classes_data)]
@@ -653,11 +660,23 @@ class AdmissionSerializer(serializers.ModelSerializer):
         if guardian_data:
             guardian_user = instance.guardian.user
             password = guardian_data.pop('password', None)
-            for attr in ['first_name', 'middle_name', 'last_name', 'email', 'user_profile']:
+            email = guardian_data.pop('email', None)
+
+            # Update basic info
+            for attr in ['first_name', 'middle_name', 'last_name', 'user_profile']:
                 if attr in guardian_data and guardian_data[attr] not in [None, '']:
                     setattr(guardian_user, attr, guardian_data[attr])
+
+            # Handle email safely
+            if email:
+                guardian_user.email = email
+            elif not guardian_user.email:
+                guardian_user.email = f"{instance.student.scholar_number}guardian@school.local"
+
+            # Handle password if provided
             if password:
                 guardian_user.set_password(password)
+
             guardian_user.save()
 
             guardian_serializer = GuardianSerializer(instance.guardian, data=guardian_data, partial=True)
@@ -716,7 +735,6 @@ class AdmissionSerializer(serializers.ModelSerializer):
 
         instance.save()
         return instance
-
 
 
 # # # ***************change variable name *****************************
