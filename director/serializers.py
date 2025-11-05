@@ -717,6 +717,7 @@ class AdmissionSerializer(serializers.ModelSerializer):
 
                 banking_instance.ifsc_code = banking_data.get('ifsc_code', '')
                 banking_instance.holder_name = banking_data.get('holder_name', '')
+                banking_instance.bank_name = banking_data.get('bank_name', '')
                 banking_instance.save()
 
             except BankingDetail.DoesNotExist:
