@@ -5473,7 +5473,8 @@ class ReportCardView(viewsets.ModelViewSet):
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=False)
+        # Validate strictly so serializer.errors are populated and returned when input is invalid
+        serializer.is_valid(raise_exception=True)
 
         student = serializer.validated_data.get('student')
         file = serializer.validated_data.get('file')
