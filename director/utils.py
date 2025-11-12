@@ -166,6 +166,7 @@ def ExamPaper_folder(instance, filename):
 # ------------------ File Download's
 from django.http import FileResponse
 from rest_framework.response import Response
+from django.core.exceptions import ValidationError
 
 def get_file_response(file_field, file_label="file"):
     if file_field and hasattr(file_field, "path") and os.path.exists(file_field.path):
@@ -303,3 +304,130 @@ def expense_attachments(instance, filename):
         month_name,  
         f"{category_name}_{filename}"
     )
+
+
+
+from django.core.mail import send_mail
+from django.conf import settings
+
+def send_email_notification(to_email, subject, message):
+    send_mail(
+        subject=subject,
+        message=message,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[to_email],
+        fail_silently=False,
+    )
+
+
+# --------------------- Report Card attachments with validation
+
+# def reportcard_attachments(instance, filename):
+#     """
+#     Build path for report card uploads and validate file type and size.
+#     """
+
+#     ALLOWED_EXT = {'.pdf', '.jpg', '.jpeg', '.png'}
+#     MAX_SIZE = 5 * 1024 * 1024  # 5 MB
+
+#     # extension check
+#     _, ext = os.path.splitext(filename)
+#     if ext.lower() not in ALLOWED_EXT:
+#         raise ValidationError(f"Unsupported file type '{ext}'. Allowed types: {', '.join(sorted(ALLOWED_EXT))}.")
+
+#     # file size check
+#     uploaded_file = getattr(instance, 'file', None)
+#     if uploaded_file and getattr(uploaded_file, 'size', 0) > MAX_SIZE:
+#         raise ValidationError(f"File size exceeds the allowed limit of {MAX_SIZE // (1024*1024)} MB.")
+
+#     # folder structure: reportcard_attachments/<year>/<level>/<student_name_scholar_no>/<filename>
+#     student = getattr(instance, 'student', None)
+
+#     # defaults
+#     year_part = datetime.now().year
+#     level_part = "unknown_level"
+#     student_part = f"student_{getattr(student, 'id', 'unknown')}"
+
+#     if student:
+#         year_part = getattr(student.year, 'year_name', year_part)
+#         level_part = getattr(student.level, 'level_name', level_part)
+
+#         student_obj = getattr(student, 'student', None)
+#         if student_obj:
+#             user = getattr(student_obj, 'user', None)
+#             scholar_no = getattr(student_obj, 'scholar_number', None)
+#             name_part = f"{user.first_name}_{user.last_name}" if user else None
+#             if scholar_no and name_part:
+#                 student_part = f"{name_part}_{scholar_no}"
+#             elif name_part:
+#                 student_part = name_part
+#             elif scholar_no:
+#                 student_part = f"student_{scholar_no}"
+
+#     folder = os.path.join(
+#         'reportcard_attachments',
+#         clean_name(year_part),
+#         clean_name(level_part),
+#         clean_name(student_part)
+#     )
+
+#     return os.path.join(folder, filename)
+
+
+def reportcard_attachments(instance, filename):
+    # Validate file type and size before returning path
+    ALLOWED_EXT = {'.pdf', '.jpg', '.jpeg', '.png'}
+    MAX_SIZE = 5 * 1024 * 1024  # 5 MB
+
+    # extension check
+    _, ext = os.path.splitext(filename)
+    if ext.lower() not in ALLOWED_EXT:
+        raise ValidationError(
+            f"Unsupported file type '{ext}'. Allowed types: {', '.join(sorted(ALLOWED_EXT))}."
+        )
+
+    # try to access uploaded file size (UploadedFile on instance.file)
+    uploaded_file = getattr(instance, 'file', None)
+    try:
+        file_size = getattr(uploaded_file, 'size', None)
+    except Exception:
+        file_size = None
+
+    if file_size and file_size > MAX_SIZE:
+        raise ValidationError(f"File size exceeds the allowed limit of {MAX_SIZE // (1024*1024)} MB.")
+
+    # folder structure: reportcard_attachments/<year>/<level>/<student_name_scholar_no>/<filename>
+    student = getattr(instance, 'student', None)
+
+    year_part = getattr(student.year, 'year_name', datetime.now().year) if student else datetime.now().year
+    level_part = getattr(student.level, 'level_name', 'unknown_level') if student else 'unknown_level'
+
+    student_obj = getattr(student, 'student', None) if student else None
+    if student_obj:
+        user = getattr(student_obj, 'user', None)
+        scholar_no = getattr(student_obj, 'scholar_number', None)
+        name_part = None
+        if user:
+            fname = getattr(user, 'first_name', '') or ''
+            lname = getattr(user, 'last_name', '') or ''
+            name_part = f"{fname}_{lname}".strip('_') if (fname or lname) else None
+
+        if scholar_no and name_part:
+            student_part = f"{name_part}_{scholar_no}"
+        elif name_part:
+            student_part = name_part
+        elif scholar_no:
+            student_part = f"student_{scholar_no}"
+        else:
+            student_part = f"student_{getattr(student_obj, 'id', 'unknown')}"
+    else:
+        student_part = f"student_{getattr(student, 'id', 'unknown')}"
+
+    folder = os.path.join(
+        'reportcard_attachments',
+        clean_name(year_part),
+        clean_name(level_part),
+        clean_name(student_part)
+    )
+
+    return os.path.join(folder, filename)

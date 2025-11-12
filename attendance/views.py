@@ -3,7 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-from utils.email_notification import send_email_notification
+from director.utils import send_email_notification
 
 from .models import  *
 from .serializers import *

@@ -2,7 +2,7 @@ from datetime import *
 import re
 from rest_framework import serializers
 
-from utils.email_notification import send_email_notification
+from .utils import send_email_notification
 from .models import *
 from django.core.exceptions import MultipleObjectsReturned
 from django.db import IntegrityError
@@ -2933,123 +2933,137 @@ class ExamPaperSerializer(serializers.ModelSerializer):
         return instance
 
 
-class StudentMarksSerializer(serializers.ModelSerializer):
-    teacher_name = serializers.CharField(source='teacher.user.first_name', read_only=True)
-    school_year = serializers.CharField(source='term.year.year_name', read_only=True)
-    year_level = serializers.CharField(source='student.year_level.level_name', read_only=True)
-    subject = serializers.CharField(source='subject.subject_name', read_only=True)
-    exam_type = serializers.CharField(source='exam_type.name', read_only=True)
-    student_name = serializers.CharField(source='student.user.first_name', read_only=True)
-    marks = serializers.DecimalField(source='marks_obtained', max_digits=5, decimal_places=2, read_only=True)
+# class StudentMarksSerializer(serializers.ModelSerializer):
+#     teacher_name = serializers.CharField(source='teacher.user.first_name', read_only=True)
+#     school_year = serializers.CharField(source='term.year.year_name', read_only=True)
+#     year_level = serializers.CharField(source='student.year_level.level_name', read_only=True)
+#     subject = serializers.CharField(source='subject.subject_name', read_only=True)
+#     exam_type = serializers.CharField(source='exam_type.name', read_only=True)
+#     student_name = serializers.CharField(source='student.user.first_name', read_only=True)
+#     marks = serializers.DecimalField(source='marks_obtained', max_digits=5, decimal_places=2, read_only=True)
 
-    class Meta:
-        model = StudentMarks
-        fields = ['id','teacher_name','school_year','year_level','subject','exam_type','student_name','marks']
-
-
+#     class Meta:
+#         model = StudentMarks
+#         fields = ['id','teacher_name','school_year','year_level','subject','exam_type','student_name','marks']
 
 
 
+# """---------------------------------------------RESULT---------------------------------------------------------------------"""
 
-"""---------------------------------------------RESULT---------------------------------------------------------------------"""
+# """----------------------------------------ReportCardDocument-------------------------------------------------"""
+# class ReportCardDocumentSerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model = ReportCardDocument
+#         fields = '__all__'
 
-"""----------------------------------------ReportCardDocument-------------------------------------------------"""
-class ReportCardDocumentSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ReportCardDocument
-        fields = '__all__'
+# """----------------------------------------SubjectScore----------------------------------------------------"""
+# class StudentMarksMiniSerializer(serializers.ModelSerializer):
+#     student_name = serializers.CharField(source="student.user.first_name", read_only=True)
+#     subject_name = serializers.CharField(source="subject.subject_name")
+#     exam_type = serializers.CharField(source="exam_type.name")
+#     marks_obtained = serializers.DecimalField(decimal_places=2,max_digits=5,required=False,allow_null=True,coerce_to_string=False)
 
-"""----------------------------------------SubjectScore----------------------------------------------------"""
-class StudentMarksMiniSerializer(serializers.ModelSerializer):
-    student_name = serializers.CharField(source="student.user.first_name", read_only=True)
-    subject_name = serializers.CharField(source="subject.subject_name")
-    exam_type = serializers.CharField(source="exam_type.name")
-    marks_obtained = serializers.DecimalField(decimal_places=2,max_digits=5,required=False,allow_null=True,coerce_to_string=False)
-
-    class Meta:
-        model = StudentMarks
-        fields = ["student_name","exam_type", "subject_name", "marks_obtained"]
+#     class Meta:
+#         model = StudentMarks
+#         fields = ["student_name","exam_type", "subject_name", "marks_obtained"]
     
-    def to_representation(self, instance):
-        rep = super().to_representation(instance)
-        marks = rep.get("marks_obtained")
-        try:
-            rep["marks_obtained"] = str(marks) if marks is not None else "0.00"
-        except:
-            rep["marks_obtained"] = "0.00"
-        return rep
+#     def to_representation(self, instance):
+#         rep = super().to_representation(instance)
+#         marks = rep.get("marks_obtained")
+#         try:
+#             rep["marks_obtained"] = str(marks) if marks is not None else "0.00"
+#         except:
+#             rep["marks_obtained"] = "0.00"
+#         return rep
 
     
-class SubjectScoreSerializer(serializers.ModelSerializer):
-    marks_obtained = StudentMarksMiniSerializer()
-    # print("marks_obtained", marks_obtained )
-    class Meta:
-        model = SubjectScore
-        fields = ["marks_obtained"]
+# class SubjectScoreSerializer(serializers.ModelSerializer):
+#     marks_obtained = StudentMarksMiniSerializer()
+#     # print("marks_obtained", marks_obtained )
+#     class Meta:
+#         model = SubjectScore
+#         fields = ["marks_obtained"]
 
-"""----------------------------------------NonScholasticGradeTermWise-------------------------------------------------"""
+# """----------------------------------------NonScholasticGradeTermWise-------------------------------------------------"""
 
-class PersonalSocialQualitySerializer(serializers.ModelSerializer):
-    class Meta:
-        model = PersonalSocialQuality
-        fields = "__all__"
+# class PersonalSocialQualitySerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model = PersonalSocialQuality
+#         fields = "__all__"
 
-class NonScholasticGradeTermWiseSerializer(serializers.ModelSerializer):
-    ALLOWED_GRADES = ["A++", "A+", "A", "B", "C", "D"]
+# class NonScholasticGradeTermWiseSerializer(serializers.ModelSerializer):
+#     ALLOWED_GRADES = ["A++", "A+", "A", "B", "C", "D"]
 
-    def validate_non_scholastic_subject(self, subject):
+#     def validate_non_scholastic_subject(self, subject):
         
-        expected_department = "Non-scholastic"  # change if needed
+#         expected_department = "Non-scholastic"  # change if needed
         
-        if not subject.department or subject.department.department_name != expected_department:
-            raise serializers.ValidationError(
-                f"Subject must belong to the '{expected_department}' department."
-            )
-        return subject
+#         if not subject.department or subject.department.department_name != expected_department:
+#             raise serializers.ValidationError(
+#                 f"Subject must belong to the '{expected_department}' department."
+#             )
+#         return subject
 
-    def validate_grade(self, value):
-        if value not in self.ALLOWED_GRADES:
-            raise serializers.ValidationError("Grade must be one of: A++, A+, A, B, C, D.")
-        return value
+#     def validate_grade(self, value):
+#         if value not in self.ALLOWED_GRADES:
+#             raise serializers.ValidationError("Grade must be one of: A++, A+, A, B, C, D.")
+#         return value
     
-    class Meta:
-        model = NonScholasticGradeTermWise
-        fields = ['id', 'report_card', 'non_scholastic_subject', 'term', 'grade']
+#     class Meta:
+#         model = NonScholasticGradeTermWise
+#         fields = ['id', 'report_card', 'non_scholastic_subject', 'term', 'grade']
 
-"""----------------------------------------PersonalSocialQualityTermWise-------------------------------------------------"""
+# """----------------------------------------PersonalSocialQualityTermWise-------------------------------------------------"""
       
-class PersonalSocialGradeSerializer(serializers.ModelSerializer):
+# class PersonalSocialGradeSerializer(serializers.ModelSerializer):
 
-    ALLOWED_GRADES = ["A++", "A+", "A", "B", "C", "D"]
+#     ALLOWED_GRADES = ["A++", "A+", "A", "B", "C", "D"]
 
-    def validate_grade(self, value):
-        if value not in self.ALLOWED_GRADES:
-            raise serializers.ValidationError("Grade must be one of: A++, A+, A, B, C, D.")
-        return value
+#     def validate_grade(self, value):
+#         if value not in self.ALLOWED_GRADES:
+#             raise serializers.ValidationError("Grade must be one of: A++, A+, A, B, C, D.")
+#         return value
 
-    class Meta:
-        model = PersonalSocialQualityTermWise
-        fields = ['id', 'report_card', 'personal_quality', 'term', 'grade']
+#     class Meta:
+#         model = PersonalSocialQualityTermWise
+#         fields = ['id', 'report_card', 'personal_quality', 'term', 'grade']
 
-"""----------------------------------------ReportCard-------------------------------------------------"""
+# """----------------------------------------ReportCard-------------------------------------------------"""
     
+# class ReportCardSerializer(serializers.ModelSerializer):
+#     PersonalSocialQualityTermWise = PersonalSocialGradeSerializer(many=True, read_only=True)
+#     subjects = SubjectScoreSerializer(many=True,read_only=True, source='subject_scores')
+    
+#     class Meta:
+#         model = ReportCard
+#         fields = ["id","student_level",
+#             "rank","percentage","grade",
+#             "division", "attendance","PersonalSocialQualityTermWise","subjects", "teacher_remark", "supplementary_in", "school_reopen_date", "promoted_to_class",
+#         ]
+#         read_only_fields = ["total_marks", "max_marks", "percentage","grade","division","subjects","attendance","supplementary_in", "promoted_to_class"]
+
+#     def get_promoted_to_class(self, obj):
+#         if obj.promoted_to_class:
+#             return str(obj.promoted_to_class.level.level_name)
+#         return '0'
+
 class ReportCardSerializer(serializers.ModelSerializer):
-    PersonalSocialQualityTermWise = PersonalSocialGradeSerializer(many=True, read_only=True)
-    subjects = SubjectScoreSerializer(many=True,read_only=True, source='subject_scores')
-    
     class Meta:
         model = ReportCard
-        fields = ["id","student_level",
-            "rank","percentage","grade",
-            "division", "attendance","PersonalSocialQualityTermWise","subjects", "teacher_remark", "supplementary_in", "school_reopen_date", "promoted_to_class",
-        ]
-        read_only_fields = ["total_marks", "max_marks", "percentage","grade","division","subjects","attendance","supplementary_in", "promoted_to_class"]
+        fields = "__all__"
 
-    def get_promoted_to_class(self, obj):
-        if obj.promoted_to_class:
-            return str(obj.promoted_to_class.level.level_name)
-        return '0'
+    def validate_file(self, file):
+        ALLOWED_EXT = {'.pdf', '.jpg', '.jpeg', '.png'}
+        MAX_SIZE = 5 * 1024 * 1024  # 5 MB
 
+        ext = os.path.splitext(file.name)[1].lower()
+        if ext not in ALLOWED_EXT:
+            raise serializers.ValidationError(f"Unsupported file type '{ext}'.")
+
+        if file.size > MAX_SIZE:
+            raise serializers.ValidationError(f"File size exceeds {MAX_SIZE // (1024*1024)} MB.")
+
+        return file
 
 # --------------------- Expense 
 
