@@ -12,6 +12,7 @@ router.register(r'guardian/attendance', GuardianChildrenAttendanceViewSet, basen
 # router.register(r'attendance/mark-holidays', BulkHolidayAttendanceViewSet, basename='mark-holiday'),
 router.register('events', SchoolEventViewSet, basename='event')
 router.register(r'holidays',HolidayViewSet,basename='holidays')
+router.register(r'office-staff-attendance', OfficeStaffAttendanceView, basename='office-staff-attendance')
 
 urlpatterns = [
     path('', include(router.urls)),
