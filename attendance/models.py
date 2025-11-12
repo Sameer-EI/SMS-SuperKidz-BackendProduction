@@ -53,13 +53,13 @@ class SchoolEvent(models.Model):
 
 
 class OfficeStaffAttendance(models.Model):
-    Office_staff = models.ForeignKey(OfficeStaff, on_delete=models.CASCADE)
+    office_staff = models.ForeignKey(OfficeStaff, on_delete=models.CASCADE)
     date = models.DateField()
     status = models.CharField(max_length=10, choices=[('Present', 'Present'), ('Absent', 'Absent'), ('Leave', 'Leave')])
 
     class Meta:
-        unique_together = ('Office_staff', 'date')
+        unique_together = ('office_staff', 'date')
 
     def __str__(self):
-        return f"{self.Office_staff} - {self.date} - {self.status}"
+        return f"{self.office_staff} - {self.date} - {self.status}"
     

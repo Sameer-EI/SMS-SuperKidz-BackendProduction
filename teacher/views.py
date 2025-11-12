@@ -6,6 +6,8 @@ from rest_framework import status, viewsets
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
+from attendance.models import SchoolHoliday
+
 from .models import Teacher,TeacherYearLevel
 from .serializers import *
 # from .serializers import TeacherSerializer
@@ -465,7 +467,7 @@ class AbsentTeacherFreeReplacementAPIView(APIView):
                     for t in other_teachers_qs
                 ]
 
-                # 👇 merged free teachers list
+                #  merged free teachers list
                 all_free_teachers = same_class_free_teachers + other_class_free_teachers
 
                 period_data.append({
@@ -490,86 +492,109 @@ class AbsentTeacherFreeReplacementAPIView(APIView):
         return Response({"absent_teachers": result}, status=status.HTTP_200_OK)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-from datetime import date
-
-from .models import TeacherAttendance
-from teacher.models import Teacher
-
 class TeacherAttendanceAPIView(APIView):
-    
-
     def post(self, request):
-        teacher_id = request.data.get('teacher_id')
-        print(teacher_id)
-        status_input = request.data.get('status')  # 'present' or 'absent'
-        attendance_date = request.data.get('date', str(date.today()))  # optional
+        data = request.data
 
-        if not teacher_id or not status_input:
-            return Response({'error': 'teacher_id and status are required'}, status=400)
+        # Detect input type
+        if isinstance(data, dict):
+            records = [data]  # single attendance record
+        elif isinstance(data, list):
+            records = data    # multiple attendance records
+        else:
+            return Response({'error': 'Invalid input format. Must be dict or list.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            teacher = Teacher.objects.get(id=teacher_id)
-        except Teacher.DoesNotExist:
-            return Response({'error': 'Teacher not found'}, status=404)
-        
-        # Holiday check
-        holiday_exists = Holiday.objects.filter(
-            start_date__lte=attendance_date,
-            end_date__gte=attendance_date
-        ).exists()
+        results = []
+        errors = []
 
-        if holiday_exists:
-            return Response({
-                'error': 'Cannot mark attendance on a holiday',
-                'date': attendance_date
-            }, status=400)
+        for record in records:
+            teacher_id = record.get('teacher_id')
+            status_input = record.get('status')
+            date_str = record.get('date', str(date.today()))
 
-        # Check if already marked
-        if TeacherAttendance.objects.filter(teacher=teacher, date=attendance_date).exists():
-            return Response({
-                'message': 'Attendance already marked',
+            # Missing fields
+            if not teacher_id or not status_input:
+                errors.append({'error': 'teacher_id and status are required', 'data': record})
+                continue
+
+            # Parse date
+            try:
+                attendance_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except ValueError:
+                errors.append({'error': f'Invalid date format in record: {date_str}'})
+                continue
+
+            # Future date validation
+            if attendance_date > date.today():
+                errors.append({'error': 'Cannot mark attendance for a future date.', 'teacher_id': teacher_id})
+                continue
+
+            # Sunday check
+            if attendance_date.weekday() == 6:
+                errors.append({'error': 'Cannot mark attendance on Sunday.', 'teacher_id': teacher_id})
+                continue
+
+            # School holiday validation
+            if SchoolHoliday.objects.filter(date=attendance_date).exists():
+                errors.append({'error': 'Cannot mark attendance on a school holiday.', 'teacher_id': teacher_id})
+                continue
+
+            # General holiday validation
+            if Holiday.objects.filter(start_date__lte=attendance_date, end_date__gte=attendance_date).exists():
+                errors.append({'error': 'Cannot mark attendance on a general holiday.', 'teacher_id': teacher_id})
+                continue
+
+            # Only within the last 7 days
+            seven_days_ago = date.today() - timedelta(days=7)
+            if attendance_date < seven_days_ago:
+                errors.append({
+                    "error": "You can only mark attendance for the last 7 days.",
+                    "teacher_id": teacher_id
+                })
+                continue
+
+            # Check teacher existence
+            try:
+                teacher = Teacher.objects.get(id=teacher_id)
+            except Teacher.DoesNotExist:
+                errors.append({'error': f'Teacher not found (ID: {teacher_id})'})
+                continue
+
+            # Already marked check
+            if TeacherAttendance.objects.filter(teacher=teacher, date=attendance_date).exists():
+                errors.append({
+                    'message': 'Attendance already marked',
+                    'teacher_id': teacher_id,
+                    'date': str(attendance_date)
+                })
+                continue
+
+            # Create attendance
+            TeacherAttendance.objects.create(
+                teacher=teacher,
+                date=attendance_date,
+                status=status_input
+            )
+
+            results.append({
+                'message': 'Attendance marked successfully',
                 'teacher_id': teacher_id,
-                'date': attendance_date
-            }, status=400)
-        print("Attendance not marked previously.", attendance_date, teacher_id)
+                'status': status_input,
+                'date': str(attendance_date)
+            })
 
-        # Create new record
-        TeacherAttendance.objects.create(
-            teacher=teacher,
-            date=attendance_date,
-            status=status_input
-        )
+        # Response formatting
+        response_data = {
+            'success_count': len(results),
+            'error_count': len(errors),
+            'details': {
+                'marked': results,
+                'skipped': errors
+            }
+        }
 
-        return Response({
-            'message': 'Attendance marked successfully',
-            'teacher_id': teacher_id,
-            'status': status_input,
-            'date': attendance_date
-        }, status=201)
-    print("Attendance API called.", request)
-    
+        return Response(response_data, status=status.HTTP_200_OK if results else status.HTTP_400_BAD_REQUEST)
+   
 class TeacherAttendanceGetAPI(APIView):
     def get(self, request, id=None):
         if id:  

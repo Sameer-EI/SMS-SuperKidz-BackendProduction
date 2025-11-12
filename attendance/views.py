@@ -1,7 +1,7 @@
 from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status
+from rest_framework import status, viewsets
 
 from director.utils import send_email_notification
 
@@ -680,100 +680,109 @@ class OfficeStaffAttendanceView(ModelViewSet):
     queryset = OfficeStaffAttendance.objects.all().order_by("-date")
     serializer_class = OfficeStaffAttendanceSerializer
 
-    def get_view_description(self, html=False):
-        return (
-            "----> This endpoint allows you to view or mark 'single' and 'multiple' attendance for office staff."
-        )
-
     def create(self, request, *args, **kwargs):
         data = request.data
-        date_str = data.get("date")
 
-        # ============ DATE VALIDATIONS ============
-        try:
-            marked_date = datetime.strptime(date_str, "%Y-%m-%d").date() if date_str else date.today()
-        except ValueError:
-            return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
-
-        if marked_date > date.today():
-            return Response({"error": "You cannot mark attendance for a future date."}, status=status.HTTP_400_BAD_REQUEST)
-
-        if marked_date.weekday() == 6:
-            return Response({"error": "Attendance cannot be marked on Sunday."}, status=status.HTTP_400_BAD_REQUEST)
-
-        if SchoolHoliday.objects.filter(date=marked_date).exists():
-            return Response({"error": "Attendance cannot be marked on a school holiday."}, status=status.HTTP_400_BAD_REQUEST)
-
-        if Holiday.objects.filter(start_date__lte=marked_date, end_date__gte=marked_date).exists():
-            return Response({"error": "Attendance cannot be marked on a holiday."}, status=status.HTTP_400_BAD_REQUEST)
-        # ==========================================
-
-        created_records = []
-
-        # Case 1 — Single record format
-        if data.get("Office_staff"):
-            staff_id = data.get("Office_staff")
-            status_code = data.get("status")
-
-            try:
-                staff = OfficeStaff.objects.get(id=staff_id)
-            except OfficeStaff.DoesNotExist:
-                return Response({"error": "Invalid Office staff ID."}, status=status.HTTP_404_NOT_FOUND)
-
-            if OfficeStaffAttendance.objects.filter(Office_staff=staff, date=marked_date).exists():
-                return Response(
-                    {"error": "Attendance already marked for this staff member on this date."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            attendance = OfficeStaffAttendance.objects.create(
-                Office_staff=staff, date=marked_date, status=status_code
-            )
-            created_records.append(attendance)
-
-        # Case 2— Bulk format (Present, Absent, Leave lists)
+        # Handle both single and multiple records
+        if isinstance(data, dict):
+            records = [data]
+        elif isinstance(data, list):
+            records = data
         else:
-            allowed_statuses = ["Present", "Absent", "Leave"]
-            at_least_one = False
+            return Response(
+                {"error": "Invalid input format. Must be dict or list."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-            for status_code in allowed_statuses:
-                staff_ids = data.get(status_code, [])
-                if staff_ids:
-                    at_least_one = True
-                    if not isinstance(staff_ids, list):
-                        return Response(
-                            {"error": f"'{status_code}' must be a list of staff IDs."},
-                            status=status.HTTP_400_BAD_REQUEST
-                        )
+        results = []
+        errors = []
 
-                    for sid in staff_ids:
-                        if not isinstance(sid, int):
-                            return Response(
-                                {"error": f"All IDs under '{status_code}' must be integers."},
-                                status=status.HTTP_400_BAD_REQUEST
-                            )
+        for record in records:
+            office_staff_id = record.get("office_staff_id")
+            status_input = record.get("status")
+            date_str = record.get("date", str(date.today()))
 
-                        try:
-                            staff = OfficeStaff.objects.get(id=sid)
-                        except OfficeStaff.DoesNotExist:
-                            return Response(
-                                {"error": f"Office staff with ID {sid} not found."},
-                                status=status.HTTP_404_NOT_FOUND
-                            )
+            # Missing required fields
+            if not office_staff_id or not status_input:
+                errors.append({"error": "office_staff_id and status are required", "data": record})
+                continue
 
-                        if OfficeStaffAttendance.objects.filter(Office_staff=staff, date=marked_date).exists():
-                            continue  # Skip already marked
+            # Validate date format
+            try:
+                attendance_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except ValueError:
+                errors.append({"error": f"Invalid date format: {date_str}"})
+                continue
 
-                        attendance = OfficeStaffAttendance.objects.create(
-                            Office_staff=staff, date=marked_date, status=status_code
-                        )
-                        created_records.append(attendance)
+            # Future date check
+            if attendance_date > date.today():
+                errors.append({"error": "Cannot mark attendance for a future date.", "office_staff_id": office_staff_id})
+                continue
 
-            if not at_least_one:
-                return Response(
-                    {"error": "Provide at least one status list (Present, Absent, or Leave)."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+            # Sunday check
+            if attendance_date.weekday() == 6:
+                errors.append({"error": "Cannot mark attendance on Sunday.", "office_staff_id": office_staff_id})
+                continue
 
-        serializer = self.get_serializer(created_records, many=True)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+            # Holiday checks
+            if SchoolHoliday.objects.filter(date=attendance_date).exists():
+                errors.append({"error": "Cannot mark attendance on a school holiday.", "office_staff_id": office_staff_id})
+                continue
+
+            if Holiday.objects.filter(start_date__lte=attendance_date, end_date__gte=attendance_date).exists():
+                errors.append({"error": "Cannot mark attendance on a general holiday.", "office_staff_id": office_staff_id})
+                continue
+
+            # Only within the last 7 days
+            seven_days_ago = date.today() - timedelta(days=7)
+            if attendance_date < seven_days_ago:
+                errors.append({
+                    "error": "You can only mark attendance for the last 7 days.",
+                    "office_staff_id": office_staff_id
+                })
+                continue
+
+            # Staff existence check
+            try:
+                staff = OfficeStaff.objects.get(id=office_staff_id)
+            except OfficeStaff.DoesNotExist:
+                errors.append({"error": f"Office staff not found (ID: {office_staff_id})"})
+                continue
+
+            # Duplicate attendance check
+            if OfficeStaffAttendance.objects.filter(office_staff=staff, date=attendance_date).exists():
+                errors.append({
+                    "message": "Attendance already marked",
+                    "office_staff_id": office_staff_id,
+                    "date": str(attendance_date)
+                })
+                continue
+
+            # Create record
+            OfficeStaffAttendance.objects.create(
+                office_staff=staff,
+                date=attendance_date,
+                status=status_input
+            )
+
+            results.append({
+                "message": "Attendance marked successfully",
+                "office_staff_id": office_staff_id,
+                "status": status_input,
+                "date": str(attendance_date)
+            })
+
+        # Final response
+        response_data = {
+            "success_count": len(results),
+            "error_count": len(errors),
+            "details": {
+                "marked": results,
+                "skipped": errors
+            }
+        }
+
+        return Response(
+            response_data,
+            status=status.HTTP_200_OK if results else status.HTTP_400_BAD_REQUEST
+        )
