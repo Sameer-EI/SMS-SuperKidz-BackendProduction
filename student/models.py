@@ -23,17 +23,7 @@ class Student(models.Model):
     # enrolment_date = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     religion = models.CharField(max_length=50,null=True, blank=True)
-    category = models.CharField(
-    max_length=10,
-    choices=[
-        ('SC', 'Scheduled Caste'),
-        ('ST', 'Scheduled Tribe'),
-        ('OBC', 'Other Backward Class'),
-        ('GEN', 'General')
-    ],
-    default='GEN'
-)
-
+    category =models.CharField(max_length=50,null=True, blank=True)
     height = models.FloatField(null=True, blank=True)
     weight = models.FloatField(null=True, blank=True)
     blood_group = models.CharField(max_length=5,null=True, blank=True)
@@ -78,14 +68,7 @@ class Guardian(models.Model):
     phone_no = models.CharField(max_length=15,null=True, blank=True)
     annual_income = models.IntegerField(null=True, blank=True)
     
-    means_of_livelihood = models.CharField(
-        max_length=10,
-        choices=[
-            ('Govt', 'Government'),
-            ('Non-Govt', 'Non-Government'),
-        ],
-        default='Govt'
-    )
+    means_of_livelihood = models.CharField(max_length=15,null=True, blank=True)
     
     qualification = models.CharField(max_length=300,null=True, blank=True)
     occupation = models.CharField(max_length=300,null=True, blank=True)

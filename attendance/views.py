@@ -1,9 +1,9 @@
 from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status
+from rest_framework import status, viewsets
 
-from utils.email_notification import send_email_notification
+from director.utils import send_email_notification
 
 from .models import  *
 from .serializers import *
@@ -499,73 +499,6 @@ class TeacherYearLevelList(APIView):
         return Response(data)
 
         #------------- was creating numerous entries-------24/09/25--------------
-# class BulkHolidayAttendanceViewSet(ViewSet):
-#     def list(self, request):
-#         holidays = Holiday.objects.all().order_by('-start_date')
-#         serializer = HolidaySerializer(holidays, many=True)
-#         return Response(serializer.data)
-
-#     def create(self, request):
-#         start_date_str = request.data.get('start_date')
-#         end_date_str = request.data.get('end_date')
-#         title = request.data.get('title', 'Unnamed Holiday')
-
-#         if not start_date_str or not end_date_str:
-#             return Response({"error": "Start and end date are required."}, status=400)
-
-#         try:
-#             start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
-#             end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
-#         except ValueError:
-#             return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=400)
-
-#         if start_date > end_date:
-#             return Response({"error": "Start date must be before end date."}, status=400)
-
-#         # Create Holiday
-#         Holiday.objects.create(
-#             title=title,
-#             start_date=start_date,
-#             end_date=end_date
-#         )
-
-#         # Mark Holiday Attendance for all Students
-#         students = Student.objects.all()
-#         dates = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
-#         count = 0
-
-#         for student in students:
-#             try:
-#                 syl = StudentYearLevel.objects.get(student=student)
-#                 for date in dates:
-#                     if not StudentAttendance.objects.filter(student=student, marked_at=date).exists():
-#                         StudentAttendance.objects.create(
-#                             student=student,
-#                             status='H',
-#                             marked_at=date,
-#                             year_level=syl.level
-#                         )
-#                         count += 1
-#             except StudentYearLevel.DoesNotExist:
-#                 continue
-
-#         # Get all user phone numbers (students, teachers, staff, guardians)
-#         # phone_numbers = list(                 # commented as of 07Sep25 at 12:34 PM
-#         #     User.objects.filter(is_active=True)
-#         #     .exclude(phone_number__isnull=True)
-#         #     .exclude(phone_number__exact="")
-#         #     .values_list('phone_number', flat=True)
-#         # )
-
-#         # Send WhatsApp Notification to all users
-#         message_text = f"📢 Notice: {title} holiday has been declared from {start_date} to {end_date}."
-#         # if phone_numbers:                     # commented as of 07Sep25 at 12:34 PM
-#             # send_whatsapp_message(message_text, phone_numbers)    {len(phone_numbers)}
-#         send_whatsapp_message(message_text)
-
-#         return Response({
-#             "message": f"{count} holiday attendance records created. Notifications sent to users."
-#         }, status=201)
 
 
 class FetchIndianHolidaysView(APIView):
@@ -726,3 +659,130 @@ class SendWhatsAppView(APIView):
 class HolidayViewSet(ModelViewSet):
     queryset = Holiday.objects.all().order_by("-start_date")
     serializer_class = HolidaySerializer
+
+'''
+office staff attendance payload formats:
+
+single:
+  {"Office_staff": 5,
+  "date": "2025-11-12",
+  "status": "Present"}
+
+multiple:
+  {"date": "2025-11-12",
+  "Present": [1, 2],
+  "Absent": [3],
+  "Leave": [4, 5]}
+
+'''
+
+class OfficeStaffAttendanceView(ModelViewSet):
+    queryset = OfficeStaffAttendance.objects.all().order_by("-date")
+    serializer_class = OfficeStaffAttendanceSerializer
+
+    def create(self, request, *args, **kwargs):
+        data = request.data
+
+        # Handle both single and multiple records
+        if isinstance(data, dict):
+            records = [data]
+        elif isinstance(data, list):
+            records = data
+        else:
+            return Response(
+                {"error": "Invalid input format. Must be dict or list."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        results = []
+        errors = []
+
+        for record in records:
+            office_staff_id = record.get("office_staff_id")
+            status_input = record.get("status")
+            date_str = record.get("date", str(date.today()))
+
+            # Missing required fields
+            if not office_staff_id or not status_input:
+                errors.append({"error": "office_staff_id and status are required", "data": record})
+                continue
+
+            # Validate date format
+            try:
+                attendance_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except ValueError:
+                errors.append({"error": f"Invalid date format: {date_str}"})
+                continue
+
+            # Future date check
+            if attendance_date > date.today():
+                errors.append({"error": "Cannot mark attendance for a future date.", "office_staff_id": office_staff_id})
+                continue
+
+            # Sunday check
+            if attendance_date.weekday() == 6:
+                errors.append({"error": "Cannot mark attendance on Sunday.", "office_staff_id": office_staff_id})
+                continue
+
+            # Holiday checks
+            if SchoolHoliday.objects.filter(date=attendance_date).exists():
+                errors.append({"error": "Cannot mark attendance on a school holiday.", "office_staff_id": office_staff_id})
+                continue
+
+            if Holiday.objects.filter(start_date__lte=attendance_date, end_date__gte=attendance_date).exists():
+                errors.append({"error": "Cannot mark attendance on a general holiday.", "office_staff_id": office_staff_id})
+                continue
+
+            # Only within the last 7 days
+            seven_days_ago = date.today() - timedelta(days=7)
+            if attendance_date < seven_days_ago:
+                errors.append({
+                    "error": "You can only mark attendance for the last 7 days.",
+                    "office_staff_id": office_staff_id
+                })
+                continue
+
+            # Staff existence check
+            try:
+                staff = OfficeStaff.objects.get(id=office_staff_id)
+            except OfficeStaff.DoesNotExist:
+                errors.append({"error": f"Office staff not found (ID: {office_staff_id})"})
+                continue
+
+            # Duplicate attendance check
+            if OfficeStaffAttendance.objects.filter(office_staff=staff, date=attendance_date).exists():
+                errors.append({
+                    "message": "Attendance already marked",
+                    "office_staff_id": office_staff_id,
+                    "date": str(attendance_date)
+                })
+                continue
+
+            # Create record
+            OfficeStaffAttendance.objects.create(
+                office_staff=staff,
+                date=attendance_date,
+                status=status_input
+            )
+
+            results.append({
+                "message": "Attendance marked successfully",
+                "office_staff_id": office_staff_id,
+                "status": status_input,
+                "date": str(attendance_date)
+            })
+
+        # Final response
+        response_data = {
+            "success_count": len(results),
+            "error_count": len(errors),
+            "details": {
+                "marked": results,
+                "skipped": errors
+            }
+        }
+
+        return Response(
+            response_data,
+            status=status.HTTP_200_OK if results else status.HTTP_400_BAD_REQUEST
+        )

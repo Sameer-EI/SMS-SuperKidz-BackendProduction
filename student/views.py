@@ -263,35 +263,44 @@ class StudentView(ModelViewSet):
         for student in students:
             user = getattr(student, 'user', None)
             address_obj = Address.objects.filter(user=user).first()
+
             full_address = (
-                f"{address_obj.house_no}, {address_obj.address_line}, {address_obj.city.name}, "
-                f"{address_obj.state.name}, {address_obj.country.name}, Area Code: {address_obj.area_code}"
+                f"{address_obj.house_no or ''}, "
+                f"{address_obj.address_line or ''}, "
+                f"{getattr(address_obj.city, 'name', '')}, "
+                f"{getattr(address_obj.state, 'name', '')}, "
+                f"{getattr(address_obj.country, 'name', '')}, "
+                f"Area Code: {address_obj.area_code or ''}"
                 if address_obj else "N/A"
             )
 
             admission = Admission.objects.filter(student=student).first()
             guardian_name = (
-                admission.guardian.user.get_full_name() if admission and admission.guardian else "N/A"
+                admission.guardian.user.get_full_name()
+                if admission and getattr(admission, 'guardian', None) and getattr(admission.guardian, 'user', None)
+                else "N/A"
             )
-            
-            def get_banking_detail(self,student):
+
+            # inner helper funcs
+            def get_banking_detail(student):
                 banking = BankingDetail.objects.filter(user=user).first()
                 return BankingDetailsSerializer(banking).data if banking else None
 
-            def get_adhaar_no(self, student):
-                doc= Document.objects.filter(student=student, document_types__name__iexact="aadhaar").first()
-                return doc.identities if doc else "N/A"
-            
-            def annual_income(self, student):
+            def get_adhaar_no(student):
+                doc = Document.objects.filter(
+                    student=student, document_types__name__iexact="aadhaar"
+                ).first()
+                return getattr(doc, 'identities', "N/A") if doc else "N/A"
+
+            def annual_income(student):
                 guardian = Guardian.objects.filter(studentguardian__student=student).first()
-                return guardian.annual_income if guardian else "N/A"
-            
-            def get_school_year(self, admission):
+                return getattr(guardian, 'annual_income', "N/A") if guardian else "N/A"
+
+            def get_school_year(admission):
                 if not admission or not admission.student:
                     return "N/A"
-
                 student_year = StudentYearLevel.objects.filter(student=admission.student).first()
-                return student_year.year.year_name if student_year and student_year.year else "N/A"
+                return getattr(getattr(student_year, 'year', None), 'year_name', "N/A")
 
             data.append({
                 "student_id": student.id,
@@ -299,32 +308,30 @@ class StudentView(ModelViewSet):
                 "age": self.calculate_age(student.date_of_birth) if student.date_of_birth else "N/A",
                 "gender": student.gender or "N/A",
                 "contact_number": student.contact_number or "N/A",
-                "email": user.email or "N/A",
+                "email": getattr(user, 'email', "N/A"),
                 "date_of_birth": student.date_of_birth or "N/A",
                 "religion": student.religion or "N/A",
                 "father_name": student.father_name or "N/A",
                 "mother_name": student.mother_name or "N/A",
                 "guardian_name": guardian_name,
                 "full_address": full_address,
-                "class": admission.year_level.level_name if admission and admission.year_level else "N/A",
-                "adhaar number":get_adhaar_no(self, student) or "N/A",
+                "class": getattr(getattr(admission, 'year_level', None), 'level_name', "N/A"),
+                "adhaar number": get_adhaar_no(student) or "N/A",
                 "scholar number": student.scholar_number or "N/A",
                 "enrollment_no": getattr(admission, "enrollment_no", "N/A"),
-                "bank details": get_banking_detail(self, student) or "N/A",
+                "bank details": get_banking_detail(student) or "N/A",
                 "no. of siblings": getattr(student, "number_of_siblings", "N/A"),
-                "annual income": annual_income(self, student) or "N/A",
-                "guardian's contact no.":  admission.guardian.phone_no if admission and admission.guardian else "N/A",
+                "annual income": annual_income(student) or "N/A",
+                "guardian's contact no.": getattr(getattr(admission, 'guardian', None), 'phone_no', "N/A"),
                 "is_active": student.is_active,
-                "is_rte": admission.is_rte if admission else "N/A",
-                "rte number": admission.rte_number if admission else "N/A",
-                "school year": get_school_year(self, admission) or "N/A",
-                "category": getattr(student, "category", "N/A")
+                "is_rte": getattr(admission, 'is_rte', "N/A"),
+                "rte number": getattr(admission, 'rte_number', "N/A"),
+                "school year": get_school_year(admission) or "N/A",
+                "category": getattr(student, "category", "N/A"),
             })
 
-        # If a single student was requested, return one dict; else a list
-        if student_id:
-            return Response(data[0], status=status.HTTP_200_OK)
-        return Response(data, status=status.HTTP_200_OK)
+        # Return single student or list
+        return Response(data[0] if student_id else data, status=status.HTTP_200_OK)
 
 
 

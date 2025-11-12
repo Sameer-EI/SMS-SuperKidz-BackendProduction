@@ -35,12 +35,12 @@ router.register(r'fee-discounts',FeeDiscountView, basename='fee-discounts')
 router.register(r'Exam-Type',ExamTypeView)
 router.register(r'Exam-Paper',ExamPaperView)
 router.register(r'Exam-Schedule',ExamScheduleView)
-router.register(r'Student-Marks',StudentMarksView,basename='student-marks')
+# router.register(r'Student-Marks',StudentMarksView,basename='student-marks')
 
-router.register(r'personal-social-quality', PersonalSocialQualityView, basename='personal-social-quality')
-router.register(r'personal-social-grades', PersonalSocialGradeViewSet, basename='personal-social-grades')
-router.register(r'non-scholastic-grades', NonScholasticGradeViewSet, basename='non-scholastic')
-router.register(r'report-cards', ReportCardViewSet, basename='report-cards')
+# router.register(r'personal-social-quality', PersonalSocialQualityView, basename='personal-social-quality')
+# router.register(r'personal-social-grades', PersonalSocialGradeViewSet, basename='personal-social-grades')
+# router.register(r'non-scholastic-grades', NonScholasticGradeViewSet, basename='non-scholastic')
+router.register(r'report-cards', ReportCardView, basename='report-cards')
 
 router.register(r'income-category', IncomeCategoryView, basename='income-category')
 router.register(r'school-income', SchoolIncomeViewSet, basename='school-income')
@@ -50,6 +50,8 @@ router.register(r'Employee',EmployeeView,basename=Employee)
 router.register(r'Employee-salary',EmployeeSalaryView)
 router.register(r'school-turnover',SchoolTurnOverViewSet,basename='school-turnover')
 router.register(r'payment',PaymentView)
+router.register(r'bank_name', BankNameView, basename='bankname')
+
 
 urlpatterns = [
     path('download-file/', DownloadFileView.as_view()), 

@@ -29,33 +29,38 @@ from django.core.validators import RegexValidator
 
 class StudentSerializer(serializers.ModelSerializer):
     # User fields (write-only)
-    first_name = serializers.CharField(max_length=100, write_only=True)
+    first_name = serializers.CharField(max_length=100, write_only=True, required=True, allow_blank=False)
     middle_name = serializers.CharField(max_length=100, write_only=True, required=False, allow_blank=True)
-    last_name = serializers.CharField(max_length=100, write_only=True)
-    email = serializers.EmailField(write_only=True)
-    password = serializers.CharField(max_length=100, write_only=True, required=False)
+    last_name = serializers.CharField(max_length=100, write_only=True, required=True, allow_blank=False)
+    email = serializers.EmailField(write_only=True,required=False,allow_blank=True)
+    password = serializers.CharField(max_length=100, write_only=True, required=False, allow_blank=True)
     user_profile = serializers.ImageField(required=False, allow_null=True, write_only=True)
 
     # Student model fields
-    father_name = serializers.CharField(required=False, allow_null=True)
-    mother_name = serializers.CharField(required=False, allow_null=True)
+    father_name = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    mother_name = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     date_of_birth = serializers.DateField(required=False, allow_null=True)
     gender = serializers.ChoiceField(
-        choices=[('Male','Male'),('Female','Female'),('Other','Other')],
-        required=False,
+        choices=[('Male', 'Male'), ('Female', 'Female'), ('Other', 'Other')],
+        required=False, allow_null=True,
         error_messages={"invalid_choice": "Gender must be Male, Female, or Other."}
-    )    
-    religion = serializers.CharField(required=False, allow_null=True)
+    )
+    religion = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     category = serializers.ChoiceField(
         choices=[('SC', 'Scheduled Caste'), ('ST', 'Scheduled Tribe'), ('OBC', 'Other Backward Class'), ('GEN', 'General')],
-        default='GEN'
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        error_messages={"invalid_choice": "choose correct category."}
     )
     height = serializers.FloatField(required=False, allow_null=True)
     weight = serializers.FloatField(required=False, allow_null=True)
-    blood_group = serializers.CharField(required=False, allow_null=True)
-    number_of_siblings = serializers.IntegerField(required=False,allow_null=True,min_value=0,max_value=15,
-                                                  error_messages={"max_value": "Max 15 siblings allowed","invalid": "Enter a valid number."})
-    roll_number = serializers.CharField(required=False, allow_null=True) 
+    blood_group = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    number_of_siblings = serializers.IntegerField(
+        required=False, allow_null=True, min_value=0, max_value=15,
+        error_messages={"max_value": "Max 15 siblings allowed", "invalid": "Enter a valid number."}
+    )
+    roll_number = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     contact_number = serializers.CharField(
         required=False,
         allow_blank=True,
@@ -66,20 +71,27 @@ class StudentSerializer(serializers.ModelSerializer):
             )
         ]
     )
-    scholar_number = serializers.CharField(read_only=True, allow_null=False)  # Read-only field
+    scholar_number = serializers.CharField(read_only=True)
     is_active = serializers.BooleanField(read_only=True)
 
-    # Classes many-to-many
-    classes = serializers.PrimaryKeyRelatedField(queryset=ClassPeriod.objects.all(), many=True,required=False,allow_empty=True,default=[])
+    classes = serializers.PrimaryKeyRelatedField(
+        queryset=ClassPeriod.objects.all(),
+        many=True,
+        required=False,
+        allow_empty=True,
+        default=[]
+    )
 
     class Meta:
         model = Student
-        fields = ['id',
+        fields = [
+            'id',
             'first_name', 'middle_name', 'last_name', 'email', 'password', 'user_profile',
             'father_name', 'mother_name', 'date_of_birth', 'gender', 'religion', 'category',
-            'height', 'weight', 'blood_group', 'number_of_siblings', 'roll_number','contact_number','scholar_number','classes','is_active'
+            'height', 'weight', 'blood_group', 'number_of_siblings', 'roll_number',
+            'contact_number', 'scholar_number', 'classes', 'is_active'
         ]
-
+    
     def to_representation(self, instance):
         rep = super().to_representation(instance)
         user = instance.user
@@ -188,34 +200,49 @@ class RoleSerializer(serializers.ModelSerializer):
 
 
 class GuardianSerializer(serializers.ModelSerializer):
-    # User Info (write_only on input)
-    first_name = serializers.CharField(max_length=100, write_only=True)
+    # User fields (write-only)
+    first_name = serializers.CharField(max_length=100, write_only=True, required=True, allow_blank=False)
     middle_name = serializers.CharField(max_length=100, write_only=True, required=False, allow_blank=True)
-    last_name = serializers.CharField(max_length=100, write_only=True)
-    password = serializers.CharField(max_length=100, write_only=True, required=False)
-    email = serializers.EmailField(write_only=True)
+    last_name = serializers.CharField(max_length=100, write_only=True, required=True, allow_blank=False)
+    email = serializers.EmailField(write_only=True,required=False,allow_blank=True)
+    password = serializers.CharField(max_length=100, write_only=True, required=False, allow_blank=True)
     user_profile = serializers.ImageField(required=False, allow_null=True, write_only=True)
-    
-    # Guardian Fields (include here)
+
+    # Guardian fields
     phone_no = serializers.CharField(
         required=False,
         allow_blank=True,
+        allow_null=True,
         validators=[
             RegexValidator(
                 regex=r'^\+?(\d[\s-]?){10,15}$',
-                message="Enter a valid phone number (10-15 digits, optional + at start)."
+                message="Enter a valid phone number (10–15 digits, optional + at start)."
             )
         ]
     )
-    annual_income = serializers.IntegerField(required=False, allow_null=True,)
-    means_of_livelihood = serializers.ChoiceField(choices=[('Govt', 'Government'), ('Non-Govt', 'Non-Government')], default='Govt')
-    qualification = serializers.CharField(required=False, allow_null=True,max_length=300)
-    occupation = serializers.CharField(required=False, allow_null=True,max_length=300)
-    designation = serializers.CharField(required=False, allow_null=True,max_length=300)
+    annual_income = serializers.IntegerField(required=False, allow_null=True)
+    means_of_livelihood = serializers.ChoiceField(
+        choices=[('Govt', 'Government'), ('Non-Govt', 'Non-Government')],
+        required=False,
+        allow_null=True
+    )
+    qualification = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=300)
+    occupation = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=300)
+    designation = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=300)
 
     class Meta:
         model = Guardian
         exclude = ["user"]
+        extra_kwargs = {
+            'first_name': {'required': True, 'allow_blank': False},
+            'last_name': {'required': True, 'allow_blank': False},
+            'email': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'password': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'means_of_livelihood': {'required': False, 'allow_null': True},
+            'qualification': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'occupation': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'designation': {'required': False, 'allow_blank': True, 'allow_null': True},
+        }
 
     def create(self, validated_data):
         user_data = {
@@ -223,18 +250,18 @@ class GuardianSerializer(serializers.ModelSerializer):
             "middle_name": validated_data.pop("middle_name", ""),
             "last_name": validated_data.pop("last_name"),
             "password": validated_data.pop("password", None),
-            "email": validated_data.pop("email"),
+            "email": validated_data.pop("email", None),
             "user_profile": validated_data.pop("user_profile", None),
         }
 
-        phone_no = validated_data.pop('phone_no')
-        annual_income = validated_data.pop('annual_income')
+        phone_no = validated_data.pop('phone_no', None)
+        annual_income = validated_data.pop('annual_income', None)
         means_of_livelihood = validated_data.pop('means_of_livelihood', 'Govt')
-        qualification = validated_data.pop('qualification')
-        occupation = validated_data.pop('occupation')
-        designation = validated_data.pop('designation')
+        qualification = validated_data.pop('qualification', None)
+        occupation = validated_data.pop('occupation', None)
+        designation = validated_data.pop('designation', None)
 
-        if User.objects.filter(email=user_data["email"]).exists():
+        if user_data.get("email") and User.objects.filter(email=user_data["email"]).exists():
             raise serializers.ValidationError("User with this email already exists.")
 
         role, _ = Role.objects.get_or_create(name='guardian')
@@ -254,12 +281,8 @@ class GuardianSerializer(serializers.ModelSerializer):
 
         return guardian
 
-    
-
     def update(self, instance, validated_data):
         user = instance.user
-
-        # Update user fields
         user.first_name = validated_data.get('first_name', user.first_name)
         user.middle_name = validated_data.get('middle_name', user.middle_name)
         user.last_name = validated_data.get('last_name', user.last_name)
@@ -268,19 +291,18 @@ class GuardianSerializer(serializers.ModelSerializer):
             user.set_password(password)
         user.email = validated_data.get('email', user.email)
 
-        #  Handle profile image (empty string OR null)
+        # Handle profile image
         if 'user_profile' in validated_data:
             user_profile = validated_data.get('user_profile')
-            if not user_profile:  # covers "" and None
+            if not user_profile:
                 if user.user_profile:
-                    user.user_profile.delete(save=False)  # delete from media folder
+                    user.user_profile.delete(save=False)
                 user.user_profile = None
             else:
                 user.user_profile = user_profile
 
         user.save()
 
-        # Update guardian fields
         instance.phone_no = validated_data.get('phone_no', instance.phone_no)
         instance.annual_income = validated_data.get('annual_income', instance.annual_income)
         instance.means_of_livelihood = validated_data.get('means_of_livelihood', instance.means_of_livelihood)
@@ -291,7 +313,6 @@ class GuardianSerializer(serializers.ModelSerializer):
 
         return instance
 
-
     def to_representation(self, instance):
         rep = super().to_representation(instance)
         user = instance.user
@@ -300,15 +321,9 @@ class GuardianSerializer(serializers.ModelSerializer):
             "middle_name": user.middle_name,
             "last_name": user.last_name,
             "email": user.email,
-            "phone_no": instance.phone_no,
-            "annual_income": instance.annual_income,
-            "means_of_livelihood": instance.means_of_livelihood,
-            "qualification": instance.qualification,
-            "occupation": instance.occupation,
-            "designation": instance.designation,
             "user_profile": user.user_profile.url if user.user_profile else None,
         })
-        return rep              # added
+        return rep
 
 
 

@@ -66,7 +66,12 @@ class SchoolEventSerializer(serializers.ModelSerializer):
         model = SchoolEvent
         fields = ['id', 'title', 'start_date', 'end_date', 'description']
 
-    
+
+class OfficeStaffAttendanceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OfficeStaffAttendance
+        fields = '__all__'
+
     
 
 

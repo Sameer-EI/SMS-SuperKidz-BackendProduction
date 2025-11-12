@@ -2,7 +2,7 @@ from datetime import *
 import re
 from rest_framework import serializers
 
-from utils.email_notification import send_email_notification
+from .utils import send_email_notification
 from .models import *
 from django.core.exceptions import MultipleObjectsReturned
 from django.db import IntegrityError
@@ -49,8 +49,6 @@ class ClassRoomTypeSerializer(serializers.ModelSerializer):
         model = ClassRoomType
         fields = "__all__"
         
- 
-
 
 class ClassRoomSerializer(serializers.ModelSerializer):
     class Meta:
@@ -61,19 +59,22 @@ class ClassRoomSerializer(serializers.ModelSerializer):
 
 
 class BankingDetailsSerializer(serializers.ModelSerializer):
-    
     account_no = serializers.IntegerField(required=False, allow_null=True)
     ifsc_code = serializers.CharField(required=False, allow_blank=True)
     holder_name = serializers.CharField(required=False, allow_blank=True)
+    bank_name = serializers.PrimaryKeyRelatedField(
+        queryset=BankName.objects.all(),
+        required=False,
+        allow_null=True
+    )
 
     class Meta:
         model = BankingDetail
-        fields = ['id', 'account_no', 'ifsc_code', 'holder_name']
+        fields = ['id', 'account_no', 'ifsc_code', 'holder_name', 'bank_name']
         extra_kwargs = {
-            "user": {"read_only": True}
+            "user": {"read_only": True},
         }
 
-    
     def create(self, validated_data):
         user = self.context.get("user")
         if not user:
@@ -83,20 +84,26 @@ class BankingDetailsSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         account_no = validated_data.get("account_no", instance.account_no)
 
-        # Only check for duplicates if account_no is provided and not null
+        # Check for duplicates only when a new account number is given
         if account_no not in [None, ""] and account_no != instance.account_no:
             if BankingDetail.objects.filter(account_no=account_no).exclude(id=instance.id).exists():
                 raise serializers.ValidationError({
                     "account_no": "This account number is already in use by another user."
                 })
 
-        # Apply even if user clears the field
+        # Allow fields to be blank or null safely
         instance.account_no = validated_data.get("account_no", None)
         instance.ifsc_code = validated_data.get("ifsc_code", "")
         instance.holder_name = validated_data.get("holder_name", "")
+        instance.bank_name = validated_data.get("bank_name", None)
+
         instance.save()
         return instance
-
+    
+class BankNameSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BankName
+        fields = ['id', 'name']
 
 class RoleSerializer(serializers.ModelSerializer):
     class Meta:
@@ -145,11 +152,16 @@ class CitySerializer(serializers.ModelSerializer):
 
 
 
-
 class AddressSerializer(serializers.ModelSerializer):
-    country = serializers.PrimaryKeyRelatedField(queryset=Country.objects.all(),write_only=True)
-    state = serializers.PrimaryKeyRelatedField(queryset=State.objects.all(),write_only=True)
-    city = serializers.PrimaryKeyRelatedField(queryset=City.objects.all(),write_only=True)
+    country = serializers.PrimaryKeyRelatedField(
+        queryset=Country.objects.all(), write_only=True, required=False, allow_null=True
+    )
+    state = serializers.PrimaryKeyRelatedField(
+        queryset=State.objects.all(), write_only=True, required=False, allow_null=True
+    )
+    city = serializers.PrimaryKeyRelatedField(
+        queryset=City.objects.all(), write_only=True, required=False, allow_null=True
+    )
 
     country_name = serializers.CharField(source='country.name', read_only=True)
     state_name = serializers.CharField(source='state.name', read_only=True)
@@ -344,13 +356,13 @@ class DirectorProfileSerializer(serializers.ModelSerializer):
 class AdmissionSerializer(serializers.ModelSerializer):
     # enrollment_no = serializers.ReadOnlyField()
     # Use SerializerMethodField to output nested student and guardian data
-    student_input = serializers.SerializerMethodField(read_only=True)
-    guardian_input = serializers.SerializerMethodField(read_only=True)
+    student_input = serializers.SerializerMethodField(read_only=True,required=False)
+    guardian_input = serializers.SerializerMethodField(read_only=True,required=False)
     
-    address = serializers.SerializerMethodField(read_only=True)
-    banking_detail = serializers.SerializerMethodField(read_only=True)
+    address = serializers.SerializerMethodField(read_only=True,required=False)
+    banking_detail = serializers.SerializerMethodField(read_only=True, required=False, allow_null=True)
 
-    guardian_type = serializers.SerializerMethodField(read_only=True)
+    guardian_type = serializers.SerializerMethodField(read_only=True,required=False)
     guardian_type_input = serializers.SlugRelatedField(
         slug_field='name',
         queryset=GuardianType.objects.all(),
@@ -362,15 +374,12 @@ class AdmissionSerializer(serializers.ModelSerializer):
     year_level = serializers.SlugRelatedField(
         slug_field='level_name',
         queryset=YearLevel.objects.all(),
-        required=False,
-        allow_null=True,
+        required=True
     )
-    
     school_year = serializers.SlugRelatedField(
         slug_field='year_name',
         queryset=SchoolYear.objects.all(),
-        required=False,
-        allow_null=True,
+        required=True
     )
 
     # These are write-only inputs for creating/updating admission
@@ -441,41 +450,48 @@ class AdmissionSerializer(serializers.ModelSerializer):
 
         # --- Student processing ---
         classes_data = student_data.pop('classes', [])
+
         if isinstance(classes_data, str):
             try:
                 classes_data = [int(classes_data)]
             except ValueError:
                 raise serializers.ValidationError({"student.classes": "Invalid class ID format."})
 
+        # Scholar number check first
+        scholar_number = student_data.get('scholar_number')
+        if not scholar_number:
+            # Auto-generate if not passed
+            last_student = Student.objects.order_by('-id').first()
+            next_number = int(last_student.scholar_number) + 1 if last_student and last_student.scholar_number.isdigit() else 1
+            scholar_number = str(next_number).zfill(4)
+        student_data['scholar_number'] = scholar_number
+
+        # Check if student already exists via scholar number
+        existing_student = Student.objects.filter(scholar_number=scholar_number).first()
+        if existing_student:
+            raise serializers.ValidationError({"student": f"Scholar number {scholar_number} already exists."})
+
+        # --- Create user linked to student ---
         user_data = {
             'first_name': student_data.pop('first_name', ''),
             'middle_name': student_data.pop('middle_name', ''),
             'last_name': student_data.pop('last_name', ''),
-            'email': student_data.pop('email'),
+            'email': student_data.pop('email', None),
             'password': student_data.pop('password', None),
             'user_profile': student_data.pop('user_profile', None),
         }
 
-        user = User.objects.filter(email__iexact=user_data['email']).first()
-        if not user:
-            role, _ = Role.objects.get_or_create(name='student')
-            user = User.objects.create_user(**user_data)
-            user.role.add(role)
+        # fallback email if missing
+        if not user_data.get('email'):
+            user_data['email'] = f"{scholar_number}@school.local"
+
+        role, _ = Role.objects.get_or_create(name='student')
+        user = User.objects.create_user(**user_data)
+        user.role.add(role)
 
 
-        # ===== Generate scholar_number here =====
-        last_student = Student.objects.order_by('-id').first()
-        
-        if last_student and last_student.scholar_number and last_student.scholar_number.isdigit():
-            next_number = int(last_student.scholar_number) + 1
-        else:
-            next_number = 1
-        student_data['scholar_number'] = str(next_number).zfill(4)
-
-        student, created = Student.objects.get_or_create(user=user, defaults=student_data)
-        if not created:
-            raise serializers.ValidationError({"student": "Student already exists for this user."})
-
+        # Create the student
+        student = Student.objects.create(user=user, **student_data)
         if classes_data:
             student.classes.set(classes_data)
 
@@ -490,10 +506,14 @@ class AdmissionSerializer(serializers.ModelSerializer):
             'first_name': guardian_data.pop('first_name', ''),
             'middle_name': guardian_data.pop('middle_name', ''),
             'last_name': guardian_data.pop('last_name', ''),
-            'email': guardian_data.pop('email'),
+            'email': guardian_data.pop('email', None),
             'password': guardian_data.pop('password', None),
             'user_profile': guardian_data.pop('user_profile', None),
         }
+
+        # fallback email for guardian if not given
+        if not guardian_user_data.get('email'):
+            guardian_user_data['email'] = f"{scholar_number}guardian@school.local"
 
         guardian_user = User.objects.filter(email__iexact=guardian_user_data['email']).first()
         
@@ -603,10 +623,34 @@ class AdmissionSerializer(serializers.ModelSerializer):
         # --- Student update ---
         if student_data:
             classes_data = student_data.pop('classes', None)
+            email = student_data.pop('email', None)
+            password = student_data.pop('password', None)
+
+            student_user = instance.student.user
+
+            # Update basic info
+            for attr in ['first_name', 'middle_name', 'last_name', 'user_profile']:
+                if attr in student_data and student_data[attr] not in [None, '']:
+                    setattr(student_user, attr, student_data[attr])
+
+            # Handle email safely
+            if email:
+                student_user.email = email
+            elif not student_user.email:
+                student_user.email = f"{instance.student.scholar_number}@school.local"
+
+            # Handle password if provided
+            if password:
+                student_user.set_password(password)
+
+            student_user.save()
+
+            # Save student model fields
             student_serializer = StudentSerializer(instance.student, data=student_data, partial=True)
             student_serializer.is_valid(raise_exception=True)
             student_serializer.save()
 
+            # Handle classes
             if classes_data is not None:
                 if isinstance(classes_data, str):
                     classes_data = [int(classes_data)]
@@ -616,11 +660,23 @@ class AdmissionSerializer(serializers.ModelSerializer):
         if guardian_data:
             guardian_user = instance.guardian.user
             password = guardian_data.pop('password', None)
-            for attr in ['first_name', 'middle_name', 'last_name', 'email', 'user_profile']:
+            email = guardian_data.pop('email', None)
+
+            # Update basic info
+            for attr in ['first_name', 'middle_name', 'last_name', 'user_profile']:
                 if attr in guardian_data and guardian_data[attr] not in [None, '']:
                     setattr(guardian_user, attr, guardian_data[attr])
+
+            # Handle email safely
+            if email:
+                guardian_user.email = email
+            elif not guardian_user.email:
+                guardian_user.email = f"{instance.student.scholar_number}guardian@school.local"
+
+            # Handle password if provided
             if password:
                 guardian_user.set_password(password)
+
             guardian_user.save()
 
             guardian_serializer = GuardianSerializer(instance.guardian, data=guardian_data, partial=True)
@@ -661,6 +717,7 @@ class AdmissionSerializer(serializers.ModelSerializer):
 
                 banking_instance.ifsc_code = banking_data.get('ifsc_code', '')
                 banking_instance.holder_name = banking_data.get('holder_name', '')
+                banking_instance.bank_name = banking_data.get('bank_name', '')
                 banking_instance.save()
 
             except BankingDetail.DoesNotExist:
@@ -679,7 +736,6 @@ class AdmissionSerializer(serializers.ModelSerializer):
 
         instance.save()
         return instance
-
 
 
 # # # ***************change variable name *****************************
@@ -1894,109 +1950,6 @@ class RazorpayConfirmPaymentSerializer(serializers.Serializer):
     razorpay_signature_id = serializers.CharField()
 
 
-
-
-# ********************OfficeStaffSerializer profile*******************************
-# class OfficeStaffSerializer(serializers.ModelSerializer):
-#     first_name = serializers.CharField(max_length=100, write_only=True)
-#     middle_name = serializers.CharField(max_length=100, write_only=True, required=False, allow_blank=True)
-#     last_name = serializers.CharField(max_length=100, write_only=True)
-#     password = serializers.CharField(max_length=100, write_only=True, required=False)
-#     email = serializers.EmailField(write_only=True)
-#     user_profile = serializers.ImageField(required=False, allow_null=True, write_only=True)
-
-#     student = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all(), many=True, required=False)
-#     teacher = serializers.PrimaryKeyRelatedField(queryset=Teacher.objects.all(), many=True, required=False)
-#     admissions = serializers.PrimaryKeyRelatedField(queryset=Admission.objects.all(), many=True, required=False)
-
-#     class Meta:
-#         model = OfficeStaff
-#         exclude = ["user"]
-
-#     def create(self, validated_data):
-#         user_data = {
-#             "first_name": validated_data.pop("first_name"),
-#             "middle_name": validated_data.pop("middle_name", ""),
-#             "last_name": validated_data.pop("last_name"),
-#             "password": validated_data.pop("password", None),
-#             "email": validated_data.pop("email"),
-#             "user_profile": validated_data.pop("user_profile", None),
-#         }
-
-#         student_data = validated_data.pop("student", [])
-#         teacher_data = validated_data.pop("teacher", [])
-#         admissions_data = validated_data.pop("admissions", [])
-
-#         try:
-#             role, _ = Role.objects.get_or_create(name="office_staff")
-#         except MultipleObjectsReturned:
-#             raise serializers.ValidationError("Multiple roles named 'office_staff' found.")
-
-#         user = User.objects.filter(email=user_data["email"]).first()
-
-#         if user:
-#             if not user.role.filter(name="office_staff").exists():
-#                 user.role.add(role)
-#                 user.save()
-#             else:
-#                 raise serializers.ValidationError("User with this email already exists and is an office staff.")
-#         else:
-#             user = User.objects.create_user(**user_data)
-#             user.role.add(role)
-#             user.save()
-
-#         office_staff = OfficeStaff.objects.create(user=user, **validated_data)
-#         office_staff.student.set(student_data)
-#         office_staff.teacher.set(teacher_data)
-#         office_staff.admissions.set(admissions_data)
-#         return office_staff
-
-#     def update(self, instance, validated_data):
-#         user = instance.user
-
-#         user.first_name = validated_data.pop("first_name", user.first_name)
-#         user.middle_name = validated_data.pop("middle_name", user.middle_name)
-#         user.last_name = validated_data.pop("last_name", user.last_name)
-#         user.email = validated_data.pop("email", user.email)
-#         if "password" in validated_data and validated_data["password"]:
-#             user.set_password(validated_data["password"])
-#         if "user_profile" in validated_data:
-#             user.user_profile = validated_data["user_profile"]
-
-#         user.save()
-
-#         instance.phone_no = validated_data.get("phone_no", instance.phone_no)
-#         instance.gender = validated_data.get("gender", instance.gender)
-#         instance.department = validated_data.get("department", instance.department)
-#         instance.save()
-
-#         if "student" in validated_data:
-#             instance.student.set(validated_data["student"])
-#         if "teacher" in validated_data:
-#             instance.teacher.set(validated_data["teacher"])
-#         if "admissions" in validated_data:
-#             instance.admissions.set(validated_data["admissions"])
-
-#         return instance
-
-#     def to_representation(self, instance):
-#         representation = super().to_representation(instance)
-#         representation.update({
-#             "first_name": instance.user.first_name,
-#             "middle_name": instance.user.middle_name,
-#             "last_name": instance.user.last_name,
-#             "email": instance.user.email,
-#             "user_profile": instance.user.user_profile.url if instance.user.user_profile else None,
-#         })
-
-#         # Remove relational fields from the output
-#         representation.pop("student", None)
-#         representation.pop("teacher", None)
-#         representation.pop("admissions", None)
-
-#         return representation
-
-
 class OfficeStaffSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(max_length=100, write_only=True)
     middle_name = serializers.CharField(max_length=100, write_only=True, required=False, allow_blank=True)
@@ -2131,7 +2084,8 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
         instance.department = validated_data.get("department", instance.department)
         instance.adhaar_no = validated_data.get("adhaar_no", instance.adhaar_no)  #  added as of 09Sep25
         instance.pan_no = validated_data.get("pan_no", instance.pan_no)          #  added as of 09Sep25
-        instance.date_joined = validated_data.get("date_joined", instance.date_joined)          #  added as of 09Sep25
+        instance.joining_date = validated_data.get("joining_date", instance.joining_date)          #  added as of 09Sep25
+        instance.qualification = validated_data.get("qualification", instance.qualification)
 
         instance.save()
 
@@ -2164,6 +2118,8 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
             "user_profile": instance.user.user_profile.url if instance.user.user_profile else None,
             "adhaar_no": instance.adhaar_no,   #  added as of 09Sep25
             "pan_no": instance.pan_no,         #  added as of 09Sep25
+            "qualification": instance.qualification,
+            "joining_date":instance.joining_date,
         })
 
         # Remove relational fields from the output
@@ -2977,123 +2933,137 @@ class ExamPaperSerializer(serializers.ModelSerializer):
         return instance
 
 
-class StudentMarksSerializer(serializers.ModelSerializer):
-    teacher_name = serializers.CharField(source='teacher.user.first_name', read_only=True)
-    school_year = serializers.CharField(source='term.year.year_name', read_only=True)
-    year_level = serializers.CharField(source='student.year_level.level_name', read_only=True)
-    subject = serializers.CharField(source='subject.subject_name', read_only=True)
-    exam_type = serializers.CharField(source='exam_type.name', read_only=True)
-    student_name = serializers.CharField(source='student.user.first_name', read_only=True)
-    marks = serializers.DecimalField(source='marks_obtained', max_digits=5, decimal_places=2, read_only=True)
+# class StudentMarksSerializer(serializers.ModelSerializer):
+#     teacher_name = serializers.CharField(source='teacher.user.first_name', read_only=True)
+#     school_year = serializers.CharField(source='term.year.year_name', read_only=True)
+#     year_level = serializers.CharField(source='student.year_level.level_name', read_only=True)
+#     subject = serializers.CharField(source='subject.subject_name', read_only=True)
+#     exam_type = serializers.CharField(source='exam_type.name', read_only=True)
+#     student_name = serializers.CharField(source='student.user.first_name', read_only=True)
+#     marks = serializers.DecimalField(source='marks_obtained', max_digits=5, decimal_places=2, read_only=True)
 
-    class Meta:
-        model = StudentMarks
-        fields = ['id','teacher_name','school_year','year_level','subject','exam_type','student_name','marks']
-
-
+#     class Meta:
+#         model = StudentMarks
+#         fields = ['id','teacher_name','school_year','year_level','subject','exam_type','student_name','marks']
 
 
 
+# """---------------------------------------------RESULT---------------------------------------------------------------------"""
 
-"""---------------------------------------------RESULT---------------------------------------------------------------------"""
+# """----------------------------------------ReportCardDocument-------------------------------------------------"""
+# class ReportCardDocumentSerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model = ReportCardDocument
+#         fields = '__all__'
 
-"""----------------------------------------ReportCardDocument-------------------------------------------------"""
-class ReportCardDocumentSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ReportCardDocument
-        fields = '__all__'
+# """----------------------------------------SubjectScore----------------------------------------------------"""
+# class StudentMarksMiniSerializer(serializers.ModelSerializer):
+#     student_name = serializers.CharField(source="student.user.first_name", read_only=True)
+#     subject_name = serializers.CharField(source="subject.subject_name")
+#     exam_type = serializers.CharField(source="exam_type.name")
+#     marks_obtained = serializers.DecimalField(decimal_places=2,max_digits=5,required=False,allow_null=True,coerce_to_string=False)
 
-"""----------------------------------------SubjectScore----------------------------------------------------"""
-class StudentMarksMiniSerializer(serializers.ModelSerializer):
-    student_name = serializers.CharField(source="student.user.first_name", read_only=True)
-    subject_name = serializers.CharField(source="subject.subject_name")
-    exam_type = serializers.CharField(source="exam_type.name")
-    marks_obtained = serializers.DecimalField(decimal_places=2,max_digits=5,required=False,allow_null=True,coerce_to_string=False)
-
-    class Meta:
-        model = StudentMarks
-        fields = ["student_name","exam_type", "subject_name", "marks_obtained"]
+#     class Meta:
+#         model = StudentMarks
+#         fields = ["student_name","exam_type", "subject_name", "marks_obtained"]
     
-    def to_representation(self, instance):
-        rep = super().to_representation(instance)
-        marks = rep.get("marks_obtained")
-        try:
-            rep["marks_obtained"] = str(marks) if marks is not None else "0.00"
-        except:
-            rep["marks_obtained"] = "0.00"
-        return rep
+#     def to_representation(self, instance):
+#         rep = super().to_representation(instance)
+#         marks = rep.get("marks_obtained")
+#         try:
+#             rep["marks_obtained"] = str(marks) if marks is not None else "0.00"
+#         except:
+#             rep["marks_obtained"] = "0.00"
+#         return rep
 
     
-class SubjectScoreSerializer(serializers.ModelSerializer):
-    marks_obtained = StudentMarksMiniSerializer()
-    # print("marks_obtained", marks_obtained )
-    class Meta:
-        model = SubjectScore
-        fields = ["marks_obtained"]
+# class SubjectScoreSerializer(serializers.ModelSerializer):
+#     marks_obtained = StudentMarksMiniSerializer()
+#     # print("marks_obtained", marks_obtained )
+#     class Meta:
+#         model = SubjectScore
+#         fields = ["marks_obtained"]
 
-"""----------------------------------------NonScholasticGradeTermWise-------------------------------------------------"""
+# """----------------------------------------NonScholasticGradeTermWise-------------------------------------------------"""
 
-class PersonalSocialQualitySerializer(serializers.ModelSerializer):
-    class Meta:
-        model = PersonalSocialQuality
-        fields = "__all__"
+# class PersonalSocialQualitySerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model = PersonalSocialQuality
+#         fields = "__all__"
 
-class NonScholasticGradeTermWiseSerializer(serializers.ModelSerializer):
-    ALLOWED_GRADES = ["A++", "A+", "A", "B", "C", "D"]
+# class NonScholasticGradeTermWiseSerializer(serializers.ModelSerializer):
+#     ALLOWED_GRADES = ["A++", "A+", "A", "B", "C", "D"]
 
-    def validate_non_scholastic_subject(self, subject):
+#     def validate_non_scholastic_subject(self, subject):
         
-        expected_department = "Non-scholastic"  # change if needed
+#         expected_department = "Non-scholastic"  # change if needed
         
-        if not subject.department or subject.department.department_name != expected_department:
-            raise serializers.ValidationError(
-                f"Subject must belong to the '{expected_department}' department."
-            )
-        return subject
+#         if not subject.department or subject.department.department_name != expected_department:
+#             raise serializers.ValidationError(
+#                 f"Subject must belong to the '{expected_department}' department."
+#             )
+#         return subject
 
-    def validate_grade(self, value):
-        if value not in self.ALLOWED_GRADES:
-            raise serializers.ValidationError("Grade must be one of: A++, A+, A, B, C, D.")
-        return value
+#     def validate_grade(self, value):
+#         if value not in self.ALLOWED_GRADES:
+#             raise serializers.ValidationError("Grade must be one of: A++, A+, A, B, C, D.")
+#         return value
     
-    class Meta:
-        model = NonScholasticGradeTermWise
-        fields = ['id', 'report_card', 'non_scholastic_subject', 'term', 'grade']
+#     class Meta:
+#         model = NonScholasticGradeTermWise
+#         fields = ['id', 'report_card', 'non_scholastic_subject', 'term', 'grade']
 
-"""----------------------------------------PersonalSocialQualityTermWise-------------------------------------------------"""
+# """----------------------------------------PersonalSocialQualityTermWise-------------------------------------------------"""
       
-class PersonalSocialGradeSerializer(serializers.ModelSerializer):
+# class PersonalSocialGradeSerializer(serializers.ModelSerializer):
 
-    ALLOWED_GRADES = ["A++", "A+", "A", "B", "C", "D"]
+#     ALLOWED_GRADES = ["A++", "A+", "A", "B", "C", "D"]
 
-    def validate_grade(self, value):
-        if value not in self.ALLOWED_GRADES:
-            raise serializers.ValidationError("Grade must be one of: A++, A+, A, B, C, D.")
-        return value
+#     def validate_grade(self, value):
+#         if value not in self.ALLOWED_GRADES:
+#             raise serializers.ValidationError("Grade must be one of: A++, A+, A, B, C, D.")
+#         return value
 
-    class Meta:
-        model = PersonalSocialQualityTermWise
-        fields = ['id', 'report_card', 'personal_quality', 'term', 'grade']
+#     class Meta:
+#         model = PersonalSocialQualityTermWise
+#         fields = ['id', 'report_card', 'personal_quality', 'term', 'grade']
 
-"""----------------------------------------ReportCard-------------------------------------------------"""
+# """----------------------------------------ReportCard-------------------------------------------------"""
     
+# class ReportCardSerializer(serializers.ModelSerializer):
+#     PersonalSocialQualityTermWise = PersonalSocialGradeSerializer(many=True, read_only=True)
+#     subjects = SubjectScoreSerializer(many=True,read_only=True, source='subject_scores')
+    
+#     class Meta:
+#         model = ReportCard
+#         fields = ["id","student_level",
+#             "rank","percentage","grade",
+#             "division", "attendance","PersonalSocialQualityTermWise","subjects", "teacher_remark", "supplementary_in", "school_reopen_date", "promoted_to_class",
+#         ]
+#         read_only_fields = ["total_marks", "max_marks", "percentage","grade","division","subjects","attendance","supplementary_in", "promoted_to_class"]
+
+#     def get_promoted_to_class(self, obj):
+#         if obj.promoted_to_class:
+#             return str(obj.promoted_to_class.level.level_name)
+#         return '0'
+
 class ReportCardSerializer(serializers.ModelSerializer):
-    PersonalSocialQualityTermWise = PersonalSocialGradeSerializer(many=True, read_only=True)
-    subjects = SubjectScoreSerializer(many=True,read_only=True, source='subject_scores')
-    
     class Meta:
         model = ReportCard
-        fields = ["id","student_level",
-            "rank","percentage","grade",
-            "division", "attendance","PersonalSocialQualityTermWise","subjects", "teacher_remark", "supplementary_in", "school_reopen_date", "promoted_to_class",
-        ]
-        read_only_fields = ["total_marks", "max_marks", "percentage","grade","division","subjects","attendance","supplementary_in", "promoted_to_class"]
+        fields = "__all__"
 
-    def get_promoted_to_class(self, obj):
-        if obj.promoted_to_class:
-            return str(obj.promoted_to_class.level.level_name)
-        return '0'
+    def validate_file(self, file):
+        ALLOWED_EXT = {'.pdf', '.jpg', '.jpeg', '.png'}
+        MAX_SIZE = 5 * 1024 * 1024  # 5 MB
 
+        ext = os.path.splitext(file.name)[1].lower()
+        if ext not in ALLOWED_EXT:
+            raise serializers.ValidationError(f"Unsupported file type '{ext}'.")
+
+        if file.size > MAX_SIZE:
+            raise serializers.ValidationError(f"File size exceeds {MAX_SIZE // (1024*1024)} MB.")
+
+        return file
 
 # --------------------- Expense 
 

@@ -12,11 +12,14 @@ router.register(r'guardian/attendance', GuardianChildrenAttendanceViewSet, basen
 # router.register(r'attendance/mark-holidays', BulkHolidayAttendanceViewSet, basename='mark-holiday'),
 router.register('events', SchoolEventViewSet, basename='event')
 router.register(r'holidays',HolidayViewSet,basename='holidays')
+router.register("office-staff-attendance", OfficeStaffAttendanceView, basename="office-staff-attendance")
+
 
 urlpatterns = [
     path('', include(router.urls)),
     path('teacher-classes/<int:teacher_id>/', TeacherYearLevelList.as_view(), name='teacher-classes'),
     path('holidays/import', FetchIndianHolidaysView.as_view()),
     path('calendar/', MonthlyCalendarView.as_view(), name='monthly-calendar'),
-    path('send-whatsapp/', SendWhatsAppView.as_view(), name='send_whatsapp')
+    path('send-whatsapp/', SendWhatsAppView.as_view(), name='send_whatsapp'),
+
 ]
