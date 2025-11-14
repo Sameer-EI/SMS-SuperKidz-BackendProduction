@@ -2001,7 +2001,7 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
         staff_exists = OfficeStaff.objects.filter(adhaar_no=value).exclude(id=instance_id).exists()
 
         if teacher_exists or staff_exists:
-            raise serializers.ValidationError("This Aadhaar number is already registered.")
+            raise serializers.ValidationError("This Aadhaar number is already registered for another user.")
         return value
 
     def validate_pan_no(self, value):
@@ -2015,7 +2015,7 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
         staff_exists = OfficeStaff.objects.filter(pan_no=value).exclude(id=instance_id).exists()
 
         if teacher_exists or staff_exists:
-            raise serializers.ValidationError("This PAN number is already registered.")
+            raise serializers.ValidationError("This PAN number is already registered for another user.")
         return value
 
 
@@ -2307,7 +2307,7 @@ class DocumentSerializer(serializers.ModelSerializer):
         doc_id = self.instance.id if self.instance else None
 
         if Document.objects.exclude(id=doc_id).filter(identities=value).exists():
-            raise serializers.ValidationError("This identity is already registered.")
+            raise serializers.ValidationError("This identity is already registered for another user.")
         return value
     
     def create(self, validated_data):
