@@ -4119,17 +4119,29 @@ class ExamPaperView(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["put"], url_path="update_exampaper")
     def update_paper(self, request):
+        # Prefer updating by `id` (primary key). If not provided, fall back to `paper_code`.
+        paper_id = request.data.get("id")
         paper_code = request.data.get("paper_code")
-        if not paper_code:
-            return Response({"error": "paper_code is required for update."}, status=400)
 
-        try:
-            paper = ExamPaper.objects.get(paper_code=paper_code)
-        except ExamPaper.DoesNotExist:
-            return Response({"error": "ExamPaper not found"}, status=404)
-
+        paper = None
+        if paper_id is not None:
+            try:
+                paper = ExamPaper.objects.get(id=paper_id)
+            except (ValueError, TypeError):
+                return Response({"error": "Invalid id provided."}, status=400)
+            except ExamPaper.DoesNotExist:
+                return Response({"error": "ExamPaper not found for given id."}, status=404)
+        elif paper_code:
+            try:
+                paper = ExamPaper.objects.get(paper_code=paper_code)
+            except ExamPaper.DoesNotExist:
+                return Response({"error": "ExamPaper not found for given paper_code."}, status=404)
+        else:
+            return Response({"error": "Either 'id' or 'paper_code' is required for update."}, status=400)
+        
         serializer = self.get_serializer(paper, data=request.data, partial=True)
         if serializer.is_valid():
+            print(serializer.validated_data)
             serializer.save()
             return Response({
                 "message": "Exam paper updated successfully", 

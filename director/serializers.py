@@ -2799,10 +2799,11 @@ class ExamPaperSerializer(serializers.ModelSerializer):
         ]
         extra_kwargs = {
             'exam_type': {'write_only': True},
-            'term': {'write_only': True},
+            # 'term': {'write_only': True},
             'subject': {'write_only': True},
             'year_level': {'write_only': True},
-            'teacher': {'write_only': True}
+            'teacher': {'write_only': True},
+            'paper_code': {'required': False, 'allow_null': True, 'allow_blank': True},
         }
 
     def get_teacher_name(self, obj):
@@ -2810,18 +2811,6 @@ class ExamPaperSerializer(serializers.ModelSerializer):
             return obj.teacher.user.get_full_name()
         return None
 
-
-    # def get_uploaded_file_url(self, obj):
-    #     import os
-    #     from django.conf import settings
-
-    #     if obj.uploaded_file:
-    #         file_path = os.path.join(settings.MEDIA_ROOT, obj.uploaded_file.name)
-    #         if os.path.exists(file_path):
-    #             return obj.uploaded_file.url
-    #         else:
-    #             return "File has been deleted or not found"
-    #     return None
     def get_uploaded_file_url(self, obj):
         # Check if file exists
         if obj.uploaded_file and obj.uploaded_file.storage.exists(obj.uploaded_file.name):
@@ -2872,10 +2861,9 @@ class ExamPaperSerializer(serializers.ModelSerializer):
             return value
 
         name = exam_type.name.upper()
-        if name in ["SA1", "SA2"] and value > 100:
-            raise serializers.ValidationError("Total marks for SA1/SA2 cannot exceed 100.")
-        elif name in ["FA1", "FA2", "FA3"] and value > 20:
-            raise serializers.ValidationError("Total marks for FA1/FA2/FA3 cannot exceed 20.")
+        if name in ["ORAL EXAM","WRITTEN EXAM"] and value > 100:
+            raise serializers.ValidationError("Total marks cannot exceed 100.")
+        
         return value
 
 
@@ -2884,7 +2872,7 @@ class ExamPaperSerializer(serializers.ModelSerializer):
         exam_type = validated_data["exam_type"]
         term = validated_data["term"]
         year_level = validated_data["year_level"]
-        paper_code = validated_data["paper_code"]
+        paper_code = validated_data.get("paper_code")
 
         if ExamPaper.objects.filter(
             subject=subject,
@@ -2897,9 +2885,12 @@ class ExamPaperSerializer(serializers.ModelSerializer):
                 f"class '{year_level.level_name}', year '{term.year.year_name}', and exam '{exam_type.name}'."
             )
         
-        if ExamPaper.objects.filter(paper_code=paper_code).exists():
-            raise serializers.ValidationError({"paper_code": ["exam paper with this paper code already exists."]})
-
+        # if ExamPaper.objects.filter(paper_code=paper_code).exists():
+        #     raise serializers.ValidationError({"paper_code": ["exam paper with this paper code already exists."]})
+        if paper_code and ExamPaper.objects.filter(paper_code=paper_code).exists():
+            raise serializers.ValidationError(
+                {"paper_code": ["exam paper with this paper code already exists."]}
+            )
         return super().create(validated_data)
 
 
@@ -2909,6 +2900,10 @@ class ExamPaperSerializer(serializers.ModelSerializer):
         teacher = validated_data.get("teacher", instance.teacher)
         paper_code = validated_data.get("paper_code", instance.paper_code)
         total_marks = validated_data.get("total_marks", instance.total_marks)
+        year_level = validated_data.get("year_level", instance.year_level)
+        term = validated_data.get("term", instance.term)
+        exam_type = validated_data.get("exam_type", instance.exam_type)
+
 
         if ExamPaper.objects.exclude(id=instance.id).filter(
             subject=subject,
@@ -2920,14 +2915,19 @@ class ExamPaperSerializer(serializers.ModelSerializer):
                 f"Exam paper already exists for this subject, class, year, and exam type."
             )
 
-        if ExamPaper.objects.exclude(id=instance.id).filter(paper_code=paper_code).exists():
-            raise serializers.ValidationError({"paper_code": ["exam paper with this paper code already exists."]})
-
+        if paper_code:
+            if ExamPaper.objects.exclude(id=instance.id).filter(paper_code=paper_code).exists():
+                raise serializers.ValidationError(
+                    {"paper_code": ["exam paper with this paper code already exists."]}
+                )
 
         instance.subject = subject
         instance.teacher = teacher
         instance.paper_code = paper_code
         instance.total_marks = total_marks
+        instance.year_level = year_level
+        instance.term = term
+        instance.exam_type = exam_type
 
         instance.save()
         return instance

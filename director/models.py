@@ -575,7 +575,7 @@ class ExamPaper(models.Model):
     subject = models.ForeignKey(Subject, on_delete=models.CASCADE)#
     year_level = models.ForeignKey(YearLevel,on_delete=models.CASCADE)
     total_marks = models.DecimalField(max_digits=5, decimal_places=2)#
-    paper_code = models.CharField(max_length=7,unique=True)#
+    paper_code = models.CharField(max_length=7,unique=True,null=True, blank=True)#
     teacher = models.ForeignKey(Teacher, on_delete=models.SET_NULL, null=True)#
     uploaded_file = models.FileField(upload_to=ExamPaper_folder, blank=True, null=True)#
 
