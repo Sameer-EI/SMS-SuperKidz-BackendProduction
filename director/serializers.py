@@ -2799,7 +2799,7 @@ class ExamPaperSerializer(serializers.ModelSerializer):
         ]
         extra_kwargs = {
             'exam_type': {'write_only': True},
-            'term': {'write_only': True},
+            # 'term': {'write_only': True},
             'subject': {'write_only': True},
             'year_level': {'write_only': True},
             'teacher': {'write_only': True},
@@ -2900,6 +2900,10 @@ class ExamPaperSerializer(serializers.ModelSerializer):
         teacher = validated_data.get("teacher", instance.teacher)
         paper_code = validated_data.get("paper_code", instance.paper_code)
         total_marks = validated_data.get("total_marks", instance.total_marks)
+        year_level = validated_data.get("year_level", instance.year_level)
+        term = validated_data.get("term", instance.term)
+        exam_type = validated_data.get("exam_type", instance.exam_type)
+
 
         if ExamPaper.objects.exclude(id=instance.id).filter(
             subject=subject,
@@ -2921,6 +2925,9 @@ class ExamPaperSerializer(serializers.ModelSerializer):
         instance.teacher = teacher
         instance.paper_code = paper_code
         instance.total_marks = total_marks
+        instance.year_level = year_level
+        instance.term = term
+        instance.exam_type = exam_type
 
         instance.save()
         return instance
