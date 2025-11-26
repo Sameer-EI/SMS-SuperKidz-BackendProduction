@@ -25,12 +25,7 @@ router.register(r'DocumentType',DocumentTypeView)
 
 router.register(r'File',FileView),
 router.register(r'Document',DocumentView,basename='document'),
-router.register(r'subject',subjectView),
-router.register(r'fee-types', FeeTypeView) # whole code commented as of 06June25 at 12:30 PM
-router.register(r'year-level-fee', YearLevelFeeView, basename='year-level-fee')
-router.register(r'fee-record', FeeRecordView, basename='fee-record') #
-
-router.register(r'fee-discounts',FeeDiscountView, basename='fee-discounts')
+router.register(r'subject',subjectView)
 
 router.register(r'Exam-Type',ExamTypeView)
 router.register(r'Exam-Paper',ExamPaperView)
@@ -51,6 +46,12 @@ router.register(r'Employee-salary',EmployeeSalaryView)
 router.register(r'school-turnover',SchoolTurnOverViewSet,basename='school-turnover')
 router.register(r'payment',PaymentView)
 router.register(r'bank_name', BankNameView, basename='bankname')
+
+router.register(r'masterfees', MasterFeeViewSet)
+router.register(r'feestructures', FeeStructureViewSet)
+router.register(r'studentfees', StudentFeeView,basename='student fee')
+router.register(r'appliedfeediscounts', AppliedFeeDiscountViewSet)
+router.register(r'FeePayment', FeePaymentView)
 
 
 urlpatterns = [
@@ -78,7 +79,7 @@ urlpatterns = [
     path("guardian-dashboard/<int:id>/", guardian_dashboard),
     path("student_dashboard/<int:id>/", student_dashboard),
     path('office-staff-dashboard/', office_staff_dashboard),
-    path("director/fee-summary/", director_fee_summary),
+    # path("director/fee-summary/", director_fee_summary),
     path('livelihood_filter/', livelihood_distribution),
     path('periods/', assigned_periods),
     path("fetch_upload_doc/",document_fetch_dashboard),
@@ -89,11 +90,12 @@ urlpatterns = [
     path('student-category-dashboard/', student_category, name='student-category'),
     path('income-distribution-dashboard/', guardian_income_distribution, name='guardian-income-distribution'), 
     # path('income-distribution-dashboard-student/', guardian_income_distribution_with_student, name='guardian-income-distribution-student'), 
-    path("fee-dashboard/", fee_dashboard, name="fee-dashboard-summary"),    # complete dashboard
+    # path("fee-dashboard/", fee_dashboard, name="fee-dashboard-summary"),    # complete dashboard
     # Termination process api below
-    path("deactivate-user/", deactivate_user, name="deactivate-user"),
-    path("reactivate-user/", reactivate_user, name="reactivate-user"),
+    # path("deactivate-user/", deactivate_user, name="deactivate-user"),
+    # path("reactivate-user/", reactivate_user, name="reactivate-user"),
     path("inactive-user/", list_inactive_users, name="inactive-user"),
+    path("notify-defaulters/", DefaulterNotifyView.as_view(), name="notify-defaulters"),
 
 ]
 

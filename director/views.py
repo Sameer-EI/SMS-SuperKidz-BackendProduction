@@ -62,8 +62,8 @@ from django.db.models import Q, Sum, Value, FloatField
 from django.db.models.fields import DateField  # This avoids shadowing
 from decimal import Decimal, InvalidOperation # added as of 04Oct25
 from razorpay.errors import SignatureVerificationError  # added as of 04Oct25
-
-
+from rest_framework import status as drf_status
+from decimal import ROUND_HALF_UP
 
 
 
@@ -71,12 +71,6 @@ from razorpay.errors import SignatureVerificationError  # added as of 04Oct25
 
 client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
 
-### Function to generate auto receipt no. called it inside initiate payment
-def generate_receipt_number():
-        while True:
-            code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-            if not FeeRecord.objects.filter(receipt_number=code).exists():
-                return code
 # ---------------------------------------------------------------------------------------------------------------------------------------------         
 
 #    Document fetch dashboard
@@ -624,82 +618,76 @@ def office_staff_dashboard(request):
 
 # -------------------------------------------------  Fees summary view  ----------------------------------------------------------
 
+# @api_view(["GET"])
+# def director_fee_summary(request):
+#     month = request.GET.get("month")  
+#     year = request.GET.get("year")    
 
+#     # School-level summary
+#     total_students = Student.objects.count()
 
+#     fee_qs = FeeRecord.objects.all()
 
+#     if month and year:
+#         fee_qs = fee_qs.filter(month=month, payment_date__year=year)
+#     elif year:
+#         fee_qs = fee_qs.filter(payment_date__year=year)
 
+#     total_fee = fee_qs.aggregate(
+#         total=Coalesce(Sum('total_amount', output_field=DecimalField()), Decimal("0.00"))
+#     )['total']
 
+#     total_paid = fee_qs.aggregate(
+#         paid=Coalesce(Sum('paid_amount', output_field=DecimalField()), Decimal("0.00"))
+#     )['paid']
 
-@api_view(["GET"])
-def director_fee_summary(request):
-    month = request.GET.get("month")  
-    year = request.GET.get("year")    
+#     total_due = fee_qs.aggregate(
+#         due=Coalesce(Sum('due_amount', output_field=DecimalField()), Decimal("0.00"))
+#     )['due']
 
-    # School-level summary
-    total_students = Student.objects.count()
+#     # Class-wise summary
+#     class_data = []
+#     all_class_periods = ClassPeriod.objects.select_related('classroom__room_type').all()
 
-    fee_qs = FeeRecord.objects.all()
+#     for period in all_class_periods:
+#         students_in_class = Student.objects.filter(classes=period).distinct()
+#         student_ids = students_in_class.values_list('id', flat=True)
 
-    if month and year:
-        fee_qs = fee_qs.filter(month=month, payment_date__year=year)
-    elif year:
-        fee_qs = fee_qs.filter(payment_date__year=year)
+#         class_fee_qs = FeeRecord.objects.filter(student_id__in=student_ids)
+#         if month and year:
+#             class_fee_qs = class_fee_qs.filter(month=month, payment_date__year=year)
 
-    total_fee = fee_qs.aggregate(
-        total=Coalesce(Sum('total_amount', output_field=DecimalField()), Decimal("0.00"))
-    )['total']
+#         class_total_fee = class_fee_qs.aggregate(
+#             total=Coalesce(Sum('total_amount', output_field=DecimalField()), Decimal("0.00"))
+#         )['total']
 
-    total_paid = fee_qs.aggregate(
-        paid=Coalesce(Sum('paid_amount', output_field=DecimalField()), Decimal("0.00"))
-    )['paid']
+#         class_total_paid = class_fee_qs.aggregate(
+#             paid=Coalesce(Sum('paid_amount', output_field=DecimalField()), Decimal("0.00"))
+#         )['paid']
 
-    total_due = fee_qs.aggregate(
-        due=Coalesce(Sum('due_amount', output_field=DecimalField()), Decimal("0.00"))
-    )['due']
+#         class_total_due = class_fee_qs.aggregate(
+#             due=Coalesce(Sum('due_amount', output_field=DecimalField()), Decimal("0.00"))
+#         )['due']
 
-    # Class-wise summary
-    class_data = []
-    all_class_periods = ClassPeriod.objects.select_related('classroom__room_type').all()
+#         class_data.append({
+#             "class_name": f"{period.classroom.room_type} - {period.classroom.room_name}",
+#             "total_students": students_in_class.count(),
+#             "total_fee": class_total_fee,
+#             "paid_fee": class_total_paid,
+#             "due_fee": class_total_due
+#         })
 
-    for period in all_class_periods:
-        students_in_class = Student.objects.filter(classes=period).distinct()
-        student_ids = students_in_class.values_list('id', flat=True)
+#     data = {
+#         "school_summary": {
+#             "total_students": total_students,
+#             "total_fee": total_fee,
+#             "paid_fee": total_paid,
+#             "due_fee": total_due,
+#         },
+#         "class_summary": class_data
+#     }
 
-        class_fee_qs = FeeRecord.objects.filter(student_id__in=student_ids)
-        if month and year:
-            class_fee_qs = class_fee_qs.filter(month=month, payment_date__year=year)
-
-        class_total_fee = class_fee_qs.aggregate(
-            total=Coalesce(Sum('total_amount', output_field=DecimalField()), Decimal("0.00"))
-        )['total']
-
-        class_total_paid = class_fee_qs.aggregate(
-            paid=Coalesce(Sum('paid_amount', output_field=DecimalField()), Decimal("0.00"))
-        )['paid']
-
-        class_total_due = class_fee_qs.aggregate(
-            due=Coalesce(Sum('due_amount', output_field=DecimalField()), Decimal("0.00"))
-        )['due']
-
-        class_data.append({
-            "class_name": f"{period.classroom.room_type} - {period.classroom.room_name}",
-            "total_students": students_in_class.count(),
-            "total_fee": class_total_fee,
-            "paid_fee": class_total_paid,
-            "due_fee": class_total_due
-        })
-
-    data = {
-        "school_summary": {
-            "total_students": total_students,
-            "total_fee": total_fee,
-            "paid_fee": total_paid,
-            "due_fee": total_due,
-        },
-        "class_summary": class_data
-    }
-
-    return Response(data)
+#     return Response(data)
 
 
 # -------------------------------------------------  Guardian income distribution view  ----------------------------------------------------------
@@ -828,132 +816,127 @@ def guardian_income_distribution(request):
 
 ### ------------------- As of 25June25 at 12:35 --------------- ###
 ### ---- complete fee dashboard ------- ###
-@api_view(["GET"])
-def fee_dashboard(request):
-    filter_month = request.query_params.get("month")
-    qs = FeeRecord.objects.all()
 
-    # -------- Overall Summary --------
-    total = qs.aggregate(
-        total=Coalesce(Sum(F("total_amount") + F("late_fee"), output_field=FloatField()), Value(0.0))
-    )["total"]
-    paid = qs.aggregate(
-        paid=Coalesce(Sum("paid_amount", output_field=FloatField()), Value(0.0))
-    )["paid"]
-    late_fee = qs.aggregate(
-        late=Coalesce(Sum("late_fee", output_field=FloatField()), Value(0.0))
-    )["late"]
+# @api_view(["GET"])
+# def fee_dashboard(request):
+#     filter_month = request.query_params.get("month")
+#     qs = FeeRecord.objects.all()
 
-    due = max(0, total - paid)
-    paid_percent = round((paid / total) * 100, 2) if total > 0 else 0.0
-    due_percent = round((due / total) * 100, 2) if total > 0 else 0.0
-    total_percent = round(paid_percent + due_percent, 2)
+#     # -------- Overall Summary --------
+#     total = qs.aggregate(
+#         total=Coalesce(Sum(F("total_amount") + F("late_fee"), output_field=FloatField()), Value(0.0))
+#     )["total"]
+#     paid = qs.aggregate(
+#         paid=Coalesce(Sum("paid_amount", output_field=FloatField()), Value(0.0))
+#     )["paid"]
+#     late_fee = qs.aggregate(
+#         late=Coalesce(Sum("late_fee", output_field=FloatField()), Value(0.0))
+#     )["late"]
 
-    overall_summary = {
-        "total_amount": round(total, 2),
-        "paid_amount": round(paid, 2),
-        "due_amount": round(due, 2),
-        "late_fee": round(late_fee, 2),
-        "paid_percent": paid_percent,
-        "due_percent": due_percent,
-        "total_percent": total_percent
-    }
+#     due = max(0, total - paid)
+#     paid_percent = round((paid / total) * 100, 2) if total > 0 else 0.0
+#     due_percent = round((due / total) * 100, 2) if total > 0 else 0.0
+#     total_percent = round(paid_percent + due_percent, 2)
 
-    # -------- Monthly Summary --------
-    # https://187gwsw1-7000.inc1.devtunnels.ms/d/fee-dashboard/?month=June
-    monthly_qs = qs.filter(month__iexact=filter_month) if filter_month else qs
-    monthly_data = (
-        monthly_qs.values("month")
-        .annotate(
-            total_base=Coalesce(Sum("total_amount", output_field=FloatField()), Value(0.0)),
-            late_fee=Coalesce(Sum("late_fee", output_field=FloatField()), Value(0.0)),
-            paid=Coalesce(Sum("paid_amount", output_field=FloatField()), Value(0.0)),
-        )
-        .order_by("month")
-    )
+#     overall_summary = {
+#         "total_amount": round(total, 2),
+#         "paid_amount": round(paid, 2),
+#         "due_amount": round(due, 2),
+#         "late_fee": round(late_fee, 2),
+#         "paid_percent": paid_percent,
+#         "due_percent": due_percent,
+#         "total_percent": total_percent
+#     }
 
-    monthly_summary = []
-    for item in monthly_data:
-        total = item["total_base"] + item["late_fee"]
-        due = max(0, total - item["paid"])
-        monthly_summary.append({
-            "month": item["month"],
-            "total_amount": round(total, 2),
-            "paid_amount": round(item["paid"], 2),
-            "due_amount": round(due, 2),
-            "late_fee": round(item["late_fee"], 2),
-            "paid_percent": round((item["paid"] / total) * 100, 2) if total > 0 else 0.0,
-            "due_percent": round((due / total) * 100, 2) if total > 0 else 0.0,
-            "late_fee_percent": round((item["late_fee"] / total) * 100, 2) if total > 0 else 0.0,
-            "total_percent": 100.0
-        })
+#     # -------- Monthly Summary --------
+#     # https://187gwsw1-7000.inc1.devtunnels.ms/d/fee-dashboard/?month=June
+#     monthly_qs = qs.filter(month__iexact=filter_month) if filter_month else qs
+#     monthly_data = (
+#         monthly_qs.values("month")
+#         .annotate(
+#             total_base=Coalesce(Sum("total_amount", output_field=FloatField()), Value(0.0)),
+#             late_fee=Coalesce(Sum("late_fee", output_field=FloatField()), Value(0.0)),
+#             paid=Coalesce(Sum("paid_amount", output_field=FloatField()), Value(0.0)),
+#         )
+#         .order_by("month")
+#     )
 
-    # -------- Payment Mode Distribution --------
-    payment_data = FeeRecord.objects.values("payment_mode").annotate(count=Count("id"))
-    total_payments = sum(item["count"] for item in payment_data)
+#     monthly_summary = []
+#     for item in monthly_data:
+#         total = item["total_base"] + item["late_fee"]
+#         due = max(0, total - item["paid"])
+#         monthly_summary.append({
+#             "month": item["month"],
+#             "total_amount": round(total, 2),
+#             "paid_amount": round(item["paid"], 2),
+#             "due_amount": round(due, 2),
+#             "late_fee": round(item["late_fee"], 2),
+#             "paid_percent": round((item["paid"] / total) * 100, 2) if total > 0 else 0.0,
+#             "due_percent": round((due / total) * 100, 2) if total > 0 else 0.0,
+#             "late_fee_percent": round((item["late_fee"] / total) * 100, 2) if total > 0 else 0.0,
+#             "total_percent": 100.0
+#         })
 
-    payment_distribution = [
-        {
-            "payment_mode": item["payment_mode"],
-            "count": item["count"],
-            "percentage": round((item["count"] / total_payments) * 100, 2) if total_payments else 0.0
-        } for item in payment_data
-    ]
+#     # -------- Payment Mode Distribution --------
+#     payment_data = FeeRecord.objects.values("payment_mode").annotate(count=Count("id"))
+#     total_payments = sum(item["count"] for item in payment_data)
 
-    # -------- Top Defaulters (No Payment in Last 3 Months) --------
+#     payment_distribution = [
+#         {
+#             "payment_mode": item["payment_mode"],
+#             "count": item["count"],
+#             "percentage": round((item["count"] / total_payments) * 100, 2) if total_payments else 0.0
+#         } for item in payment_data
+#     ]
 
-    # Defaulter Summary (based on dues in the last 3 months)
-    three_months_ago = datetime.now().date() - timedelta(days=90)
+#     # -------- Top Defaulters (No Payment in Last 3 Months) --------
 
-    due_per_month = FeeRecord.objects.filter(
-        payment_date__lt=three_months_ago
-    ).values("student_id").annotate(
-        total=Coalesce(Sum(F("total_amount") + F("late_fee"), output_field=FloatField()), Value(0.0)),
-        paid=Coalesce(Sum("paid_amount", output_field=FloatField()), Value(0.0)),
-    ).annotate(
-        due=F("total") - F("paid")
-    ).filter(due__gt=0)
+#     # Defaulter Summary (based on dues in the last 3 months)
+#     three_months_ago = datetime.now().date() - timedelta(days=90)
 
-    defaulter_count = due_per_month.count()
-    total_students = Student.objects.count()
-    defaulter_percent = round((defaulter_count / total_students) * 100, 2) if total_students > 0 else 0.0
+#     due_per_month = FeeRecord.objects.filter(
+#         payment_date__lt=three_months_ago
+#     ).values("student_id").annotate(
+#         total=Coalesce(Sum(F("total_amount") + F("late_fee"), output_field=FloatField()), Value(0.0)),
+#         paid=Coalesce(Sum("paid_amount", output_field=FloatField()), Value(0.0)),
+#     ).annotate(
+#         due=F("total") - F("paid")
+#     ).filter(due__gt=0)
+
+#     defaulter_count = due_per_month.count()
+#     total_students = Student.objects.count()
+#     defaulter_percent = round((defaulter_count / total_students) * 100, 2) if total_students > 0 else 0.0
     
     
-    # --------- Fee Defaulters (Based on Due Older Than 3 Months) ---------
-    # three_months_ago = now().date() - timedelta(days=90)
+#     # --------- Fee Defaulters (Based on Due Older Than 3 Months) ---------
+#     # three_months_ago = now().date() - timedelta(days=90)
 
-    # # Get only FeeRecords from the last 3 months
-    # recent_dues_qs = FeeRecord.objects.filter(payment_date__gte=three_months_ago)
+#     # # Get only FeeRecords from the last 3 months
+#     # recent_dues_qs = FeeRecord.objects.filter(payment_date__gte=three_months_ago)
 
-    # # Annotate due per record
-    # recent_dues_qs = recent_dues_qs.annotate(
-    #     total_due=F('total_amount') + F('late_fee') - F('paid_amount')
-    # ).filter(total_due__gt=0)
+#     # # Annotate due per record
+#     # recent_dues_qs = recent_dues_qs.annotate(
+#     #     total_due=F('total_amount') + F('late_fee') - F('paid_amount')
+#     # ).filter(total_due__gt=0)
 
-    # # Total number of fee records with due in last 3 months
-    # defaulter_count = recent_dues_qs.values('student').distinct().count()
+#     # # Total number of fee records with due in last 3 months
+#     # defaulter_count = recent_dues_qs.values('student').distinct().count()
 
-    # # Total number of students overall
-    # total_students = Student.objects.count()
+#     # # Total number of students overall
+#     # total_students = Student.objects.count()
 
-    # defaulter_percent = round((defaulter_count / total_students) * 100, 2) if total_students > 0 else 0.0
+#     # defaulter_percent = round((defaulter_count / total_students) * 100, 2) if total_students > 0 else 0.0
 
-    # -------- Response --------
-    return Response({
-    "overall_summary": overall_summary,
-    "monthly_summary": monthly_summary,
-    "payment_mode_distribution": payment_distribution,
-    "defaulter_summary": {
-        "count": defaulter_count,
-        "percent": defaulter_percent,
-    }
-})
-
-
-
-
-
-
+#     # -------- Response --------
+#     return Response({
+#     "overall_summary": overall_summary,
+#     "monthly_summary": monthly_summary,
+#     "payment_mode_distribution": payment_distribution,
+#     "defaulter_summary": {
+#         "count": defaulter_count,
+#         "percent": defaulter_percent,
+#     }
+# })
 
 
 
@@ -2022,61 +2005,9 @@ class ClassPeriodView(viewsets.ModelViewSet):
                 "details": result
             }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)    
-
-# As of 04June2025 at 12:15 AM
-# Re-implementation of Fee module based on the provided fee card
-from django.db.models import Q
-from collections import OrderedDict, defaultdict
-
-
-
-class FeeTypeView(viewsets.ModelViewSet):
-    queryset = FeeType.objects.all()
-    serializer_class = FeeTypeSerializer
-
-
-class YearLevelFeeView(viewsets.ModelViewSet):
-    serializer_class = YearLevelFeeSerializer
-
-    def get_queryset(self):
-        qs = YearLevelFee.objects.select_related('year_level', 'fee_type')
-        fee_id = self.request.query_params.get('id')
-        if fee_id:
-            qs = qs.filter(id=fee_id)
-        return qs
-
-    # def get_queryset(self):           # just commneted as of 27june25 at 02:47 PM
-    #     return YearLevelFee.objects.select_related('year_level', 'fee_type')
-    
-    # def get_queryset(self):         # GET /api/year-level-fee/?id=3
-    #     queryset = YearLevelFee.objects.select_related('year_level', 'fee_type')
-    #     fee_id = self.request.query_params.get('id', None)
-
-    #     if fee_id is not None:
-    #         queryset = queryset.filter(id=fee_id)
-
-    #     return queryset
-    
-
-    def list(self, request, *args, **kwargs):       # GET /api/year-level-fee/
-        queryset = self.get_queryset()
-        serializer = self.get_serializer(queryset, many=True)
-        grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
-        return Response(grouped_fees)
-
-    def retrieve(self, request, pk=None):       # GET /api/year-level-fees/2/
-        queryset = self.get_queryset().filter(year_level__id=pk)
-        if not queryset.exists():
-            return Response({"detail": "Not found."}, status=404)
-
-        serializer = self.get_serializer(queryset, many=True)
-        grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
-        return Response(grouped_fees[0] if grouped_fees else {})
-    
     
 
 from twilio.rest import Client 
-
 def send_whatsapp_message(message_text):
     account_sid = 'AC75f0880296f2c1377b2ca30442bbd3e1'
     auth_token = '01dfff8731923c8e91e47b469f533fd5'
@@ -2113,1336 +2044,6 @@ def send_whatsapp_message(message_text):
 
     return sent_messages
 
-#discount for students-----------
-class FeeDiscountView(viewsets.ModelViewSet):
-    queryset = FeeDiscount.objects.all()
-    serializer_class = FeeDiscountSerializer
-    permission_classes = [IsAuthenticated,IsDirector]
-
-
-class FeeRecordView(viewsets.ModelViewSet):
-    serializer_class = FeeRecordSerializer
-    queryset = FeeRecord.objects.all()
-
-    filter_backends = [SearchFilter]
-    permission_classes = [IsAuthenticated]
-
-    search_fields = [
-        'remarks',
-        'receipt_number',
-        'student__user__first_name',
-        'student__user__last_name',
-        'year_level_fees__year_level__level_name',
-    ]
-
-    def get_queryset(self):
-        user = self.request.user
-        qs = super().get_queryset()
-
-        # Role-based visibility
-        if hasattr(user, "director") or hasattr(user, "officestaff") or user.is_staff or user.is_superuser:
-            pass  # full access
-        elif hasattr(user, "teacher"):
-            # only teacher's assigned YearLevels
-            teacher_year_levels = user.teacher.teacheryearlevel_set.values_list("year_level_id", flat=True)
-            qs = qs.filter(student__student_year_levels__level_id__in=teacher_year_levels)
-        elif hasattr(user, "student"):
-            qs = qs.filter(student=user.student)
-        elif hasattr(user, "guardian_relation"):
-            children_ids = user.guardian_relation.studentguardian.values_list("student_id", flat=True)
-            qs = qs.filter(student_id__in=children_ids)
-        else:
-            qs = qs.none()
-
-        request = self.request
-
-        month = request.query_params.get('month')
-        if month:
-            qs = qs.filter(month=month)
-
-        school_year = request.query_params.get('school_year')
-        if school_year:
-            qs = qs.filter(school_year__year__year_name = school_year)
-
-        student_id = request.query_params.get('student_id')
-        if student_id:
-            qs = qs.filter(student_id=student_id)
-
-        year_level_id = request.query_params.get('year_level')
-        if year_level_id:
-            qs = qs.filter(year_level_fees__year_level__id=year_level_id)
-
-        search = request.query_params.get('search')
-        if search:
-            search = search.strip()
-            parts = search.split(" ")
-            if len(parts) > 1:
-                qs = qs.filter(
-                    Q(student__user__first_name__icontains=parts[0]) &
-                    Q(student__user__last_name__icontains=' '.join(parts[1:]))
-                )
-            else:
-                qs = qs.filter(
-                    Q(student__user__first_name__icontains=search) |
-                    Q(student__user__last_name__icontains=search)
-                )
-
-        return qs.distinct()
-
-    def generate_receipt_number(self):
-        today = datetime.now().strftime('%Y%m%d')
-        last_receipt = FeeRecord.objects.filter(receipt_number__startswith=f'REC-{today}') \
-                                        .aggregate(Max('receipt_number'))
-        if last_receipt['receipt_number__max']:
-            last_number = int(last_receipt['receipt_number__max'].split('-')[-1])
-            new_number = last_number + 1
-        else:
-            new_number = 1
-        return f'REC-{today}-{new_number:05d}'
-
-    @action(detail=False, methods=["post"], url_path="initiate-payment")
-    def initiate_payment(self, request):
-        """
-        Simple payment initiation - cash jaisa hi
-        """
-        data = request.data.copy()
-
-        student_id = data.get('student_id')
-        selected_fees = data.get('selected_fees', [])
-
-        fee_ids = []
-        if selected_fees:
-            for fee_data in selected_fees:
-                if isinstance(fee_data, dict) and 'fee_id' in fee_data:
-                    try:
-                        fee_ids.append(int(fee_data['fee_id']))
-                    except (ValueError, TypeError):
-                        continue
-
-        if not fee_ids and student_id:
-            try:
-                student = Student.objects.get(id=student_id)
-                current_year_level = StudentYearLevel.objects.filter(
-                    student=student
-                ).order_by('-year').first()
-
-                if current_year_level:
-                    default_fees = YearLevelFee.objects.filter(
-                        year_level=current_year_level.level
-                    )[:3]
-
-                    if default_fees:
-                        fee_ids = [fee.id for fee in default_fees]
-
-            except Student.DoesNotExist:
-                return Response(
-                    {"error": "Student not found."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-        if not fee_ids:
-            return Response(
-                {"error": "No fees available for this student."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # FIX: Add year_level_fees to data
-        data['year_level_fees'] = fee_ids
-
-        # Validate data
-        serializer = FeeRecordRazorpaySerializer(data=data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=400)
-
-        validated_data = serializer.validated_data
-        total = validated_data['total_amount']
-        late_fee = validated_data['late_fee']
-        paid_amount = validated_data['paid_amount']
-
-        # Generate receipt number
-        receipt_number = self.generate_receipt_number()
-
-        # Create Razorpay order
-        client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-        try:
-            razorpay_order = client.order.create({
-                'amount': int(paid_amount * 100),
-                'currency': 'INR',
-                'payment_capture': '1',
-                'receipt': receipt_number
-            })
-
-            return Response({
-                'razorpay_order_id': razorpay_order['id'],
-                'total_amount': float(total),
-                'late_fee': float(late_fee),
-                'paid_amount': float(paid_amount),
-                'currency': 'INR',
-                'receipt_number': receipt_number,
-                'message': 'Payment initiated successfully'
-            }, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            return Response(
-                {"error": f"Failed to create payment order: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-
-    @action(detail=False, methods=["post"], url_path="confirm-payment")
-    def confirm_payment(self, request):
-        """
-        Payment confirmation with proper status handling for multiple months
-        """
-        data = request.data.copy()
-
-        print(" CONFIRM PAYMENT DATA:", data)
-
-        required_fields = [
-            "razorpay_payment_id",
-            "razorpay_order_id",
-            "razorpay_signature",
-            "student_id",
-            "month",
-            "paid_amount",
-            "payment_mode",
-            "received_by"
-        ]
-
-        missing = [field for field in required_fields if field not in data]
-        if missing:
-            return Response(
-                {"error": f"Missing required fields: {', '.join(missing)}"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        selected_fees_data = data.get("month")
-        print(" SELECTED FEES DATA:", selected_fees_data)
-
-        processed_fees_data = []
-
-        if isinstance(selected_fees_data, list):
-            processed_fees_data = selected_fees_data
-            print(" CASE 1: Already a list")
-
-        elif isinstance(selected_fees_data, str):
-            try:
-                cleaned_data = selected_fees_data.replace("'", '"').replace("None", "null")
-                processed_fees_data = json.loads(cleaned_data)
-                print(" CASE 2: Parsed from string")
-            except json.JSONDecodeError as e:
-                print(f" JSON PARSE ERROR: {e}")
-                return Response(
-                    {"error": f"Invalid selected_fees format: {str(e)}"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-        else:
-            return Response(
-                {"error": "selected_fees must be a list or JSON string"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if not isinstance(processed_fees_data, list) or not processed_fees_data:
-            return Response(
-                {"error": "selected_fees must be a non-empty list"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-        try:
-            client.utility.verify_payment_signature({
-                "razorpay_order_id": data["razorpay_order_id"],
-                "razorpay_payment_id": data["razorpay_payment_id"],
-                "razorpay_signature": data["razorpay_signature"]
-            })
-        except SignatureVerificationError:
-            return Response({"error": "Payment verification failed - Invalid signature"},
-                            status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            return Response({"error": f"Payment verification error: {str(e)}"},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        if FeeRecord.objects.filter(razorpay_payment_id=data["razorpay_payment_id"]).exists():
-            existing_record = FeeRecord.objects.get(razorpay_payment_id=data["razorpay_payment_id"])
-            return Response({
-                "error": "This payment has already been processed",
-                "existing_record_id": existing_record.id
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            total_paid_amount = Decimal(str(data["paid_amount"]))
-        except (ValueError, TypeError):
-            return Response({"error": "Invalid paid_amount format"},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        saved_records = []
-        receipt_number = self.generate_receipt_number()
-
-        try:
-            student = Student.objects.get(id=data["student_id"])
-
-            total_payable = Decimal("0.00")
-            fee_month_details = {}
-
-            print(" PROCESSING EACH SELECTED FEE:")
-            for fee_data in processed_fees_data:
-                if not isinstance(fee_data, dict):
-                    continue
-
-                fee_id = fee_data.get('fee_id')
-                month_name = fee_data.get('month')
-
-                if not fee_id or not month_name:
-                    continue
-
-                try:
-                    fee_id_int = int(fee_id)
-                    fee = YearLevelFee.objects.get(id=fee_id_int)
-                except (ValueError, TypeError, YearLevelFee.DoesNotExist):
-                    continue
-
-                base_amount = fee.amount
-
-                try:
-                    discount = FeeDiscount.objects.get(student=student, is_allowed=True)
-                    total_discount = Decimal("0.00")
-                    fee_type = fee.fee_type.name.lower()
-                    if "admission fee" in fee_type:
-                        total_discount += discount.admission_fee_discount or Decimal("0.00")
-                    if "tuition fee" in fee_type:
-                        total_discount += discount.tuition_fee_discount or Decimal("0.00")
-                    discounted_amount = max(base_amount - total_discount, Decimal("0.00"))
-                except FeeDiscount.DoesNotExist:
-                    discounted_amount = base_amount
-
-                # LATE FEE LOGIC COMMENTED OUT - ALWAYS SET TO 0
-                # today = date.today()
-                # current_month = today.strftime('%B')
-                # all_months = ['January', 'February', 'March', 'April', 'May', 'June',
-                #              'July', 'August', 'September', 'October', 'November', 'December']
-
-                # current_month_index = all_months.index(current_month) if current_month in all_months else 0
-                # record_month_index = all_months.index(month_name) if month_name in all_months else 0
-
-                late_fee = Decimal("0.00")
-                # LATE FEE LOGIC COMMENTED OUT
-                # if ("tuition fee" in fee.fee_type.name.lower() and
-                #     today.day > 15 and
-                #     record_month_index <= current_month_index):
-                #     late_fee = Decimal("25.00")
-
-                total_for_fee = discounted_amount + late_fee
-
-                existing_payments = FeeRecord.objects.filter(
-                    student_id=data["student_id"],
-                    month=month_name,
-                    year_level_fees__id=fee_id_int
-                )
-                total_already_paid = existing_payments.aggregate(Sum('paid_amount'))['paid_amount__sum'] or Decimal('0.00')
-
-                remaining_payable = max(total_for_fee - total_already_paid, Decimal('0.00'))
-
-                fee_month_details[(month_name, fee_id_int)] = {
-                    'fee': fee,
-                    'base_amount': discounted_amount,
-                    'late_fee': late_fee,
-                    'total_payable': total_for_fee,
-                    'already_paid': total_already_paid,
-                    'remaining_payable': remaining_payable,
-                    'month': month_name
-                }
-
-                total_payable += remaining_payable
-                print(f"    {month_name} - {fee.fee_type.name}: Base ₹{discounted_amount}, Late ₹{late_fee}, Total ₹{total_for_fee}, Already Paid ₹{total_already_paid}, Remaining ₹{remaining_payable}")
-
-            print(f" TOTAL PAYABLE FOR ALL SELECTED FEES: ₹{total_payable}")
-            print(f" PAID AMOUNT: ₹{total_paid_amount}")
-
-            if total_payable > 0 and total_paid_amount > 0:
-                payment_distribution = {}
-                for key, item in fee_month_details.items():
-                    if item['remaining_payable'] > 0:
-                        proportion = item['remaining_payable'] / total_payable
-                        allocated_amount = total_paid_amount * proportion
-                        allocated_amount = min(allocated_amount, item['remaining_payable'])
-                        payment_distribution[key] = allocated_amount
-
-                total_allocated = Decimal("0.00")
-                for (month_name, fee_id), allocated_amount in payment_distribution.items():
-                    if allocated_amount <= 0:
-                        continue
-
-                    item = fee_month_details[(month_name, fee_id)]
-
-                    new_paid_amount = item['already_paid'] + allocated_amount
-                    new_due_amount = max(item['total_payable'] - new_paid_amount, Decimal('0.00'))
-
-                    if new_due_amount == 0:
-                        payment_status = 'Paid'
-                    elif new_paid_amount > 0:
-                        payment_status = 'Partially Paid'
-                    else:
-                        payment_status = 'Unpaid'
-
-                    record_data = {
-                        "student_id": data["student_id"],
-                        "month": month_name,
-                        "year_level_fees": [fee_id],
-                        "paid_amount": str(allocated_amount.quantize(Decimal('0.01'))),
-                        "payment_mode": data["payment_mode"],
-                        "remarks": f"{data.get('remarks', 'Online Payment')}",
-                        "received_by": data["received_by"],
-                        "receipt_number": receipt_number,
-                        "razorpay_order_id": data["razorpay_order_id"],
-                        "razorpay_payment_id": data["razorpay_payment_id"],
-                        "razorpay_signature_id": data["razorpay_signature"],
-                        "payment_status": payment_status
-                    }
-
-                    serializer = FeeRecordRazorpaySerializer(data=record_data)
-                    if serializer.is_valid():
-                        try:
-                            instance = serializer.save()
-                            saved_records.append(instance)
-                            total_allocated += allocated_amount
-                            print(f" SUCCESS: Created record for {month_name}")
-                        except Exception as e:
-                            print(f" SAVE ERROR: {e}")
-                    else:
-                        print(f" SERIALIZER ERROR for {month_name}: {serializer.errors}")
-
-            if saved_records:
-                total_base = sum(Decimal(str(record.total_amount)) for record in saved_records)
-                total_late = sum(Decimal(str(record.late_fee)) for record in saved_records)
-                total_amount = total_base + total_late
-                due_amount = max(total_amount - total_allocated, Decimal('0.00'))
-
-                if due_amount == 0:
-                    overall_status = 'Paid'
-                elif total_allocated > 0:
-                    overall_status = 'Partially Paid'
-                else:
-                    overall_status = 'Unpaid'
-
-                response_data = {
-                    "message": "Payment successful! All selected months have been processed.",
-                    "summary": {
-                        "student_name": student.user.get_full_name(),
-                        "student_id": student.id,
-                        "total_base_amount": f"{total_base:.2f}",
-                        "total_late_fee": f"{total_late:.2f}",
-                        "total_amount": f"{total_amount:.2f}",
-                        "paid_amount": f"{total_allocated:.2f}",
-                        "due_amount": f"{due_amount:.2f}",
-                        "payment_mode": data["payment_mode"],
-                        "receipt_number": receipt_number,
-                        "payment_status": overall_status,
-                        "months_processed": list(set(record.month for record in saved_records)),
-                        "records_created": len(saved_records)
-                    },
-                    "fee_records": [{
-                        "id": record.id,
-                        "month": record.month,
-                        "fee_types": [fee.fee_type.name for fee in record.year_level_fees.all()],
-                        "paid_amount": str(record.paid_amount),
-                        "payment_status": record.payment_status
-                    } for record in saved_records]
-                }
-
-                print(f" PAYMENT SUCCESS - OVERALL STATUS: {overall_status}")
-                print(f" SUMMARY: Paid ₹{total_allocated} of ₹{total_amount}, Due: ₹{due_amount}")
-                print(f" MONTHS PROCESSED: {list(set(record.month for record in saved_records))}")
-
-                try:
-                    message_text = (
-                        f"Dear {student.user.get_full_name()},\n"
-                        f"Your online fee payment has been successfully processed.\n"
-                        f"Receipt No: {receipt_number}\n"
-                        f"Total Amount: ₹{total_amount:.2f}\n"
-                        f"Paid Amount: ₹{total_allocated:.2f}\n"
-                        f"Due Amount: ₹{due_amount:.2f}\n"
-                        f"Payment Mode: {data['payment_mode']}\n"
-                        f"Status: {overall_status}\n"
-                        f"Months: {', '.join(set(record.month for record in saved_records))}\n"
-                        f"Thank you!"
-                    )
-
-                    # send WhatsApp
-                    send_whatsapp_message(student.user.phoneNo, message_text)
-
-                    # send email
-                    send_email_notification(
-                        to_email=student.user.email,
-                        subject="Payment Confirmation - Fee Receipt",
-                        message=message_text
-                    )
-
-                except Exception as e:
-                    print(f"WhatsApp/Email sending failed: {e}")
-
-                return Response(response_data, status=status.HTTP_201_CREATED)
-            else:
-                return Response(
-                    {"error": "No fee records were created. Please check if the selected fees are valid and not already fully paid."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-        except Student.DoesNotExist:
-            return Response({"error": "Student not found."},
-                            status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            import traceback
-            print(f" ERROR in payment processing: {str(e)}")
-            print(f" TRACEBACK: {traceback.format_exc()}")
-            return Response({"error": f"Payment processing error: {str(e)}"},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=False, methods=["get"], url_path="fee-preview")
-    def preview(self, request):
-        student_id = request.query_params.get("student_id")
-
-        if not student_id:
-            return Response({"detail": "student_id is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            student = Student.objects.get(id=student_id)
-        except Student.DoesNotExist:
-            return Response({"detail": "Student not found"}, status=status.HTTP_404_NOT_FOUND)
-
-        student_year_level = (
-            StudentYearLevel.objects
-            .filter(student=student)
-            .order_by("-year")
-            .first()
-        )
-        if not student_year_level:
-            return Response({"detail": "No year level found for this student."}, status=status.HTTP_404_NOT_FOUND)
-
-        year_level_fees = YearLevelFee.objects.filter(year_level=student_year_level.level)
-        paid_fees = FeeRecord.objects.filter(student=student)
-
-        all_months = [
-            'January', 'February', 'March', 'April', 'May', 'June',
-            'July', 'August', 'September', 'October', 'November', 'December'
-        ]
-
-        serializer = YearLevelFeeSerializer(year_level_fees, many=True, context={"student": student})
-        grouped_fees = YearLevelFeeSerializer.group_by_year_level(serializer.data)
-
-        today = date.today()
-        current_month = today.strftime('%B')
-        current_month_index = all_months.index(current_month) if current_month in all_months else 0
-        result = []
-
-        for month in all_months:
-            month_data = {"month": month, "fees": []}
-
-            for group in grouped_fees:
-                for fee in group["fees"]:
-                    fee_id = fee["id"]
-                    fee_type = fee["fee_type"].lower()
-                    base_amount = Decimal(fee.get("final_amount", "0"))
-
-                    if fee_type == "admission fee" and month == "January":
-                        admission_payments = paid_fees.filter(
-                            year_level_fees__id=fee_id,
-                            payment_status__in=['Paid', 'Partially Paid']
-                        )
-                        total_paid = admission_payments.aggregate(Sum('paid_amount'))['paid_amount__sum'] or Decimal('0.00')
-                        if total_paid >= base_amount:
-                            status_info = {"status": "Already Paid", "paid_amount": str(total_paid)}
-                        elif total_paid > 0:
-                            status_info = {"status": "Partially Paid", "paid_amount": str(total_paid), "base_amount": str(base_amount)}
-                        else:
-                            status_info = {"status": "Pending", "base_amount": str(base_amount)}
-                        month_data["fees"].append({
-                            "id": fee_id,
-                            "fee_type": fee["fee_type"],
-                            "base_amount": str(base_amount),
-                            "late_fee": "0",
-                            **status_info
-                        })
-
-                    elif fee_type in ["tuition fee", "activity fee", "transport fee"]:
-                        fee_payments = paid_fees.filter(
-                            month=month,
-                            year_level_fees__id=fee_id,
-                            payment_status__in=['Paid', 'Partially Paid']
-                        )
-                        total_paid = fee_payments.aggregate(Sum('paid_amount'))['paid_amount__sum'] or Decimal('0.00')
-
-                        # LATE FEE LOGIC COMMENTED OUT - ALWAYS SET TO 0
-                        # month_index = all_months.index(month) if month in all_months else 0
-                        late_fee = "0"
-                        # LATE FEE LOGIC COMMENTED OUT
-                        # if fee_type == "tuition fee":
-                        #     if month_index < current_month_index or (month_index == current_month_index and today.day > 15):
-                        #         late_fee = "25"
-
-                        total_payable = base_amount + Decimal(late_fee)
-                        if total_paid >= total_payable:
-                            status_info = {"status": "Already Paid", "paid_amount": str(total_paid)}
-                        elif total_paid > 0:
-                            status_info = {"status": "Partially Paid", "paid_amount": str(total_paid), "base_amount": str(base_amount)}
-                        else:
-                            status_info = {"status": "Pending", "base_amount": str(base_amount)}
-
-                        month_data["fees"].append({
-                            "id": fee_id,
-                            "fee_type": fee["fee_type"],
-                            "base_amount": str(base_amount),
-                            "late_fee": late_fee,
-                            **status_info
-                        })
-
-            if month_data["fees"]:
-                result.append(month_data)
-
-        return Response(result)
-
-    @action(detail=False, methods=['post'], url_path='submit-multi-month-fees')
-    def submit_multi_month_fees(self, request):
-        student_id = request.data.get('student_id')
-        selected_fees = request.data.get('selected_fees', [])
-
-        paid_amount_str = request.data.get('paid_amount', "0.00")
-        try:
-            total_paid_amount = Decimal(str(paid_amount_str))
-        except (InvalidOperation, ValueError, TypeError):
-            return Response({"error": "Invalid paid_amount format."}, status=status.HTTP_400_BAD_REQUEST)
-
-        payment_mode = request.data.get('payment_mode')
-        remarks = request.data.get('remarks')
-        received_by = request.data.get('received_by')
-
-        admission = Admission.objects.filter(student_id=student_id).first()
-        if admission and admission.is_rte and admission.rte_number:
-            return Response(
-                {"message": f"Student {admission.student.user.get_full_name()} belongs to RTE category, fees record not created."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if not selected_fees:
-            return Response({"error": "No fees selected."}, status=status.HTTP_400_BAD_REQUEST)
-
-        receipt_number = FeeRecord().generate_unique_receipt_number()
-        total_base_amount = Decimal("0.00")
-        total_late_fee = Decimal("0.00")
-        saved_records = []
-
-        month_fee_groups = defaultdict(list)
-        for fee_data in selected_fees:
-            month = fee_data.get('month')
-            fee_id = fee_data.get('fee_id')
-            if month and fee_id:
-                month_fee_groups[(month, fee_id)].append(fee_data)
-
-        all_months = [
-            'January', 'February', 'March', 'April', 'May', 'June',
-            'July', 'August', 'September', 'October', 'November', 'December'
-        ]
-
-        fee_totals = {}
-        for (month, fee_id), fee_list in month_fee_groups.items():
-            try:
-                fee = YearLevelFee.objects.get(id=fee_id)
-                fee_type = fee.fee_type.name.lower()
-
-                existing_payments = FeeRecord.objects.filter(
-                    student_id=student_id,
-                    month=month,
-                    year_level_fees__id=fee_id
-                )
-
-                total_already_paid = existing_payments.aggregate(Sum('paid_amount'))['paid_amount__sum'] or Decimal('0.00')
-                base_amount = fee.amount
-
-                # LATE FEE LOGIC COMMENTED OUT - ALWAYS SET TO 0
-                # today = date.today()
-                # current_month = today.strftime('%B')
-                # current_month_index = all_months.index(current_month) if current_month in all_months else 0
-                # month_index = all_months.index(month) if month in all_months else 0
-
-                late_fee = Decimal("0.00")
-                # LATE FEE LOGIC COMMENTED OUT
-                # if fee_type == "tuition fee":
-                #     if month_index < current_month_index:
-                #         late_fee = Decimal("25.00")
-                #     elif month_index == current_month_index and today.day > 15:
-                #         late_fee = Decimal("25.00")
-
-                total_payable = base_amount + late_fee
-                remaining_payable = max(total_payable - total_already_paid, Decimal('0.00'))
-
-                fee_totals[(month, fee_id)] = {
-                    'fee': fee,
-                    'base_amount': base_amount,
-                    'late_fee': late_fee,
-                    'total_payable': total_payable,
-                    'already_paid': total_already_paid,
-                    'remaining_payable': remaining_payable,
-                    'fee_type': fee_type
-                }
-
-            except YearLevelFee.DoesNotExist:
-                continue
-
-        if not fee_totals:
-            return Response({"error": "No valid fees found."}, status=status.HTTP_400_BAD_REQUEST)
-
-        remaining_paid_amount = total_paid_amount
-        payment_distribution = {}
-        total_remaining = sum(item['remaining_payable'] for item in fee_totals.values())
-
-        if total_remaining > 0 and total_paid_amount > 0:
-            for key, item in fee_totals.items():
-                if item['remaining_payable'] > 0:
-                    proportion = item['remaining_payable'] / total_remaining
-                    allocated_amount = total_paid_amount * proportion
-                    allocated_amount = min(allocated_amount, item['remaining_payable'])
-                    payment_distribution[key] = allocated_amount
-        else:
-            num_fees = len(fee_totals)
-            if num_fees > 0 and total_paid_amount > 0:
-                equal_amount = total_paid_amount / num_fees
-                for key in fee_totals.keys():
-                    payment_distribution[key] = equal_amount
-
-        total_allocated = Decimal("0.00")
-        for (month, fee_id), allocated_amount in payment_distribution.items():
-            if allocated_amount <= 0:
-                continue
-
-            item = fee_totals[(month, fee_id)]
-            fee = item['fee']
-
-            if allocated_amount > remaining_paid_amount:
-                allocated_amount = remaining_paid_amount
-
-            new_paid_amount = item['already_paid'] + allocated_amount
-            new_due_amount = max(item['total_payable'] - new_paid_amount, Decimal('0.00'))
-
-            if new_due_amount == 0:
-                payment_status = 'Paid'
-            elif new_paid_amount > 0:
-                payment_status = 'Partially Paid'
-            else:
-                payment_status = 'Unpaid'
-
-            try:
-                allocated_amount_decimal = Decimal(str(allocated_amount)).quantize(Decimal('0.01'))
-            except (InvalidOperation, ValueError):
-                allocated_amount_decimal = Decimal("0.00")
-
-            serializer_data = {
-                "student_id": student_id,
-                "month": month,
-                "year_level_fees": [fee.id],
-                "paid_amount": str(allocated_amount_decimal),
-                "total_amount": str(item['total_payable']),
-                "late_fee": str(item['late_fee']),
-                "due_amount": str(new_due_amount),
-                "payment_mode": payment_mode,
-                "remarks": f"{remarks or ''} ({month})",
-                "received_by": received_by,
-                "receipt_number": receipt_number,
-                "payment_status": payment_status
-            }
-
-            serializer = self.get_serializer(
-                data=serializer_data,
-                context={"multi_month": True}
-            )
-
-            if serializer.is_valid():
-                instance = serializer.save()
-                total_base_amount += item['base_amount']
-                total_late_fee += item['late_fee']
-                total_allocated += allocated_amount_decimal
-                saved_records.append(instance)
-            else:
-                return Response({
-                    "month": month, "fee_id": fee_id, "errors": serializer.errors
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-        if saved_records:
-            first_record = saved_records[0]
-            total_amount = total_base_amount + total_late_fee
-            due_amount = max(total_amount - total_allocated, Decimal('0.00'))
-
-            combined_response = {
-                "id": first_record.id,
-                "student": {
-                    "id": first_record.student.id,
-                    "name": first_record.student.user.get_full_name()
-                },
-                "months": list(set(record.month for record in saved_records)),
-                "selected_fees": selected_fees,
-                "total_base_amount": f"{total_base_amount:.2f}",
-                "total_late_fee": f"{total_late_fee:.2f}",
-                "total_amount": f"{total_amount:.2f}",
-                "paid_amount": f"{total_allocated:.2f}",
-                "due_amount": f"{due_amount:.2f}",
-                "payment_date": str(date.today()),
-                "payment_mode": payment_mode,
-                "receipt_number": receipt_number,
-                "payment_status": "Paid" if due_amount == 0 else "Partially Paid",
-                "remarks": remarks,
-                "received_by": received_by
-            }
-            print(" COMBINED RESPONSE:", combined_response)
-
-            try:
-                message_text = (
-                    f"Dear {first_record.student.user.get_full_name()},\n"
-                    f"Your fee payment has been recorded.\n"
-                    f"Receipt No: {receipt_number}\n"
-                    f"Total Amount: ₹{total_amount:.2f}\n"
-                    f"Paid Amount: ₹{total_allocated:.2f}\n"
-                    f"Due Amount: ₹{due_amount:.2f}\n"
-                    f"Payment Mode: {payment_mode}\n"
-                    f"Status: {'Fully Paid' if due_amount == 0 else 'Partially Paid'}\n"
-                    f"Received by: {received_by}\n"
-                    f"Thank you!"
-                )
-                send_whatsapp_message(message_text)
-                send_email_notification(
-                    to_email=first_record.student.user.email,
-                    subject="Payment Recieved - Fee Receipt",
-                    message=message_text
-                )
-            except Exception as e:
-                print(message_text)
-                print(f"WhatsApp sending failed: {e}")
-
-            return Response(combined_response, status=status.HTTP_200_OK)
-        else:
-            return Response({"error": "No fee records created."}, status=status.HTTP_400_BAD_REQUEST)
-
-
-
-
-
-
-    
-    # corrected amount issue as of 19June25 at 02:50 PM
-    # https://187gwsw1-8000.inc1.devtunnels.ms/d/
-    # cord/student-fee-summary/?year_level=5
-    @action(detail=False, methods=["get"], url_path="student-fee-summary")
-    def student_fee_summary(self, request):
-        year_level = request.query_params.get("year_level")
-        search = request.query_params.get("search", "").strip()
-
-        qs = self.get_queryset()
-        filters = Q()
-
-        if year_level:
-            filters &= Q(student__student_year_levels__level__id=year_level)
-
-        if search:
-            filters &= (
-                Q(student__user__first_name__icontains=search) |
-                Q(student__user__last_name__icontains=search)
-            )
-
-        qs = qs.filter(filters).distinct()
-
-        summary = (
-            qs.values(
-                "student_id",
-                "student__user__first_name",
-                "student__user__last_name",
-                "student__student_year_levels__level__level_name"
-            )
-            .annotate(
-                total_amount=Coalesce(Sum("total_amount", output_field=FloatField()), Value(0.0)),
-                paid_amount=Coalesce(Sum("paid_amount", output_field=FloatField()), Value(0.0)),
-                late_fee=Coalesce(Sum("late_fee", output_field=FloatField()), Value(0.0))
-            )
-        )
-
-        result = []
-        for item in summary:
-            total = item["total_amount"]# + item["late_fee"]#is se do baar late fee add ho rahi he
-            due = max(0, total - item["paid_amount"])
-
-            result.append({
-                "student_id": item["student_id"],
-                "student_name": f"{item['student__user__first_name']} {item['student__user__last_name']}",
-                "year_level": item["student__student_year_levels__level__level_name"],
-                "total_amount": float(total),
-                "paid_amount": float(item["paid_amount"]),
-                "due_amount": float(due),
-                "late_fee": float(item["late_fee"])  #  now included
-            })
-
-        return Response(result, status=status.HTTP_200_OK)
-
-    # corrected amount issue as of 19June25 at 02:50 PM
-    # https://187gwsw1-8000.inc1.devtunnels.ms/d/fee-record/monthly-summary/?year_level=2&month=June
-    @action(detail=False, methods=["get"], url_path="monthly-summary")
-    def monthly_summary(self, request):
-        month = request.query_params.get("month", "").strip()
-        year_level = request.query_params.get("year_level", "").strip()
-        search = request.query_params.get("search", "").strip()
-        school_year = request.query_params.get("school_year", "").strip()
-
-        qs = self.get_queryset()
-        filters = Q()
-
-        if month:
-            filters &= Q(month__iexact=month)
-        if school_year:    
-            filters &= Q(school_year__year__year_name__iexact=school_year)
-        if year_level.isdigit():
-            filters &= Q(student__student_year_levels__level__id=year_level)
-        elif search:
-            filters &= Q(student__student_year_levels__level__level_name__icontains=search)
-
-        qs = qs.filter(filters).distinct()
-
-        if not qs.exists():
-            return Response({"detail": "No records found."}, status=status.HTTP_404_NOT_FOUND)
-        
-
-        summary = (
-            qs.values(
-                "month",
-                "school_year__year__year_name",
-                "student__user__first_name",
-                "student__user__last_name",
-                "student__student_year_levels__level__level_name",
-                "student__scholar_number"
-            )
-            .annotate(
-                total_amount=Coalesce(Sum("total_amount", output_field=FloatField()), Value(0.0)),
-                paid_amount=Coalesce(Sum("paid_amount", output_field=FloatField()), Value(0.0)),
-                late_fee=Coalesce(Sum("late_fee", output_field=FloatField()), Value(0.0))
-            )
-        )
-        # print(summary)
-        formatted_summary = []
-        for item in summary:
-            total = item["total_amount"] #+ item["late_fee"]#is se do baar late fee add ho rahi he
-            due = max(0, total - item["paid_amount"])
-            formatted_summary.append({
-                "month": item["month"],
-                "school_year": item["school_year__year__year_name"] or "N/A",
-                "student_name": f"{item['student__user__first_name']} {item['student__user__last_name']}",
-                "year_level": item["student__student_year_levels__level__level_name"],
-                "total_amount": float(total),
-                "paid_amount": float(item["paid_amount"]),
-                "due_amount": float(due),
-                "late_fee": float(item["late_fee"]),  #  now included
-                "scholar_number":item["student__scholar_number"],
-            })
-
-        return Response(formatted_summary, status=status.HTTP_200_OK)
-    
-    
-    # retrieving students who dont have fee record at all
-    @action(detail=False, methods=['get'], url_path="defaulters")
-    def defaulters(self, request):
-        # Last payment date for each student
-        last_payment_subquery = FeeRecord.objects.filter(
-            student=OuterRef('pk')
-        ).order_by('-payment_date').values('payment_date')[:1]
-
-        students = Student.objects.annotate(
-            last_payment=Subquery(last_payment_subquery, output_field=DateField()),
-            total=Coalesce(
-                Sum(
-                    ExpressionWrapper(
-                        Cast(F('feerecord__total_amount'), output_field=DecimalField(max_digits=10, decimal_places=2)) +
-                        Cast(F('feerecord__late_fee'), output_field=DecimalField(max_digits=10, decimal_places=2)),
-                        output_field=DecimalField(max_digits=10, decimal_places=2)
-                    )
-                ),
-                Value(0),
-                output_field=DecimalField(max_digits=10, decimal_places=2)
-            ),
-            paid=Coalesce(
-                Sum('feerecord__paid_amount'),
-                Value(0),
-                output_field=DecimalField(max_digits=10, decimal_places=2)
-            )
-        )
-
-        defaulters_list = []
-        for s in students:
-            # CASE 1: No records (total = 0, paid = 0)
-            # CASE 2: Has dues (paid < total)
-            has_dues = s.total > s.paid
-            no_records = s.total == 0 and s.paid == 0 and s.last_payment is None
-
-            if no_records or has_dues:
-                due = max(s.total - s.paid, 0)
-                defaulters_list.append({
-                    'id': s.id,
-                    'name': getattr(s, 'name', f"{s.user.first_name} {s.user.last_name}"),
-                    'total': float(s.total),
-                    'paid': float(s.paid),
-                    'due': float(due),
-                    'last_payment': s.last_payment.isoformat() if s.last_payment else None
-                })
-
-        return Response(defaulters_list)
-
-    # Added as of 30June25 at 01:46 PM
-    # Fee card API for individual student
-    # https://187gwsw1-7000.inc1.devtunnels.ms/d/fee-record/student-fee-card/?student_id=12
-    
-    @action(detail=False, methods=["get"], url_path="student-fee-card")
-    def student_fee_card(self, request):
-        student_id = request.query_params.get("student_id")
-        if not student_id:
-            return Response({"error": "student_id is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            student = Student.objects.get(id=student_id)
-        except Student.DoesNotExist:
-            return Response({"error": "Student not found"}, status=status.HTTP_404_NOT_FOUND)
-
-        # Get year level
-        student_year_level = student.student_year_levels.first()
-        year_level_name = student_year_level.level.level_name if student_year_level and student_year_level.level else "N/A"
-
-        # Fetch all fee records
-        fee_qs = FeeRecord.objects.filter(student=student).prefetch_related("year_level_fees__fee_type")
-
-        # Group data by month
-        monthly_data = defaultdict(list)
-        for fee in fee_qs:
-            monthly_data[fee.month].append(fee)
-
-        result = {
-            "student_id": student.id,
-            "student_name": f"{student.user.first_name} {student.user.last_name}",
-            "year_level": year_level_name,
-            "monthly_summary": []
-        }
-
-        for month, fees in monthly_data.items():
-            total_amount = sum((f.total_amount or 0) + (f.late_fee or 0) for f in fees)
-            paid_amount = sum(f.paid_amount or 0 for f in fees)
-            due_amount = max(Decimal("0.00"), total_amount - paid_amount)
-
-            # Type-wise summary
-            type_summary = defaultdict(lambda: {"amount": Decimal("0.00"), "paid": Decimal("0.00")})
-
-            for f in fees:
-                for ylf in f.year_level_fees.all():
-                    fee_type = ylf.fee_type.name if ylf.fee_type else "Unknown"
-                    amount = ylf.amount or 0
-                    share_ratio = amount / f.total_amount if f.total_amount else 0
-
-                    # Split late fee and paid_amount proportionally among all year_level_fees
-                    type_summary[fee_type]["amount"] += amount
-                    type_summary[fee_type]["paid"] += (f.paid_amount or 0) * share_ratio
-
-            result["monthly_summary"].append({
-                "month": month,
-                "total_amount": float(total_amount),
-                # "paid_amount": float(paid_amount),
-                "due_amount": float(due_amount),
-                "fee_type": [
-                    {
-                        "type": ft,
-                        "amount": float(val["amount"]),
-                        # "paid": round(float(val["paid"]), 2)
-                    } for ft, val in type_summary.items()
-                ]
-            })
-
-        return Response(result, status=status.HTTP_200_OK)
-
-
-    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated],url_path="student_unpaid_fees")
-    def student_unpaid_fees(self, request):
-        user = request.user
-        roles = [role.name.lower() for role in user.role.all()]
-        student_id = request.query_params.get("student_id")
-
-        if "director" in roles or "office staff" in roles:
-            if student_id:
-                queryset = FeeRecord.objects.filter(payment_status="Unpaid", student_id=student_id)
-            else:
-                queryset = FeeRecord.objects.filter(payment_status="Unpaid")
-
-
-        elif "teacher" in roles:
-            teacher_instance = get_object_or_404(Teacher, user=user)
-
-            assigned_class_ids = TeacherYearLevel.objects.filter(
-                teacher=teacher_instance
-            ).values_list("year_level_id", flat=True)
-
-            if student_id:
-                try:
-                    student_yl = StudentYearLevel.objects.select_related("student", "level").get(id=student_id)
-                except StudentYearLevel.DoesNotExist:
-                    return Response({"detail": "Student not found."}, status=404)
-
-                if student_yl.level.id not in assigned_class_ids:
-                    return Response({"detail": "You are not allowed to view this student's data."}, status=403)
-
-                queryset = FeeRecord.objects.filter(
-                    payment_status="Unpaid",
-                    student=student_yl.student
-                )
-
-            else:
-                student_ids = StudentYearLevel.objects.filter(
-                    level_id__in=assigned_class_ids
-                ).values_list("student_id", flat=True)
-
-                queryset = FeeRecord.objects.filter(
-                    payment_status="Unpaid",
-                    student_id__in=student_ids
-                )
-
-
-        elif "student" in roles:
-            if "student_id" in request.query_params:
-                return Response({"detail": "You are not allowed to provide student_id."}, status=400)
-
-            student = get_object_or_404(Student, user=user)
-            queryset = FeeRecord.objects.filter(
-                payment_status="Unpaid",
-                student=student
-            )
-
-
-        elif "guardian" in roles:
-            if "student_id" in request.query_params:
-                return Response({"detail": "You are not allowed to provide student_id."}, status=400)
-            guardian = get_object_or_404(Guardian, user=user)
-            student_ids = StudentGuardian.objects.filter(guardian=guardian).values_list("student_id", flat=True)
-            queryset = FeeRecord.objects.filter(
-                payment_status="Unpaid", student_id__in=student_ids
-            )
-
-        else:
-            return Response({"detail": "Permission denied."}, status=403)
-
-        # serializer = FeeRecordSerializer(queryset, many=True) 
-        # return Response(serializer.data)
-
-        serializer = FeeRecordSerializer(queryset, many=True, context={"request": request})
-        notifications = []
-        for fee_record in queryset:
-            student = fee_record.student
-            msg = (
-                f" Dear {student.user.get_full_name()},\n"
-                f"Your fee for {fee_record.month} is still UNPAID.\n"
-                f"Total Amount: ₹{fee_record.total_amount}\n"
-                f"Paid: ₹{fee_record.paid_amount}\n"
-                f"Due: ₹{fee_record.due_amount}\n"
-                f"Please clear it at the earliest."
-            )
-            # WhatsApp notification bhejna
-            response = send_whatsapp_message(msg)  
-            notifications.append({
-                "student": student.user.get_full_name(),
-                "month": str(fee_record.month),
-                "due_amount": str(fee_record.due_amount),
-                "response": response
-            })
-
-
-        return Response({
-            "unpaid_fees": serializer.data,
-            "notifications": notifications
-        })
-
-
-
-    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="overall_unpaid_fees")
-    def overall_unpaid_fees(self, request):
-        user = request.user
-        roles = [role.name.lower() for role in user.role.all()]
-
-        if not any(role in roles for role in ["director", "teacher", "office staff"]):
-            return Response({"detail": "You do not have permission to access this data."}, status=status.HTTP_403_FORBIDDEN)
-
-        class_id = request.query_params.get("class_id", "").strip()
-        month = request.query_params.get("month", "").strip()
-
-        unpaid_fee_records = []
-
-        student_levels = StudentYearLevel.objects.all().select_related("student", "level")
-
-        if "teacher" in roles:
-            try:
-                teacher = Teacher.objects.get(user=user)
-                teacher_classes = TeacherYearLevel.objects.filter(teacher=teacher).values_list("year_level_id", flat=True)
-            except Teacher.DoesNotExist:
-                return Response({"detail": "Teacher not found."}, status=status.HTTP_404_NOT_FOUND)
-            except TeacherYearLevel.DoesNotExist:
-                return Response({"detail": "Assigned class for teacher not found."}, status=status.HTTP_404_NOT_FOUND)
-
-            student_levels = student_levels.filter(level_id__in=teacher_classes)
-
-        if class_id:
-            student_levels = student_levels.filter(level_id=class_id)
-
-        for student_level in student_levels:
-            student = student_level.student
-
-            fee_records = FeeRecord.objects.filter(
-                student=student,
-                payment_status="unpaid"
-            ).prefetch_related(
-                "year_level_fees__year_level",
-                "year_level_fees__fee_type"
-            )
-
-            if month:
-                fee_records = fee_records.filter(month__iexact=month)
-
-            for record in fee_records:
-                grouped_fees = {}
-                for ylf in record.year_level_fees.all():
-                    level_name = ylf.year_level.level_name
-                    if level_name not in grouped_fees:
-                        grouped_fees[level_name] = []
-                    grouped_fees[level_name].append({
-                        "id": ylf.id,
-                        "fee_type": ylf.fee_type.name,
-                        "amount": str(ylf.amount)
-                    })
-
-                grouped_fees_list = [
-                    {"year_level": level, "fees": fees}
-                    for level, fees in grouped_fees.items()
-                ]
-
-                unpaid_fee_records.append({
-                    "id": record.id,
-                    "student": {
-                        "id": student.id,
-                        "name": str(student)
-                    },
-                    "month": record.month,
-                    "year_level_fees_grouped": grouped_fees_list,
-                    "total_amount": str(record.total_amount),
-                    "paid_amount": str(record.paid_amount),
-                    "due_amount": str(record.due_amount),
-                    "payment_date": record.payment_date,
-                    "payment_mode": record.payment_mode,
-                    "is_cheque_cleared": record.is_cheque_cleared,
-                    "receipt_number": record.receipt_number,
-                    "late_fee": str(record.late_fee),
-                    "payment_status": record.payment_status,
-                    "remarks": record.remarks,
-                    "received_by": record.received_by,
-                })
-
-        return Response(unpaid_fee_records, status=status.HTTP_200_OK)
-
-
-    @action(detail=False, methods=["get"], url_path="highest_dues_students")
-    def highest_dues_students(self, request):
-        user = request.user
-        roles = [role.name.lower() for role in user.role.all()]
-
-        if not any(role in roles for role in ["director", "teacher", "office staff"]):
-            return Response({"detail": "You do not have permission to access this data."})
-
-        class_id = request.query_params.get("class_id")
-        month = request.query_params.get("month")
-        min_due = request.query_params.get("min_due_amount")
-        max_due = request.query_params.get("max_due_amount")
-        # top = request.query_params.get("top")
-
-        queryset = FeeRecord.objects.filter(payment_status="unpaid")
-        print("queryset : ",queryset)
-        class_id = request.query_params.get("class_id")
-        if class_id:
-            class_id = class_id.strip()  
-            student_ids = StudentYearLevel.objects.filter(level_id=class_id).values_list("student_id", flat=True)
-            print("student_ids:", list(student_ids))  
-            queryset = queryset.filter(student_id__in=student_ids)
-        if month:
-            queryset = queryset.filter(month=month)
-
-        if min_due:
-            try:
-                queryset = queryset.filter(due_amount__gte=float(min_due))
-            except ValueError:
-                return Response({"detail": "min_due_amount must be a number."})
-
-        if max_due:
-            try:
-                queryset = queryset.filter(due_amount__gte=float(max_due))
-            except ValueError:
-                return Response({"detail": "max_due_amount must be a number."})
-
-        queryset = queryset.order_by("due_amount")
-
-        # if top:
-        #     try:
-        #         top = int(top)
-        #         queryset = queryset[:top]
-        #     except ValueError:
-        #         return Response({"detail": "top must be an integer."})
-
-        # data = []
-        # for record in queryset:
-        #     for ylf in record.year_level_fees.all():
-        #         data.append({
-        #             "student_id": record.student.id,
-        #             "student_name": str(record.student),
-        #             "class_name": ylf.year_level.level_name,  
-        #             "month": record.month,
-        #             "due_amount": str(record.due_amount),
-        #             "total_amount": str(record.total_amount),
-        #             "paid_amount": str(record.paid_amount),
-        #         })
-        # return Response(data, status=status.HTTP_200_OK)
-
-        data = []
-        for record in queryset:
-            grouped_fees = {}
-            for ylf in record.year_level_fees.all():
-                level_name = ylf.year_level.level_name
-                if level_name not in grouped_fees:
-                    grouped_fees[level_name] = []
-                grouped_fees[level_name].append({
-                    "id": ylf.id,
-                    "fee_type": ylf.fee_type.name,
-                    "amount": str(ylf.amount)
-                })
-
-            grouped_fees_list = [
-                {"year_level": level, "fees": fees}
-                for level, fees in grouped_fees.items()
-            ]
-
-            data.append({
-                "id": record.id,
-                "student": {
-                    "id": record.student.id,
-                    "name": str(record.student)
-                },
-                "month": record.month,
-                "year_level_fees_grouped": grouped_fees_list,
-                "total_amount": str(record.total_amount),
-                "paid_amount": str(record.paid_amount),
-                "due_amount": str(record.due_amount),
-                "payment_date": record.payment_date,
-                "payment_mode": record.payment_mode,
-                "is_cheque_cleared": record.is_cheque_cleared,
-                "receipt_number": record.receipt_number,
-                "late_fee": str(record.late_fee),
-                "payment_status": record.payment_status,
-                "remarks": record.remarks,
-                "received_by": record.received_by,
-            })
-        return Response(data)    
-    
-
 
 ### --------------------- Income Distribution Dashboard API (Guardian name and student name and id added) --------------------------- ###
 ### ------------------- As of 03 JUly at 12:35 --------------- ###   By daniyal
@@ -3452,10 +2053,10 @@ def guardian_income_distribution_with_student(request):
     # Define updated income brackets
     brackets = {
         "Below 1 Lakh": (0, 100000),
-        "1 – 3 Lakhs": (100001, 300000),
-        "3 – 5 Lakhs": (300001, 500000),
-        "5 – 8 Lakhs": (500001, 800000),
-        "8 – 10 Lakhs": (800001, 1000000),
+        "1 - 3 Lakhs": (100001, 300000),
+        "3 - 5 Lakhs": (300001, 500000),
+        "5 - 8 Lakhs": (500001, 800000),
+        "8 - 10 Lakhs": (800001, 1000000),
         "Above 10 Lakhs": (1000001, None),
     }
 
@@ -3498,405 +2099,405 @@ from django.db import transaction
 from authentication.models import UserStatusLog
 from authentication.serializers import UserSerializer
 
-@api_view(["POST"])
-@permission_classes([RoleBasedUserManagementPermission])
-def deactivate_user(request):
-    deactivate_user.api_section = "deactivate_user" 
-    try:
-        with transaction.atomic():
-            user_id = request.data.get("user_id")
-            user = User.objects.all_including_inactive().get(id=user_id)
-            if not user.is_active:
-                return Response({"error": "User already deactivated"})
-            user.is_active = False
-            user.deactivation_reason = request.data.get('reason', '')
-            user.deactivation_date = timezone.now()
-            user.reactivation_date = None
-            user.save()
+# @api_view(["POST"])
+# @permission_classes([RoleBasedUserManagementPermission])
+# def deactivate_user(request):
+#     deactivate_user.api_section = "deactivate_user" 
+#     try:
+#         with transaction.atomic():
+#             user_id = request.data.get("user_id")
+#             user = User.objects.all_including_inactive().get(id=user_id)
+#             if not user.is_active:
+#                 return Response({"error": "User already deactivated"})
+#             user.is_active = False
+#             user.deactivation_reason = request.data.get('reason', '')
+#             user.deactivation_date = timezone.now()
+#             user.reactivation_date = None
+#             user.save()
             
-            # Handle Student    (classes [clear], admission, feeRecord, document, )
-            student = getattr(user, 'student', None)
-            if student is not None:
-                student = user.student
-                student.is_active = False
-                student.save()
-                # Clear Student.classes and StudentYearLevel 
-                student.classes.clear()
-                # Clear StudentYearLevel (handle missing studenyearlevel_set)
-                try:
-                    StudentYearLevel.objects.filter(student=student).delete()
-                except AttributeError:
-                    pass  # No StudentYearLevel relationship
+#             # Handle Student    (classes [clear], admission, feeRecord, document, )
+#             student = getattr(user, 'student', None)
+#             if student is not None:
+#                 student = user.student
+#                 student.is_active = False
+#                 student.save()
+#                 # Clear Student.classes and StudentYearLevel 
+#                 student.classes.clear()
+#                 # Clear StudentYearLevel (handle missing studenyearlevel_set)
+#                 try:
+#                     StudentYearLevel.objects.filter(student=student).delete()
+#                 except AttributeError:
+#                     pass  # No StudentYearLevel relationship
 
-                # Clear related Admissions
-                admissions = Admission.objects.filter(student=student)
-                for admission in admissions:
-                    admission.is_active = False
-                    admission.save()
-                # Clear related FeeRecords
-                fee_records = FeeRecord.objects.filter(student=student)
-                for fee_record in fee_records:
-                    fee_record.is_active = False
-                    fee_record.save()
-                # Clear related Documents
-                documents = Document.objects.filter(student=student)
-                for document in documents:
-                    document.is_active = False
-                    document.save()
-                # Deactivate related Addresses
-                addresses = Address.objects.filter(user=user)
-                for address in addresses:
-                    address.is_active = False
-                    address.save()
-                # Deactivate Banking Details
-                bank_details = BankingDetail.objects.filter(user=user)
-                for bank_detail in bank_details:
-                    bank_detail.is_active = False
-                    bank_detail.save()    
+#                 # Clear related Admissions
+#                 admissions = Admission.objects.filter(student=student)
+#                 for admission in admissions:
+#                     admission.is_active = False
+#                     admission.save()
+#                 # Clear related FeeRecords
+#                 fee_records = FeeRecord.objects.filter(student=student)
+#                 for fee_record in fee_records:
+#                     fee_record.is_active = False
+#                     fee_record.save()
+#                 # Clear related Documents
+#                 documents = Document.objects.filter(student=student)
+#                 for document in documents:
+#                     document.is_active = False
+#                     document.save()
+#                 # Deactivate related Addresses
+#                 addresses = Address.objects.filter(user=user)
+#                 for address in addresses:
+#                     address.is_active = False
+#                     address.save()
+#                 # Deactivate Banking Details
+#                 bank_details = BankingDetail.objects.filter(user=user)
+#                 for bank_detail in bank_details:
+#                     bank_detail.is_active = False
+#                     bank_detail.save()    
 
-            # Handle Guardian   (Student guardian relation [clear], address, docs)
-            guardian = getattr(user, 'guardian_relation', None)
-            if guardian is not None:
-                guardian = user.guardian_relation
-                guardian.is_active = False
-                guardian.save()
-                # Clear StudentGuardian connections
-                student_guardians = StudentGuardian.objects.filter(guardian=guardian)
-                for sg in student_guardians:
-                    sg.delete()  # Clear the relationship
-                # Deactivate related Addresses
-                addresses = Address.objects.filter(user=user)
-                for address in addresses:
-                    address.is_active = False
-                    address.save()
-                # Clear related Documents
-                documents = Document.objects.filter(guardian=guardian)
-                for document in documents:
-                    document.is_active = False
-                    document.save() 
+#             # Handle Guardian   (Student guardian relation [clear], address, docs)
+#             guardian = getattr(user, 'guardian_relation', None)
+#             if guardian is not None:
+#                 guardian = user.guardian_relation
+#                 guardian.is_active = False
+#                 guardian.save()
+#                 # Clear StudentGuardian connections
+#                 student_guardians = StudentGuardian.objects.filter(guardian=guardian)
+#                 for sg in student_guardians:
+#                     sg.delete()  # Clear the relationship
+#                 # Deactivate related Addresses
+#                 addresses = Address.objects.filter(user=user)
+#                 for address in addresses:
+#                     address.is_active = False
+#                     address.save()
+#                 # Clear related Documents
+#                 documents = Document.objects.filter(guardian=guardian)
+#                 for document in documents:
+#                     document.is_active = False
+#                     document.save() 
                 
-            # Handle Teacher  (classPeriod [clear {M2M}], address, docs)
-            teacher = getattr(user, 'teacher', None)
-            if teacher is not None:
-                teacher = user.teacher
-                teacher.is_active = False
-                teacher.save()
+#             # Handle Teacher  (classPeriod [clear {M2M}], address, docs)
+#             teacher = getattr(user, 'teacher', None)
+#             if teacher is not None:
+#                 teacher = user.teacher
+#                 teacher.is_active = False
+#                 teacher.save()
 
-                # Clear TeacherYearLevel connections
-                teacher.year_levels.clear()
-                # Remove teacher from ClassPeriod assignments
-                class_periods = ClassPeriod.objects.filter(teacher=teacher)
-                for cp in class_periods:
-                    cp.teacher = None  # Set to None to remove assignment
-                    cp.save()
-                ClassPeriod.objects.filter(teacher=teacher).delete()
-                # Deactivate related Addresses
-                addresses = Address.objects.filter(user=user)
-                for address in addresses:
-                    address.is_active = False
-                    address.save()
-                # Clear related Documents
-                documents = Document.objects.filter(teacher=teacher)
-                for document in documents:
-                    document.is_active = False
-                    document.save()    
+#                 # Clear TeacherYearLevel connections
+#                 teacher.year_levels.clear()
+#                 # Remove teacher from ClassPeriod assignments
+#                 class_periods = ClassPeriod.objects.filter(teacher=teacher)
+#                 for cp in class_periods:
+#                     cp.teacher = None  # Set to None to remove assignment
+#                     cp.save()
+#                 ClassPeriod.objects.filter(teacher=teacher).delete()
+#                 # Deactivate related Addresses
+#                 addresses = Address.objects.filter(user=user)
+#                 for address in addresses:
+#                     address.is_active = False
+#                     address.save()
+#                 # Clear related Documents
+#                 documents = Document.objects.filter(teacher=teacher)
+#                 for document in documents:
+#                     document.is_active = False
+#                     document.save()    
                     
 
-            # Handle OfficeStaff  ([student,teacher,admission {clear M2M}, address, docs])
-            office_staff = getattr(user, 'office_staff', None)
-            if office_staff is None:
-                # Attempt to fetch OfficeStaff directly to confirm relation
-                try:
-                    office_staff = OfficeStaff.objects.get(user=user)
-                except OfficeStaff.DoesNotExist:
-                    print(f"No OfficeStaff found for user {user.id} via query")
-            else:
-                try:
-                    office_staff.is_active = False
-                    office_staff.save()
-                    # Clear ManyToMany relationships
-                    office_staff.student.clear()
-                    office_staff.teacher.clear()
-                    office_staff.admissions.clear()
-                    # Deactivate related Addresses
-                    addresses = Address.objects.filter(user=user)
-                    for address in addresses:
-                        address.is_active = False
-                        address.save()
-                    # Clear related Documents
-                    documents = Document.objects.filter(office_staff=office_staff)
-                    for document in documents:
-                        document.is_active = False
-                        document.save()
-                except Exception as e:
-                    return Response({"error": f"Failed to deactivate OfficeStaff: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+#             # Handle OfficeStaff  ([student,teacher,admission {clear M2M}, address, docs])
+#             office_staff = getattr(user, 'office_staff', None)
+#             if office_staff is None:
+#                 # Attempt to fetch OfficeStaff directly to confirm relation
+#                 try:
+#                     office_staff = OfficeStaff.objects.get(user=user)
+#                 except OfficeStaff.DoesNotExist:
+#                     print(f"No OfficeStaff found for user {user.id} via query")
+#             else:
+#                 try:
+#                     office_staff.is_active = False
+#                     office_staff.save()
+#                     # Clear ManyToMany relationships
+#                     office_staff.student.clear()
+#                     office_staff.teacher.clear()
+#                     office_staff.admissions.clear()
+#                     # Deactivate related Addresses
+#                     addresses = Address.objects.filter(user=user)
+#                     for address in addresses:
+#                         address.is_active = False
+#                         address.save()
+#                     # Clear related Documents
+#                     documents = Document.objects.filter(office_staff=office_staff)
+#                     for document in documents:
+#                         document.is_active = False
+#                         document.save()
+#                 except Exception as e:
+#                     return Response({"error": f"Failed to deactivate OfficeStaff: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
             
-            # Handle Director (if needed)
-            director = getattr(user, 'director', None)
-            if director is not None:
-                director = user.director
-                director.is_active = False
-                director.save()
-                # Deactivate related Addresses
-                addresses = Address.objects.filter(user=user)
-                for address in addresses:
-                    address.is_active = False
-                    address.save()
+#             # Handle Director (if needed)
+#             director = getattr(user, 'director', None)
+#             if director is not None:
+#                 director = user.director
+#                 director.is_active = False
+#                 director.save()
+#                 # Deactivate related Addresses
+#                 addresses = Address.objects.filter(user=user)
+#                 for address in addresses:
+#                     address.is_active = False
+#                     address.save()
 
-            # log termination
-            UserStatusLog.objects.create(user=user, status='TERMINATED', reason=user.deactivation_reason)
-            serializer = UserSerializer(user)
-            return Response({
-                "message": f"User {user.id} has been successfully terminated.",
-                "user_id": user.id,
-                "data": serializer.data})
-    except User.DoesNotExist:
-        return Response({"error": "User not found"})
+#             # log termination
+#             UserStatusLog.objects.create(user=user, status='TERMINATED', reason=user.deactivation_reason)
+#             serializer = UserSerializer(user)
+#             return Response({
+#                 "message": f"User {user.id} has been successfully terminated.",
+#                 "user_id": user.id,
+#                 "data": serializer.data})
+#     except User.DoesNotExist:
+#         return Response({"error": "User not found"})
  
 ### -------------------------------------------------------------- ###
 
 # *************** Reactivation of the User *******************************************************
-from django.core.exceptions import ObjectDoesNotExist
+# from django.core.exceptions import ObjectDoesNotExist
 
-@api_view(["POST"])
-@permission_classes([RoleBasedUserManagementPermission])
-def reactivate_user(request):
-    reactivate_user.api_section = "reactivate_user" 
-    try:
-        with transaction.atomic():
-            user_id = request.data.get("user_id")
-            user = User.objects.all_including_inactive().get(id=user_id)
-            if user.is_active:
-                return Response({"error": "User already active"})
-            user.is_active = True
-            user.deactivation_reason = None
-            user.reactivation_date = timezone.now()
-            user.save()
+# @api_view(["POST"])
+# @permission_classes([RoleBasedUserManagementPermission])
+# def reactivate_user(request):
+#     reactivate_user.api_section = "reactivate_user" 
+#     try:
+#         with transaction.atomic():
+#             user_id = request.data.get("user_id")
+#             user = User.objects.all_including_inactive().get(id=user_id)
+#             if user.is_active:
+#                 return Response({"error": "User already active"})
+#             user.is_active = True
+#             user.deactivation_reason = None
+#             user.reactivation_date = timezone.now()
+#             user.save()
             
-            # Handle Student    ([classes {make}, studentyearlevel, studentguardian] , admission, feeRecord, document, address,
-            # banking details )
-            student = getattr(user, 'student', None)
-            if student is not None:
-                student = user.student
-                student.is_active = True
-                student.save()
+#             # Handle Student    ([classes {make}, studentyearlevel, studentguardian] , admission, feeRecord, document, address,
+#             # banking details )
+#             student = getattr(user, 'student', None)
+#             if student is not None:
+#                 student = user.student
+#                 student.is_active = True
+#                 student.save()
 
-                # retrieve related Admissions
-                admissions = Admission.objects.all_including_inactive().filter(student=student)
-                for admission in admissions:
-                    admission.is_active = True
-                    admission.save()
-                # retrieve related FeeRecords
-                fee_records = FeeRecord.objects.all_including_inactive().filter(student=student)
-                for fee_record in fee_records:
-                    fee_record.is_active = True
-                    fee_record.save()
-                # retrieve related Documents
-                documents = Document.objects.all_including_inactive().filter(student=student)
-                for document in documents:
-                    document.is_active = True
-                    document.save()
-                # retrieve related Addresses
-                addresses = Address.objects.all_including_inactive().filter(user=user)
-                for address in addresses:
-                    address.is_active = True
-                    address.save()
-                # retrieve Banking Details
-                bank_details = BankingDetail.objects.all_including_inactive().filter(user=user)
-                for bank_detail in bank_details:
-                    bank_detail.is_active = True
-                    bank_detail.save() 
+#                 # retrieve related Admissions
+#                 admissions = Admission.objects.all_including_inactive().filter(student=student)
+#                 for admission in admissions:
+#                     admission.is_active = True
+#                     admission.save()
+#                 # retrieve related FeeRecords
+#                 fee_records = FeeRecord.objects.all_including_inactive().filter(student=student)
+#                 for fee_record in fee_records:
+#                     fee_record.is_active = True
+#                     fee_record.save()
+#                 # retrieve related Documents
+#                 documents = Document.objects.all_including_inactive().filter(student=student)
+#                 for document in documents:
+#                     document.is_active = True
+#                     document.save()
+#                 # retrieve related Addresses
+#                 addresses = Address.objects.all_including_inactive().filter(user=user)
+#                 for address in addresses:
+#                     address.is_active = True
+#                     address.save()
+#                 # retrieve Banking Details
+#                 bank_details = BankingDetail.objects.all_including_inactive().filter(user=user)
+#                 for bank_detail in bank_details:
+#                     bank_detail.is_active = True
+#                     bank_detail.save() 
 
                 
-                # Create Student.classes connection
-                class_period_ids = request.data.get("class_period_ids", [])
-                if class_period_ids:
-                    valid_class_period = ClassPeriod.objects.filter(id__in=class_period_ids)
-                    if valid_class_period:
-                        student.classes.set(valid_class_period)
-                    else:
-                        return Response({"erorr": "Invalid class period ids"})
+#                 # Create Student.classes connection
+#                 class_period_ids = request.data.get("class_period_ids", [])
+#                 if class_period_ids:
+#                     valid_class_period = ClassPeriod.objects.filter(id__in=class_period_ids)
+#                     if valid_class_period:
+#                         student.classes.set(valid_class_period)
+#                     else:
+#                         return Response({"erorr": "Invalid class period ids"})
                     
-                # Create StudentYearLevel connection 
-                year_id = request.data.get("year_id")
-                level_id = request.data.get("level_id")
+#                 # Create StudentYearLevel connection 
+#                 year_id = request.data.get("year_id")
+#                 level_id = request.data.get("level_id")
                 
-                if year_id and level_id:
-                    try:
-                        level = YearLevel.objects.get(id=level_id)
-                        year = SchoolYear.objects.get(id=year_id)
-                        StudentYearLevel.objects.update_or_create(
-                            student = student,
-                            defaults={"year": year, "level": level}
-                        )
-                    except ObjectDoesNotExist:
-                        return Response({"error":"Invalid year level id"})
+#                 if year_id and level_id:
+#                     try:
+#                         level = YearLevel.objects.get(id=level_id)
+#                         year = SchoolYear.objects.get(id=year_id)
+#                         StudentYearLevel.objects.update_or_create(
+#                             student = student,
+#                             defaults={"year": year, "level": level}
+#                         )
+#                     except ObjectDoesNotExist:
+#                         return Response({"error":"Invalid year level id"})
                     
-                # Create StudentGuardian connections
-                guardian_ids = request.data.get("guardian_ids", [])
-                if guardian_ids:
-                    valid_guardians = Guardian.objects.filter(id__in=guardian_ids, is_active=True)
-                    if valid_guardians.exists():
-                        guardian_type_id = request.data.get("guardian_type_id")
-                        try:
-                            guardian_type = GuardianType.objects.get(id=guardian_type_id) if guardian_type_id else GuardianType.objects.get(name="Parent")
-                            for guardian in valid_guardians:
-                                StudentGuardian.objects.update_or_create(
-                                    student=student,
-                                    guardian=guardian,
-                                    defaults={'guardian_type': guardian_type}
-                                )
-                        except ObjectDoesNotExist:
-                            return Response({"error": "Invalid or inactive GuardianType ID provided"}, status=status.HTTP_400_BAD_REQUEST)
-                    else:
-                        return Response({"error": "No valid or active Guardian IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
+#                 # Create StudentGuardian connections
+#                 guardian_ids = request.data.get("guardian_ids", [])
+#                 if guardian_ids:
+#                     valid_guardians = Guardian.objects.filter(id__in=guardian_ids, is_active=True)
+#                     if valid_guardians.exists():
+#                         guardian_type_id = request.data.get("guardian_type_id")
+#                         try:
+#                             guardian_type = GuardianType.objects.get(id=guardian_type_id) if guardian_type_id else GuardianType.objects.get(name="Parent")
+#                             for guardian in valid_guardians:
+#                                 StudentGuardian.objects.update_or_create(
+#                                     student=student,
+#                                     guardian=guardian,
+#                                     defaults={'guardian_type': guardian_type}
+#                                 )
+#                         except ObjectDoesNotExist:
+#                             return Response({"error": "Invalid or inactive GuardianType ID provided"}, status=status.HTTP_400_BAD_REQUEST)
+#                     else:
+#                         return Response({"error": "No valid or active Guardian IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
                     
 
-            # Handle Guardian   (Student guardian relation [make], address, docs)
-            guardian = getattr(user, 'guardian_relation', None)
-            if guardian is not None:
-                guardian = user.guardian_relation
-                guardian.is_active = True
-                guardian.save()
+#             # Handle Guardian   (Student guardian relation [make], address, docs)
+#             guardian = getattr(user, 'guardian_relation', None)
+#             if guardian is not None:
+#                 guardian = user.guardian_relation
+#                 guardian.is_active = True
+#                 guardian.save()
 
-                # update StudentGuardian connections
-                student_ids = request.data.get("student_ids", [])
-                if student_ids:
-                    valid_students = Student.objects.filter(id__in=student_ids, is_active=True)
-                    if valid_students.exists():
-                        guardian_type_id = request.data.get("guardian_type_id")
-                        try:
-                            guardian_type = GuardianType.objects.get(id=guardian_type_id) if guardian_type_id else GuardianType.objects.get(name="Parent")  
-                            for student in valid_students:
-                                StudentGuardian.objects.update_or_create(
-                                    student=student,
-                                    guardian=guardian,
-                                    defaults={'guardian_type': guardian_type}
-                                )
-                        except ObjectDoesNotExist:
-                            return Response({"error": "Invalid or inactive GuardianType ID provided"})
-                    else:
-                        return Response({"error": "No valid or active Student IDs provided"})
+#                 # update StudentGuardian connections
+#                 student_ids = request.data.get("student_ids", [])
+#                 if student_ids:
+#                     valid_students = Student.objects.filter(id__in=student_ids, is_active=True)
+#                     if valid_students.exists():
+#                         guardian_type_id = request.data.get("guardian_type_id")
+#                         try:
+#                             guardian_type = GuardianType.objects.get(id=guardian_type_id) if guardian_type_id else GuardianType.objects.get(name="Parent")  
+#                             for student in valid_students:
+#                                 StudentGuardian.objects.update_or_create(
+#                                     student=student,
+#                                     guardian=guardian,
+#                                     defaults={'guardian_type': guardian_type}
+#                                 )
+#                         except ObjectDoesNotExist:
+#                             return Response({"error": "Invalid or inactive GuardianType ID provided"})
+#                     else:
+#                         return Response({"error": "No valid or active Student IDs provided"})
                 
-                # retrieve related Addresses
-                addresses = Address.objects.all_including_inactive().filter(user=user)
-                for address in addresses:
-                    address.is_active = True
-                    address.save()
-                # retrieve related Documents
-                documents = Document.objects.all_including_inactive().filter(guardian=guardian)
-                for document in documents:
-                    document.is_active = True
-                    document.save() 
+#                 # retrieve related Addresses
+#                 addresses = Address.objects.all_including_inactive().filter(user=user)
+#                 for address in addresses:
+#                     address.is_active = True
+#                     address.save()
+#                 # retrieve related Documents
+#                 documents = Document.objects.all_including_inactive().filter(guardian=guardian)
+#                 for document in documents:
+#                     document.is_active = True
+#                     document.save() 
                 
-            # Handle Teacher  (classPeriod [create {M2M}], teacheryearlevel, address, docs)
-            teacher = getattr(user, 'teacher', None)
-            if teacher is not None:
-                teacher = user.teacher
-                teacher.is_active = True
-                teacher.save()
+#             # Handle Teacher  (classPeriod [create {M2M}], teacheryearlevel, address, docs)
+#             teacher = getattr(user, 'teacher', None)
+#             if teacher is not None:
+#                 teacher = user.teacher
+#                 teacher.is_active = True
+#                 teacher.save()
 
-                # Assign teacher from ClassPeriod assignments
-                class_period_ids = request.data.get("class_period_ids", [])
-                if class_period_ids:
-                    valid_class_periods = ClassPeriod.objects.filter(id__in=class_period_ids)
-                    if valid_class_periods.exists():
-                        for class_period in valid_class_periods:
-                            class_period.teacher = teacher
-                            class_period.save()
-                    else:
-                        return Response({"error": "No valid or active ClassPeriod IDs provided"})
+#                 # Assign teacher from ClassPeriod assignments
+#                 class_period_ids = request.data.get("class_period_ids", [])
+#                 if class_period_ids:
+#                     valid_class_periods = ClassPeriod.objects.filter(id__in=class_period_ids)
+#                     if valid_class_periods.exists():
+#                         for class_period in valid_class_periods:
+#                             class_period.teacher = teacher
+#                             class_period.save()
+#                     else:
+#                         return Response({"error": "No valid or active ClassPeriod IDs provided"})
 
-                # Teacher year level reassigning
-                year_level_id = request.data.get("year_level_id", [])
-                if year_level_id:
-                    valid_year_levels = YearLevel.objects.filter(id=year_level_id)
-                    if valid_year_levels.exists():
-                        teacher.year_levels.set(valid_year_levels)
-                    else:
-                        return Response({"error": "No valid or active YearLevel IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
+#                 # Teacher year level reassigning
+#                 year_level_id = request.data.get("year_level_id", [])
+#                 if year_level_id:
+#                     valid_year_levels = YearLevel.objects.filter(id=year_level_id)
+#                     if valid_year_levels.exists():
+#                         teacher.year_levels.set(valid_year_levels)
+#                     else:
+#                         return Response({"error": "No valid or active YearLevel IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
 
-                # retrieve related Addresses
-                addresses = Address.objects.all_including_inactive().filter(user=user)
-                for address in addresses:
-                    address.is_active = True
-                    address.save()
-                # retrieve related Documents
-                documents = Document.objects.all_including_inactive().filter(teacher=teacher)
-                for document in documents:
-                    document.is_active = True
-                    document.save()    
+#                 # retrieve related Addresses
+#                 addresses = Address.objects.all_including_inactive().filter(user=user)
+#                 for address in addresses:
+#                     address.is_active = True
+#                     address.save()
+#                 # retrieve related Documents
+#                 documents = Document.objects.all_including_inactive().filter(teacher=teacher)
+#                 for document in documents:
+#                     document.is_active = True
+#                     document.save()    
                     
 
-            # Handle OfficeStaff  ([student,teacher,admisson {clear M2M}, address, docs])
-            office_staff = getattr(user, 'office_staff', None)
-            if office_staff is not None:
-                office_staff = user.office_staff
-                office_staff.is_active = True
-                office_staff.save()
+#             # Handle OfficeStaff  ([student,teacher,admisson {clear M2M}, address, docs])
+#             office_staff = getattr(user, 'office_staff', None)
+#             if office_staff is not None:
+#                 office_staff = user.office_staff
+#                 office_staff.is_active = True
+#                 office_staff.save()
 
-                # # Create ManyToMany relationships
-                #  Student connection
-                student_ids = request.data.get("student_ids", [])
-                if student_ids:
-                    valid_students = Student.objects.filter(id__in=student_ids, is_active=True)
-                    if valid_students.exists():
-                        office_staff.student.set(valid_students)
-                    else:
-                        return Response({"error": "No valid or active Student IDs provided"})
+#                 # # Create ManyToMany relationships
+#                 #  Student connection
+#                 student_ids = request.data.get("student_ids", [])
+#                 if student_ids:
+#                     valid_students = Student.objects.filter(id__in=student_ids, is_active=True)
+#                     if valid_students.exists():
+#                         office_staff.student.set(valid_students)
+#                     else:
+#                         return Response({"error": "No valid or active Student IDs provided"})
 
-                # Teacher connection
-                teacher_ids  = request.data.get("teacher_ids", [])
-                if teacher_ids:
-                    valid_teachers = Teacher.objects.filter(id__in=teacher_ids, is_active=True)
-                    if valid_teachers.exists():
-                        office_staff.teacher.set(valid_teachers)
-                    else:
-                        return Response({"error": "No valid or active Teacher IDs provided"})
+#                 # Teacher connection
+#                 teacher_ids  = request.data.get("teacher_ids", [])
+#                 if teacher_ids:
+#                     valid_teachers = Teacher.objects.filter(id__in=teacher_ids, is_active=True)
+#                     if valid_teachers.exists():
+#                         office_staff.teacher.set(valid_teachers)
+#                     else:
+#                         return Response({"error": "No valid or active Teacher IDs provided"})
 
-                # Admission connection
-                admission_ids = request.data.get("admission_ids", [])
-                if admission_ids:
-                    valid_admissions = Admission.objects.filter(id__in=admission_ids, is_active=True)
-                    if valid_admissions.exists():
-                        office_staff.admissions.set(valid_admissions)
-                    else:
-                        return Response({"error":"No valid or active Admission IDs provided"})
+#                 # Admission connection
+#                 admission_ids = request.data.get("admission_ids", [])
+#                 if admission_ids:
+#                     valid_admissions = Admission.objects.filter(id__in=admission_ids, is_active=True)
+#                     if valid_admissions.exists():
+#                         office_staff.admissions.set(valid_admissions)
+#                     else:
+#                         return Response({"error":"No valid or active Admission IDs provided"})
                     
 
-                # retrieve related Addresses
-                addresses = Address.objects.all_including_inactive().filter(user=user)
-                for address in addresses:
-                    address.is_active = True
-                    address.save()
-                # retrieve related Documents
-                documents = Document.objects.all_including_inactive().filter(office_staff=office_staff)
-                for document in documents:
-                    document.is_active = True
-                    document.save() 
+#                 # retrieve related Addresses
+#                 addresses = Address.objects.all_including_inactive().filter(user=user)
+#                 for address in addresses:
+#                     address.is_active = True
+#                     address.save()
+#                 # retrieve related Documents
+#                 documents = Document.objects.all_including_inactive().filter(office_staff=office_staff)
+#                 for document in documents:
+#                     document.is_active = True
+#                     document.save() 
 
             
-            # Handle Director (if needed)
-            director = getattr(user, 'director', None)
-            if director is not None:
-                director = user.director
-                director.is_active = True
-                director.save()
-                # Deactivate related Addresses
-                addresses = Address.objects.all_including_inactive().filter(user=user)
-                for address in addresses:
-                    address.is_active = True
-                    address.save()
+#             # Handle Director (if needed)
+#             director = getattr(user, 'director', None)
+#             if director is not None:
+#                 director = user.director
+#                 director.is_active = True
+#                 director.save()
+#                 # Deactivate related Addresses
+#                 addresses = Address.objects.all_including_inactive().filter(user=user)
+#                 for address in addresses:
+#                     address.is_active = True
+#                     address.save()
 
-            # log termination
-            UserStatusLog.objects.create(user=user, status='ACTIVATED', reason=user.deactivation_reason)
-            serializer = UserSerializer(user)
-            return Response({
-                "message": f"User {user.id} has been successfully reactivated.",
-                "user_id": user.id,
-                "data": serializer.data})
-    except User.DoesNotExist:
-        return Response({"error": "User not found"})
+#             # log termination
+#             UserStatusLog.objects.create(user=user, status='ACTIVATED', reason=user.deactivation_reason)
+#             serializer = UserSerializer(user)
+#             return Response({
+#                 "message": f"User {user.id} has been successfully reactivated.",
+#                 "user_id": user.id,
+#                 "data": serializer.data})
+#     except User.DoesNotExist:
+#         return Response({"error": "User not found"})
     
 ### -------------------------------------------------------------- ###
 # *************** List of the Deactivated *******************************************************
@@ -6455,3 +5056,1040 @@ class SchoolTurnOverViewSet(viewsets.ModelViewSet):
 
         instance.save(update_fields=["verified_by", "verified_at", "is_locked"])
 
+
+
+class MasterFeeViewSet(viewsets.ModelViewSet):
+    queryset = MasterFee.objects.all()
+    serializer_class = MasterFeeSerializer
+    permission_classes = [IsAuthenticated]
+
+
+class FeeStructureViewSet(viewsets.ModelViewSet):
+    queryset = FeeStructure.objects.all()
+    serializer_class = FeeStructureSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        year_level_id = self.request.query_params.get("year_level_id")
+        if year_level_id:
+            queryset = queryset.filter(year_level__id=year_level_id)
+        return queryset
+
+
+
+class FeePaymentView(viewsets.ModelViewSet):
+    queryset = FeePayment.objects.all()
+    serializer_class = FeePaymentSerializer
+    permission_classes = [IsAuthenticated]
+
+import uuid
+class StudentFeeView(viewsets.ModelViewSet):
+    queryset = StudentFee.objects.all()
+    serializer_class = StudentFeeSerializer
+    permission_classes = [IsAuthenticated]
+
+
+    # def generate_receipt_number(self):
+    #     # return f"RCPT-{timezone.now().strftime('%Y%m%d%H%M%S')}"
+    #     # return f"R{timezone.now().strftime('%y%m%d%H%M')}"[:10]
+    #     now = timezone.now().strftime('%y%m%d%H%M%S')
+    #     rand = random.randint(100, 999)
+    #     return f"R{now}{rand}"
+    
+    # def generate_receipt_number(self):
+    #     return f"R{uuid.uuid4().hex[:12].upper()}"
+
+    # def generate_receipt_number(self):
+    #     while True:
+    #         now = timezone.now().strftime('%y%m%d%H%M%S')
+    #         rand = random.randint(100, 999)
+    #         receipt = f"R{now}{rand}"
+    #         if not StudentFee.objects.filter(receipt_number=receipt).exists():
+    #             return receipt
+
+    def generate_receipt_number(self):
+        today = timezone.now().strftime('%Y%m%d')
+        last_receipt = StudentFee.objects.filter(receipt_number__startswith=f'REC-{today}').aggregate(Max('receipt_number'))
+
+        if last_receipt['receipt_number__max']:
+            parts = last_receipt['receipt_number__max'].split('-')
+            last_number = int(parts[-2])
+            new_number = last_number + 1
+        else:
+            new_number = 1
+
+        unique_suffix = uuid.uuid4().hex[:4].upper()
+        return f'REC-{today}-{new_number:05d}-{unique_suffix}'
+
+    
+    @action(detail=False, methods=["get"], url_path="student_unpaid_fees")
+    def student_unpaid_fees(self, request):
+        queryset = StudentFee.objects.filter(status__in=["pending", "partial"]).select_related(
+            "student_year__student", "student_year__level", "school_year", "fee_structure"
+        ).prefetch_related("payments")
+
+        grouped = {}
+        for fee in queryset:
+            student = fee.student_year.student
+            student_id = student.id
+            month_name = calendar.month_name[fee.month] if fee.month else "Unknown"
+            school_year_name = fee.school_year.year_name if fee.school_year else "Unknown"
+            year_level = fee.student_year.level.level_name
+
+            if student_id not in grouped:
+                grouped[student_id] = {
+                    "student": {
+                        "id": student_id,
+                        "name": f"{student.user.first_name} {student.user.last_name}",
+                        "scholar_number": student.scholar_number 
+                    },
+                    "month": month_name,
+                    "school_year": school_year_name,
+                    "year_level_fees_grouped": [],
+                    "total_amount": Decimal("0.00"),
+                    "paid_amount": Decimal("0.00"),
+                    "due_amount": Decimal("0.00"),
+                }
+
+            yl_group = next((yl for yl in grouped[student_id]["year_level_fees_grouped"] if yl["year_level"] == year_level), None)
+            if not yl_group:
+                yl_group = {"year_level": year_level, "fees": []}
+                grouped[student_id]["year_level_fees_grouped"].append(yl_group)
+
+            yl_group["fees"].append({
+                "id": fee.id,
+                "fee_type": fee.fee_structure.fee_type,
+                "amount": str(fee.original_amount)
+            })
+
+            grouped[student_id]["total_amount"] += fee.original_amount
+            grouped[student_id]["paid_amount"] += fee.paid_amount
+            grouped[student_id]["due_amount"] += fee.due_amount
+
+        for student_data in grouped.values():
+            student_data["total_amount"] = str(student_data["total_amount"])
+            student_data["paid_amount"] = str(student_data["paid_amount"])
+            student_data["due_amount"] = str(student_data["due_amount"])
+
+        return Response({"unpaid_fees": list(grouped.values())})
+  
+
+
+    @action(detail=False, methods=["get"], url_path="overdue_fees")
+    def overdue_fees(self, request):
+        student_year_id = request.query_params.get("student_year_id")
+        month = request.query_params.get("month")  # month as integer (1-12)
+        school_year_id = request.query_params.get("school_year_id")
+        today = timezone.now().date()
+
+        queryset = StudentFee.objects.filter(due_amount__gt=0, due_date__lt=today)
+
+        if student_year_id:
+            queryset = queryset.filter(student_year_id=student_year_id)
+        
+        if school_year_id:
+            queryset = queryset.filter(school_year_id=school_year_id)
+        
+        if month:
+            queryset = queryset.filter(due_date__month=int(month))
+
+        if student_year_id:
+            queryset = queryset.filter(student_year_id=student_year_id)
+        
+        if school_year_id:
+            queryset = queryset.filter(school_year_id=school_year_id)
+
+        response_data = []
+        for fee in queryset:
+            response_data.append({
+                "fee_id": fee.id,
+                "fee_type": getattr(fee.fee_structure, 'fee_type', 'N/A'),
+                "original_amount": str(fee.original_amount),
+                "paid_amount": str(fee.paid_amount),
+                "due_amount": str(fee.due_amount),
+                "status": "Overdue",
+                "due_date": fee.due_date.strftime("%Y-%m-%d")
+            })
+
+        return Response(response_data, status=drf_status.HTTP_200_OK)
+
+
+    @action(detail=False, methods=["get"], url_path="overdue_fees")
+    def overdue_fees(self, request):
+        student_year_id = request.query_params.get("student_year_id")
+        month = request.query_params.get("month")  # optional filter
+        school_year_id = request.query_params.get("school_year_id")
+        today = timezone.now().date()
+
+        queryset = StudentFee.objects.filter(due_amount__gt=0, due_date__lt=today)
+
+        if student_year_id:
+            queryset = queryset.filter(student_year_id=student_year_id)
+        if school_year_id:
+            queryset = queryset.filter(school_year_id=school_year_id)
+        if month:
+            queryset = queryset.filter(due_date__month=int(month))
+
+        response_data = []
+        for fee in queryset:
+            student_year = fee.student_year
+            student = getattr(student_year, 'student', None)
+            year_level = getattr(student_year, 'level', None)
+
+            if student and student.user:
+                student_name = f"{student.user.first_name} {student.user.last_name}"
+            else:
+                student_name = "N/A"
+
+            response_data.append({
+                "fee_id": fee.id,
+                "fee_type": getattr(fee.fee_structure, 'fee_type', 'N/A'),
+                "original_amount": str(fee.original_amount),
+                "paid_amount": str(fee.paid_amount),
+                "due_amount": str(fee.due_amount),
+                "status": "Overdue",
+                "due_date": fee.due_date.strftime("%Y-%m-%d"),
+                "student_name": student_name,
+                "scholar_number": getattr(student, 'scholar_number', 'N/A'),
+                "class_name": getattr(year_level, 'level_name', 'N/A'),  # <- change name to level_name
+                "month": calendar.month_name[fee.due_date.month]  # <- Month ka name
+            })
+
+        return Response(response_data, status=drf_status.HTTP_200_OK)
+
+
+    @action(detail=False, methods=['post'], url_path='submit_fee')
+    def submit_fee(self, request):
+        payment_mode = request.data.get("payment_method", "").lower()
+        cheque_number = request.data.get("cheque_number") 
+        student_year_id = request.data.get("student_year_id")
+        school_year_id = request.data.get("school_year_id")
+        fees_data = request.data.get("fees", [])
+
+        if not student_year_id or not fees_data:
+            return Response(
+                {"error": "student_year_id and fees are required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        total_amount = Decimal("0.00")
+        created_records = []
+
+        try:
+            student_year = StudentYearLevel.objects.get(id=student_year_id)
+        except StudentYearLevel.DoesNotExist:
+            return Response({"error": "StudentYearLevel not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        discounts = AppliedFeeDiscount.objects.filter(student=student_year)
+
+        for fee_data in fees_data:
+            # amount_paid = Decimal(str(fee_data.get("amount", "0.00")))
+            amount_paid = Decimal(str(fee_data.get("amount", "0.00"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+            serializer = self.get_serializer(
+                data={
+                    "student_year_id": student_year_id,
+                    "fee_structure_id": fee_data.get("fee_type_id"),
+                    "school_year_id": school_year_id,
+                    "month": fee_data.get("month"),
+                },
+                context={'request': request, 'payment_method': payment_mode}
+            )
+            serializer.is_valid(raise_exception=True)
+            student_fee = serializer.save()
+
+            due_date_str = fee_data.get("due_date")
+            if due_date_str:
+                student_fee.due_date = datetime.datetime.strptime(due_date_str, "%Y-%m-%d").date()
+            else:
+                month = int(fee_data.get("month"))
+                year = timezone.now().year
+                student_fee.due_date = date(year, month, 15)
+
+            discount_obj = AppliedFeeDiscount.objects.filter(
+                student=student_year,
+                fee_type=student_fee.fee_structure
+            ).first()
+
+            discount_amount = Decimal(str(discount_obj.discount_amount if discount_obj else 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            student_fee.applied_discount = bool(discount_obj)
+
+            max_payable = (student_fee.original_amount - discount_amount - student_fee.paid_amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            if max_payable < 0:
+                max_payable = Decimal("0.00")
+
+            if amount_paid > max_payable:
+                return Response(
+                    {"error": f"Amount cannot exceed due amount after discount: {max_payable}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+
+            FeePayment.objects.create(
+                student_fee=student_fee,
+                amount=amount_paid,
+                payment_method=payment_mode,
+                cheque_number=cheque_number,
+                status="success" if payment_mode != "online" else "initiated",
+                payment_date=timezone.now() if payment_mode != "online" else None,
+                received_by=request.user,
+                notes=f"Fee payment for {student_fee.fee_structure.fee_type} - Month {student_fee.month}"
+            )
+
+            student_fee.paid_amount = FeePayment.objects.filter(student_fee=student_fee).aggregate(
+                total=Sum('amount')
+            )['total'] or Decimal("0.00")
+
+
+            today = timezone.now().date()
+            if (student_fee.fee_structure.fee_type.lower() == "tution fee"
+                    and student_fee.due_date
+                    and today > student_fee.due_date):
+                student_fee.penalty_amount = Decimal("25.00")
+            else:
+                student_fee.penalty_amount = Decimal("0.00")
+
+            # student_fee.due_amount = max(student_fee.original_amount - student_fee.paid_amount - discount_amount + student_fee.penalty_amount, Decimal("0.00"))
+
+            student_fee.due_amount = max(
+                student_fee.original_amount - student_fee.paid_amount - discount_amount + student_fee.penalty_amount,
+                Decimal("0.00")
+            )
+
+            if payment_mode == "online":
+                student_fee.status = "pending"
+            else:
+                student_fee.due_amount = student_fee.original_amount - student_fee.paid_amount + student_fee.penalty_amount
+                if student_fee.due_amount <= 0:
+                    student_fee.status = "paid"
+                elif student_fee.paid_amount > 0:
+                    student_fee.status = "partial"
+                else:
+                    student_fee.status = "pending"
+
+            student_fee.save()
+
+            total_amount += amount_paid
+            created_records.append(student_fee)
+
+        if payment_mode == "online":
+            return self.initiate_payment(request)
+
+        output_serializer = self.get_serializer(created_records, many=True)
+        return Response({
+            "message": f"{len(created_records)} fee records submitted successfully!",
+            "total_amount_paid": total_amount,
+            "payment_mode": payment_mode,
+            "data": output_serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+
+    @action(detail=False, methods=["get"], url_path="fee_history")
+    def fee_history(self, request):
+            student_year_id = request.query_params.get("student_year_id")
+            school_year_id = request.query_params.get("school_year_id")
+            
+            if not student_year_id or not school_year_id:
+                return Response({"detail": "student_year_id and school_year_id are required"},
+                                status=status.HTTP_400_BAD_REQUEST)
+            
+            student_fees = StudentFee.objects.filter(
+                student_year_id=student_year_id,
+                school_year_id=school_year_id
+            ).prefetch_related('payments', 'fee_structure')
+
+            result = []
+            for sf in student_fees:
+                payments = sf.payments.all()
+                result.append({
+                    "fee_type": sf.fee_structure.fee_type,
+                    "original_amount": str(sf.original_amount),
+                    "paid_amount": str(sf.paid_amount),
+                    "due_amount": str(sf.due_amount),
+                    "status": sf.status,
+                    "month": calendar.month_name[sf.month] if sf.month else None,
+                    "payments": [{
+                        "amount": str(p.amount),
+                        "method": p.payment_method,
+                        "status": p.status,
+                        "date": p.payment_date
+                    } for p in payments]
+                })
+            return Response(result)
+
+
+    @action(detail=False, methods=["get"], url_path="pending_fees")
+    def pending_fees(self, request):
+        school_year_id = request.query_params.get("school_year_id")
+        if not school_year_id:
+            return Response({"detail": "school_year_id is required"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        pending_fees = StudentFee.objects.filter(
+            school_year_id=school_year_id
+        ).exclude(status="paid")
+
+        if not pending_fees.exists():
+            return Response({"detail": "No pending fees found."}, status=status.HTTP_404_NOT_FOUND)
+
+        response_data = []
+        for fee in pending_fees:
+            discount_obj = AppliedFeeDiscount.objects.filter(student=fee.student_year, fee_type=fee.fee_structure).first()
+            discount_amount = discount_obj.discount_amount if discount_obj else 0
+
+            adjusted_original_amount = max(fee.original_amount - discount_amount, 0)
+
+            response_data.append({
+                "fee_id": fee.id,
+                "fee_type": fee.fee_structure.fee_type,
+                "original_amount": str(adjusted_original_amount),
+                "paid_amount": str(fee.paid_amount),
+                "status": fee.status
+            })
+
+        return Response(response_data)
+
+
+    @action(detail=False, methods=["get"], url_path="fee_preview")
+    def preview(self, request):
+        student_year_id = request.query_params.get("student_year_id")
+
+        if not student_year_id:
+            return Response({"detail": "student_year_id is required"}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+        try:
+            student_year_level = StudentYearLevel.objects.get(id=student_year_id)
+        except StudentYearLevel.DoesNotExist:
+            return Response({"detail": "StudentYearLevel not found"}, status=drf_status.HTTP_404_NOT_FOUND)
+
+        year_level = student_year_level.level
+        year_level_fees = FeeStructure.objects.filter(year_level=year_level)
+        paid_fees = StudentFee.objects.filter(student_year=student_year_level)
+
+        MONTHS = {month: i for i, month in enumerate(calendar.month_name) if month}
+
+        result = []
+
+        for month_name, month_number in MONTHS.items():
+            month_data = {"month": month_name, "fees": []}
+
+            for fee in year_level_fees:
+                discount_total = AppliedFeeDiscount.objects.filter(
+                    student=student_year_level,
+                    fee_type=fee
+                ).aggregate(total_discount=Sum('discount_amount'))['total_discount'] or Decimal('0.00')
+
+                base_amount = Decimal(fee.fee_amount) - Decimal(discount_total)
+                # print(base_amount)
+                base_amount = max(base_amount, Decimal('0.00'))  
+                if fee.fee_type.lower() == "admission fee":
+                    if month_name != "January":
+                        continue
+                    total_paid = paid_fees.filter(fee_structure=fee).aggregate(
+                        Sum('paid_amount')
+                    )['paid_amount__sum'] or Decimal('0.00')
+                else:
+                    total_paid = paid_fees.filter(
+                        fee_structure=fee,
+                        month=month_number
+                    ).aggregate(Sum('paid_amount'))['paid_amount__sum'] or Decimal('0.00')
+
+                if total_paid >= base_amount and base_amount > 0:
+                    status_str = "Paid"
+                elif total_paid > 0:
+                    status_str = "Partially Paid"
+                else:
+                    status_str = "Pending"
+
+                month_data["fees"].append({
+                    "fee_id": fee.id,
+                    "fee_type": fee.fee_type,
+                    "original_amount": str(base_amount),
+                    "paid_amount": str(total_paid),
+                    "status": status_str,
+                    "applied_discount": str(discount_total)
+                })
+
+            if month_data["fees"]:
+                result.append(month_data)
+
+        return Response(result)
+
+
+    @action(detail=False, methods=["POST"], url_path="initiate_payment")
+    def initiate_payment(self, request):
+        data = request.data.copy()
+        student_year_id = data.get("student_year_id")
+        fees_data = data.get("fees") or data.get("selected_fees") or []
+
+        if not student_year_id:
+            return Response({"error": "Student_year_id missing - ye field required hai."}, status=400)
+
+        if not fees_data:
+            return Response({"error": "No fees selected - fees data empty hai."}, status=400)
+
+        try:
+            student_year = StudentYearLevel.objects.get(id=student_year_id)
+        except StudentYearLevel.DoesNotExist:
+            return Response({"error": "Invalid student_year_id."}, status=400)
+
+        receipt_number = self.generate_receipt_number()
+        created_fees = []
+
+        for fee_dict in fees_data:
+            fee_id = fee_dict.get("fee_id") or fee_dict.get("fee_type_id")
+            month = fee_dict.get("month")
+            try:
+                fee_obj = FeeStructure.objects.get(id=fee_id)
+            except FeeStructure.DoesNotExist:
+                continue
+
+            school_year_id = data.get("school_year_id")
+            if school_year_id:
+                try:
+                    school_year = SchoolYear.objects.get(id=school_year_id)
+                except SchoolYear.DoesNotExist:
+                    return Response({"error": "Invalid school_year_id"}, status=400)
+            else:
+                school_year = get_current_school_year()  # fallback
+
+
+            student_fee, created = StudentFee.objects.get_or_create(
+                student_year=student_year,
+                fee_structure=fee_obj,
+                school_year=school_year,
+                month=month,
+                defaults={
+                    "original_amount": fee_obj.fee_amount,
+                    "paid_amount": Decimal("0.00"),
+                    "due_amount": fee_obj.fee_amount,
+                    "status": "pending",
+                    "receipt_number": receipt_number
+                }
+            )
+
+            created_fees.append(student_fee)
+
+        total_amount = sum(Decimal(str(fee_dict.get("amount") or fee_dict.get("paid_amount", 0))) for fee_dict in fees_data)
+
+        if total_amount < Decimal("1.00"):
+            return Response({"error": "Paid amount must be at least 1 INR to create Razorpay order."}, status=400)
+
+        client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+        try:
+            razorpay_order = client.order.create({
+                "amount": int(total_amount * 100),
+                "currency": "INR",
+                "payment_capture": "1",
+                "receipt": receipt_number
+            })
+        except Exception as e:
+            return Response({"error": f"Razorpay order creation failed: {str(e)}"}, status=500)
+
+        return Response({
+            "message": "Payment initiated successfully - status pending.",
+            "razorpay_order_id": razorpay_order["id"],
+            "receipt_number": receipt_number,
+            "fees": [
+                {
+                    "id": f.id,
+                    "fee_type": f.fee_structure.fee_type,
+                    "status": f.status,
+                    "due_amount": str(f.due_amount),
+                    "month": f.month
+                } for f in created_fees
+            ]
+        }, status=200)
+
+
+    @action(detail=False, methods=["post"], url_path="confirm_payment")
+    def confirm_payment(self, request):
+        data = request.data.copy()
+        required_fields = [
+            "student_year_id", "selected_fees",
+            "payment_mode", "received_by", 
+            "razorpay_order_id", "razorpay_payment_id", "razorpay_signature"
+        ]
+        missing = [f for f in required_fields if f not in data]
+        if missing:
+            return Response({"error": f"Missing fields: {', '.join(missing)}"}, status=400)
+
+        student_year_id = data["student_year_id"]
+        selected_fees = data["selected_fees"]  
+        payment_mode = data["payment_mode"]
+        received_by = data["received_by"]
+
+        try:
+            student_year = StudentYearLevel.objects.get(id=student_year_id)
+        except StudentYearLevel.DoesNotExist:
+            return Response({"error": "Invalid student_year_id."}, status=400)
+
+        created_payments = []
+
+        for fee_item in selected_fees:
+            fee_id = fee_item.get("fee_id") or fee_item.get("fee_type_id")
+
+            month = fee_item.get("month")
+            paid_amount = Decimal(str(fee_item.get("paid_amount") or fee_item.get("amount", 0)))
+
+            if paid_amount < 0:
+                return Response({"error": f"Paid amount missing or zero for fee_id {fee_id}."}, status=400)
+
+            try:
+                fee_obj = FeeStructure.objects.get(id=fee_id)
+            except FeeStructure.DoesNotExist:
+                return Response({"error": f"FeeStructure not found for fee_id {fee_id}."}, status=400)
+
+            student_fee_qs = StudentFee.objects.filter(
+                student_year=student_year,
+                fee_structure=fee_obj
+            )
+            if month:
+                student_fee_qs = student_fee_qs.filter(month=month)
+
+            student_fee = student_fee_qs.first()
+            if not student_fee:
+                return Response(
+                    {"error": f"StudentFee record not found for fee_id {fee_id} and month {month}. Please initiate payment first."},
+                    status=400
+                )
+
+            if paid_amount > student_fee.original_amount:
+                return Response(
+                    {"error": f"Paid amount cannot exceed original amount ({student_fee.original_amount}) for fee_id {fee_id}."},
+                    status=400
+                )
+
+            student_fee.paid_amount += paid_amount
+            student_fee.due_amount = max(student_fee.original_amount - student_fee.paid_amount, Decimal("0.00"))
+            student_fee.status = "paid" if student_fee.due_amount == 0 else "partial"
+            student_fee.save()
+
+            payment = FeePayment.objects.create(
+                student_fee=student_fee,
+                amount=paid_amount,
+                payment_method=payment_mode,
+                status="success",
+                payment_date=timezone.now(),
+                received_by_id=received_by,
+                razorpay_order_id=data["razorpay_order_id"],
+                razorpay_payment_id=data["razorpay_payment_id"],
+                razorpay_signature=data["razorpay_signature"]
+            )
+            created_payments.append(payment)
+
+        return Response({
+            "message": "Payment confirmed successfully.",
+            "payments": [
+                {
+                    "id": p.id,
+                    "fee_type": p.student_fee.fee_structure.fee_type,
+                    "amount": str(p.amount),
+                    "status": p.status,
+                    "month": p.student_fee.month,
+                    "receipt_number": p.student_fee.receipt_number
+                } for p in created_payments
+            ]
+        }, status=201)
+
+
+def student_display_name(student):
+    return f"{student.user.first_name} {student.user.last_name}"
+class AppliedFeeDiscountViewSet(viewsets.ModelViewSet):
+    queryset = AppliedFeeDiscount.objects.all()
+    serializer_class = AppliedFeeDiscountSerializer 
+    permission_classes = [IsAuthenticated]
+
+
+    def list(self, request):
+        student_year_id = request.query_params.get("student_year_id")
+
+        if student_year_id:
+            return Response({
+                "available_fees": self.get_available_fees(student_year_id),
+                "applied_discounts": self.get_applied_discounts(student_year_id)
+            })
+        else:
+            queryset = self.queryset.select_related(
+                "student", "student__level", "student__year", "fee_type", "approved_by"
+            )
+            serializer = AppliedFeeDiscountSerializer(queryset, many=True)
+            return Response(serializer.data)
+
+    def get_available_fees(self, student_year_id):
+        fees = StudentFee.objects.filter(
+            student_year_id=student_year_id,
+            status__in=["pending", "partial"]
+        ).select_related(
+            'student_year',
+            'student_year__student',
+            'student_year__level',
+            'student_year__year',
+            'fee_structure'
+        )
+
+        fee_list = []
+        for fee in fees:
+            original_amount = Decimal(str(fee.original_amount))
+            due_amount = Decimal(str(fee.due_amount))
+            fee_list.append({
+                "student_fee_id": fee.id,
+                "student_year_id": fee.student_year.id,
+                "student_class": fee.student_year.level.level_name if fee.student_year.level else None,
+                "school_year": fee.student_year.year.year_name if fee.student_year.year else None,
+                "fee_type": fee.fee_structure.fee_type,
+                "original_amount": float(original_amount),
+                "due_amount": float(due_amount),
+                "student_name": student_display_name(fee.student_year.student)
+            })
+        return fee_list
+
+    def get_applied_discounts(self, student_year_id):
+        discounts = AppliedFeeDiscount.objects.filter(
+            student_id=student_year_id
+        ).select_related(
+            "student", "student__level", "student__year", "fee_type", "approved_by"
+        )
+
+        discount_list = []
+        for d in discounts:
+            original_amount = Decimal(str(d.fee_type.fee_amount))
+            discount_amount = d.discount_amount
+            discount_percentage = (discount_amount / original_amount * Decimal('100')) if original_amount else Decimal('0')
+
+            discount_list.append({
+                "id": d.id,
+                "student": student_display_name(d.student.student),
+                "student_year_id": d.student.id,
+                "student_class": d.student.level.level_name if d.student.level else None,
+                "school_year": d.student.year.year_name if d.student.year else None,
+                "fee_type": d.fee_type.fee_type,
+                "discount_name": d.discount_name,
+                "discount_amount": float(discount_amount),
+                "discounted_amount_percent": float(discount_percentage),
+                "approved_by": getattr(d.approved_by, "username", "Admin"),
+                "approved_at": d.approved_at,
+            })
+
+        return discount_list
+
+
+    @action(detail=False, methods=["post"], url_path="apply")
+    @transaction.atomic
+
+    def apply_discount(self, request):
+        user = request.user
+        student_year_id = request.data.get("student_year_id")
+        fee_structure_id = request.data.get("fee_structure_id")
+        discount_name = request.data.get("discount_name")
+        discount_percentage = request.data.get("discounted_amount_percent")
+
+        user_roles = [r.name.lower() for r in request.user.role.all()]
+        if "director" not in user_roles:
+            return Response({"detail": "Only directors are authorized to apply discounts."}, status=403)
+
+        if not all([student_year_id, fee_structure_id, discount_name, discount_percentage]):
+            return Response(
+                {"detail": "student_year_id, fee_structure_id, discount_name, and discounted_amount_percent are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            student_year = StudentYearLevel.objects.get(id=student_year_id)
+            fee_structure = FeeStructure.objects.get(id=fee_structure_id)
+        except (StudentYearLevel.DoesNotExist, FeeStructure.DoesNotExist):
+            return Response(
+                {"detail": "Invalid student_year_id or fee_structure_id."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not hasattr(student_year, "student") or not hasattr(student_year.student, "user"):
+            return Response(
+                {"detail": "Invalid student record. Discount can only be applied to valid students."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+        if not fee_structure.year_level.filter(id=student_year.level.id).exists():
+            return Response({
+                "detail": "Discount can only be applied to fees of the student's own class."
+            }, status=400)
+
+        try:
+            discount_percent = Decimal(str(discount_percentage))
+            if discount_percent < 0 or discount_percent > 100:
+                return Response(
+                    {"detail": "Discount percentage must be between 0 and 100."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+
+            max_allowed_percent = Decimal("90.00")
+            if discount_percent > max_allowed_percent:
+                return Response(
+                    {"detail": f"Discount cannot exceed {max_allowed_percent}% of the fee."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            fee_amount = Decimal(fee_structure.fee_amount or 0)
+            final_discount_amount = (fee_amount * discount_percent) / Decimal("100")
+
+            if final_discount_amount > fee_amount:
+                return Response(
+                    {"detail": "Discount amount cannot be greater than the fee amount."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        except Exception as e:
+            return Response(
+                {"detail": f"Invalid discount percentage: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if AppliedFeeDiscount.objects.filter(student=student_year, fee_type=fee_structure).exists():
+            return Response(
+                {"detail": "Discount already applied for this student and fee type."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        discount = AppliedFeeDiscount.objects.create(
+            student=student_year,
+            fee_type=fee_structure,
+            discount_name=discount_name,
+            discount_amount=final_discount_amount,
+            approved_by=user,
+            approved_at=timezone.now(),
+        )
+
+        return Response(
+            {
+                "detail": "Discount applied successfully",
+                "student_name": f"{student_year.student.user.first_name} {student_year.student.user.last_name}",
+                "student_year_id": student_year.id,
+                "fee_type": fee_structure.fee_type,
+                "discount_name": discount.discount_name,
+                "discount_amount": float(final_discount_amount),
+                "discounted_amount_percent": float(discount_percentage),
+                "approved_by": getattr(user, "username", "Admin"),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+    @action(detail=True, methods=["put"], url_path="update_discount")
+    @transaction.atomic
+    def update_discount(self, request, pk=None):
+        user = request.user
+        discount = self.get_object()  
+
+        user_roles = [r.name.lower() for r in user.role.all()]
+        if "director" not in user_roles:
+            return Response({"detail": "Only directors can update discounts."}, status=403)
+
+        discount_name = request.data.get("discount_name")
+        discounted_amount_percent = request.data.get("discounted_amount_percent")
+
+        if not all([discount_name, discounted_amount_percent]):
+            return Response({"detail": "Both discount_name and discounted_amount_percent are required."}, status=400)
+
+        try:
+            discount_percent = Decimal(str(discounted_amount_percent))
+            if not (0 <= discount_percent <= 100):
+                raise ValueError("Discount must be 0-100%.")
+
+            max_percent = Decimal("80.00")
+            if discount_percent > max_percent:
+                return Response({"detail": f"Discount cannot exceed {max_percent}%."}, status=400)
+
+            fee_amount = Decimal(discount.fee_type.fee_amount or 0)
+            final_discount_amount = (fee_amount * discount_percent) / Decimal("100")
+        except Exception as e:
+            return Response({"detail": f"Invalid discount percentage: {e}"}, status=400)
+
+        discount.discount_name = discount_name
+        discount.discount_amount = final_discount_amount
+        discount.approved_by = user
+        discount.approved_at = timezone.now()
+        discount.save(update_fields=["discount_name", "discount_amount", "approved_by", "approved_at"])
+
+        return Response({
+            "detail": "Discount updated successfully",
+            "student_name": student_display_name(discount.student.student),
+            "student_year_id": discount.student.id,
+            "fee_type": discount.fee_type.fee_type,
+            "discount_name": discount.discount_name,
+            "discount_amount": float(final_discount_amount),
+            "discounted_amount_percent": float(discount_percent),
+            "approved_by": getattr(user, "username", "Admin"),
+        }, status=200)
+
+
+
+# class DefaulterNotifyView(APIView):
+#     def get(self, request):
+#         year_level_id = request.query_params.get("year_level")
+#         section = request.query_params.get("section")
+
+#         # Filter class + section
+#         admissions = Admission.objects.filter(is_active=True)
+
+#         if year_level_id:
+#             admissions = admissions.filter(year_level_id=year_level_id)
+
+#         if section:
+#             admissions = admissions.filter(class_section=section)
+
+#         # Fetch students belonging to filtered admissions
+#         student_year_ids = admissions.values_list("student__id", flat=True)
+#         student_year_levels = StudentYearLevel.objects.filter(student_id__in=student_year_ids)
+
+#         today = timezone.now().date()
+#         three_months_before = today.replace(
+#             year=today.year if today.month > 3 else today.year - 1,
+#             month=(today.month - 3) if today.month > 3 else (12 - (3 - today.month)),
+#         )
+
+#         defaulters = []
+
+#         for sy in student_year_levels:
+#             fees = StudentFee.objects.filter(student_year=sy)
+
+#             # Unpaid for last 3 months
+#             unpaid_last_3 = fees.filter(
+#                 month__gte=three_months_before.month,
+#                 month__lte=today.month,
+#                 status__in=["pending", "partial"]
+#             ).exists()
+
+#             # Any remaining dues
+#             has_due = fees.filter(due_amount__gt=0).exists()
+
+#             if unpaid_last_3 or has_due:
+#                 defaulters.append(sy)
+
+#         # Send email one-by-one (load-friendly)
+#         for d in defaulters:
+#             user = d.student.user
+#             email = user.email
+
+#             if email:
+#                 # Fetch unpaid dues for that student
+#                 unpaid_fees = StudentFee.objects.filter(
+#                     student_year=d,
+#                     status__in=["pending", "partial"],
+#                     due_amount__gt=0
+#                 )
+
+#                 # Build fee details lines
+#                 fee_lines = ""
+#                 for fee in unpaid_fees:
+#                     fee_lines += f"- {fee.fee_structure.fee_type}: ₹{fee.due_amount}\n"
+
+#                 # Final email message
+#                 subject = "Fee Due Notice"
+
+#                 message = (
+#                     f"Dear {user.first_name},\n\n"
+#                     f"You have pending school fees. Here are the details:\n\n"
+#                     f"{fee_lines}\n"
+#                     f"Please clear your dues as soon as possible.\n\n"
+#                     f"Thank you."
+#                 )
+
+#                 send_email_notification(email, subject, message)
+
+#         return Response(
+#             {
+#                 "message": "Email notification sent to all defaulters.",
+#                 "defaulters_count": len(defaulters),
+#             },
+#             status=status.HTTP_200_OK,
+#         )
+
+class DefaulterNotifyView(APIView):
+    def get(self, request):
+        year_level_id = request.query_params.get("year_level")
+        section = request.query_params.get("section")
+
+        # Filter class + section
+        admissions = Admission.objects.filter(is_active=True)
+
+        if year_level_id:
+            admissions = admissions.filter(year_level_id=year_level_id)
+
+        if section:
+            admissions = admissions.filter(class_section=section)
+
+        # Fetch students belonging to filtered admissions
+        student_year_ids = admissions.values_list("student__id", flat=True)
+        student_year_levels = StudentYearLevel.objects.filter(student_id__in=student_year_ids)
+
+        today = timezone.now().date()
+        three_months_before = today.replace(
+            year=today.year if today.month > 3 else today.year - 1,
+            month=(today.month - 3) if today.month > 3 else (12 - (3 - today.month)),
+        )
+
+        defaulters = []
+
+        for sy in student_year_levels:
+            fees = StudentFee.objects.filter(student_year=sy)
+
+            # Unpaid for last 3 months
+            unpaid_last_3 = fees.filter(
+                month__gte=three_months_before.month,
+                month__lte=today.month,
+                status__in=["pending", "partial"]
+            ).exists()
+
+            # Any remaining dues
+            has_due = fees.filter(due_amount__gt=0).exists()
+
+            if unpaid_last_3 or has_due:
+                defaulters.append(sy)
+
+        # Send email one-by-one (load-friendly)
+        for d in defaulters:
+            user = d.student.user
+            email = user.email
+            phone = d.student.contact_number if hasattr(d.student, 'contact_number') else None
+
+            # Build unpaid fee details
+            unpaid_fees = StudentFee.objects.filter(
+                student_year=d,
+                status__in=["pending", "partial"],
+                due_amount__gt=0
+            )
+
+            fee_lines = ""
+            for fee in unpaid_fees:
+                fee_lines += f"- {fee.fee_structure.fee_type}: ₹{fee.due_amount}\n"
+
+            # Final message
+            message = (
+                f"Dear {user.first_name},\n\n"
+                f"You have pending school fees:\n\n"
+                f"{fee_lines}\n"
+                f"Please clear your dues as soon as possible.\n\n"
+                f"Thank you."
+            )
+
+            # Send Email
+            if email:
+                send_email_notification(email, "Fee Due Notice", message)
+
+            # Send WhatsApp
+            if phone:
+                send_whatsapp(message, phone)
+                result=send_whatsapp(message, phone)
+                print("WHATSAPP RESULT =>", result)
+
+
+        return Response(
+            {
+                "message": "Email notification and whatsapp message sent to all defaulters.",
+                "defaulters_count": len(defaulters),
+            },
+            status=status.HTTP_200_OK,
+        )

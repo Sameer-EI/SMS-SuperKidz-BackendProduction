@@ -12,7 +12,7 @@ from .utils import *
 
 from teacher.models import * 
 from django.utils.timezone import now
-
+import calendar
 
 
 
@@ -353,27 +353,33 @@ class Admission(models.Model):
 
 
 
-
 from django.db import models
 import random
 import string
+from django.conf import settings
+from django.utils import timezone
 
-
-class FeeType(models.Model):
-    name = models.CharField(max_length=100, unique=True)
-
-    def __str__(self):
-        return self.name
+class MasterFee(models.Model):
+    PAYMENT_CHOICES = (
+        ("monthly", "Monthly"),
+        ("quarterly", "Quarterly"),
+        ("yearly", "Yearly"),
+        ('Others','Others'),
+    )
+    payment_structure = models.CharField(max_length=20, choices=PAYMENT_CHOICES, default="monthly")
 
     class Meta:
-        verbose_name = "Fee Type"
-        verbose_name_plural = "Fee Types"
-        db_table = "FeeType"
+        db_table = "MasterFee"
+
+    def __str__(self):
+        return f"{self.payment_structure}"
 
 
 class YearLevel(models.Model):
     level_name = models.CharField(max_length=250)
     level_order = models.IntegerField()
+    fee = models.ForeignKey(MasterFee, on_delete=models.PROTECT,related_name="year_levels",
+                            null=True, blank=True)
 
     def __str__(self):
         return f"{self.level_name}"
@@ -384,19 +390,6 @@ class YearLevel(models.Model):
         verbose_name_plural = "Year Levels"
         db_table = "YearLevel"
 
-class YearLevelFee(models.Model):
-    year_level = models.ForeignKey(YearLevel, on_delete=models.CASCADE)
-    fee_type = models.ForeignKey(FeeType, on_delete=models.CASCADE)
-    amount = models.DecimalField(max_digits=8, decimal_places=2)
-
-    def __str__(self):
-        return f"{self.year_level} - {self.fee_type.name} - {self.amount}"
-
-    class Meta:
-        verbose_name = "Year Level Fee"
-        verbose_name_plural = "Year Level Fees"
-        db_table = "YearLevelFee"
-
 
 class FeeRecordManager(models.Manager):
     def get_queryset(self):
@@ -406,54 +399,67 @@ class FeeRecordManager(models.Manager):
         return super().get_queryset()
     
 
-#discounts to students
-class FeeDiscount(models.Model):
-    student = models.OneToOneField("student.Student", on_delete=models.CASCADE,related_name="discount_info")
-    admission_fee_discount = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
-    admission_fee = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)  # Added as of 21Aug25
-    tuition_fee_discount = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
-    tuition_fee = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)  # Added as of 21Aug25
-    discount_reason = models.CharField(max_length=255, blank=True, null=True)
-    is_allowed = models.BooleanField(default=True)
+class FeeStructure(models.Model):
+    FEE_TYPE = [
+        ('Admission Fee', 'Admission Fee'),
+        ('Exam Fee', 'Exam Fee'),
+        ('Tuition Fee', 'Tuition Fee'),
+        ('Caution Fee','Caution Fee'),
+        ('Maintenance','Maintenance'),
+        ('Form Fee','Form Fee'),
+        ('Others','Others'),
+        ]
+    
+    master_fee = models.ForeignKey(MasterFee,on_delete=models.CASCADE,related_name="fee_structures")
+    fee_type = models.CharField(max_length=100,choices=FEE_TYPE)#add chioce 
+    fee_amount = models.FloatField()
+    # year_level = models.ForeignKey("YearLevel",on_delete=models.CASCADE,related_name="fee_structures")
+    year_level = models.ManyToManyField("YearLevel", related_name="fee_structures")  # Multiple classes
+
+
+    class Meta:
+        db_table = "fee_structure"
+
+    def __str__(self):
+        year_levels = ", ".join([yl.level_name for yl in self.year_level.all()])
+        return f"{year_levels} - {self.fee_type} - {self.fee_amount}"
+
+
+
+class AppliedFeeDiscount(models.Model):
+    # student_fee = models.ForeignKey(StudentFee, on_delete=models.CASCADE, related_name="discounts")#
+    student = models.ForeignKey("student.StudentYearLevel", on_delete=models.CASCADE, related_name="discounts")
+    fee_type = models.ForeignKey(FeeStructure,on_delete=models.CASCADE)
+    discount_name = models.CharField(max_length=100)
+    discount_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    approved_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "applied_fee_discount"
+
+    def __str__(self):
+        return f"{self.discount_name} - {self.discount_amount} - {self.student.student.user.first_name}"
+
+class StudentFee(models.Model):
+    student_year = models.ForeignKey("student.StudentYearLevel", on_delete=models.CASCADE, related_name="student_fees")
+    fee_structure = models.ForeignKey(FeeStructure, on_delete=models.PROTECT, related_name="student_fees")
+    month = models.PositiveSmallIntegerField(choices=[(i, calendar.month_name[i]) for i in range(1, 13)],null=True, blank=True)
+    school_year = models.ForeignKey(SchoolYear,on_delete=models.CASCADE)
+    due_date = models.DateField(null=True, blank=True)
+    original_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    due_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    penalty_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    applied_discount = models.BooleanField(default=False)
+    status = models.CharField(max_length=20, choices=[('pending', 'Pending'),('partial', 'Partial'),('paid', 'Paid'),], default='pending')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    receipt_number = models.CharField(max_length=50, unique=True, editable=False, blank=True, auto_created=True)
 
     def __str__(self):
-        return f"Discount for {self.student} - Admission fee: {self.admission_fee_discount}, Tuition fee: {self.tuition_fee_discount}"
- 
+        return f"{self.student_year.student.user.first_name} - {self.fee_structure.fee_type} - paid amount {self.paid_amount} - due amount {self.due_amount} - {self.status}  - {self.school_year.year_name}  - month {self.month}"
 
-class FeeRecord(models.Model):
-    student = models.ForeignKey("student.Student", on_delete=models.CASCADE)
-    MONTH_CHOICES = [
-        ("July", "July"), ("August", "August"), ("September", "September"),
-        ("October", "October"), ("November", "November"), ("December", "December"),
-        ("January", "January"), ("February", "February"), ("March", "March"),
-        ("April", "April"), ("May", "May"), ("June", "June"),
-    ]
-    month = models.CharField(max_length=20, choices=MONTH_CHOICES, null=True, blank=True)
-    school_year = models.ForeignKey(StudentYearLevel, on_delete=models.PROTECT,null=True, blank=True)  # Added as of 20Aug25
-    year_level_fees = models.ManyToManyField(YearLevelFee)
-    total_amount = models.DecimalField(max_digits=8, decimal_places=2)
-    paid_amount = models.DecimalField(max_digits=8, decimal_places=2)
-    due_amount = models.DecimalField(max_digits=8, decimal_places=2)
-    discounted_amount = models.ForeignKey(FeeDiscount, on_delete=models.SET_NULL, null=True, blank=True)
-    payment_date = models.DateField(auto_now_add=True)
-    payment_mode = models.CharField(max_length=20, choices=[('Cash', 'Cash'), ('Online', 'Online'), ('Cheque', 'Cheque')])
-    is_cheque_cleared = models.BooleanField(default=False)  # Added as of 11June25 at 12:39 PM
-    receipt_number = models.CharField(max_length=10, unique=True, editable=False, blank=True, auto_created=True)
-    late_fee = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True, default=0)
-    payment_status = models.CharField(max_length=20, choices=[('Paid', 'Paid'), ('Unpaid', 'Unpaid')])
-    remarks = models.TextField(blank=True, null=True)
-    received_by = models.CharField(max_length=100, null=True,blank=True)      # modified 24June25
-    razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)
-    razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
-    razorpay_signature_id = models.CharField(max_length=255, blank=True, null=True)
-    is_active = models.BooleanField(default=True)  
-
-    objects = FeeRecordManager()
-
-    def __str__(self):
-        return f"{self.student.user.get_full_name()} - {self.month}"
 
     def save(self, *args, **kwargs):
         if not self.receipt_number:
@@ -463,14 +469,48 @@ class FeeRecord(models.Model):
     def generate_unique_receipt_number(self):
         while True:
             code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-            if not FeeRecord.objects.filter(receipt_number=code).exists():
+            if not StudentFee.objects.filter(receipt_number=code).exists():
                 return code
 
+
     class Meta:
-        verbose_name = "Fee Record"
-        verbose_name_plural = "Fee Records"
-        db_table = "FeeRecord"
-        indexes = [models.Index(fields=['is_active'])]
+        db_table = "student_fee"
+        unique_together = ['student_year', 'fee_structure', 'month', 'school_year']
+
+
+class FeePayment(models.Model):
+    PAYMENT_STATUS = [
+        ('pending', 'Pending'),
+        ('success', 'Success'),
+        ('failed', 'Failed'),
+        ('refunded', 'Refunded'),
+    ]
+    
+    PAYMENT_METHODS = [
+        ('cash', 'Cash'),
+        ('online', 'Online'),
+        ('cheque', 'Cheque'),
+    ]
+
+    student_fee = models.ForeignKey(StudentFee, on_delete=models.CASCADE, related_name="payments")
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    payment_method = models.CharField(max_length=50, choices=PAYMENT_METHODS)
+    status = models.CharField(max_length=50, choices=PAYMENT_STATUS, default='pending')
+    payment_date = models.DateTimeField(null=True, blank=True)
+    received_by = models.ForeignKey("authentication.User", on_delete=models.SET_NULL, null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    cheque_number = models.CharField(max_length=50, blank=True, null=True, unique=True)
+    razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
+    razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)#
+    razorpay_signature = models.CharField(max_length=255, blank=True, null=True)#
+
+    class Meta:
+        db_table = "fee_payment"
+
+    def __str__(self):
+        return f"Payment #{self.id} - ₹{self.amount} - {self.payment_method} - {self.student_fee.student_year.student.user.first_name} {self.student_fee.student_year.student.user.last_name}"
+ 
 
 class OfficeStaffManager(models.Manager):
     def get_queryset(self):
@@ -708,9 +748,9 @@ class Payment(models.Model):
 
     cheque_number = models.CharField(max_length=50, blank=True, null=True, unique=True)
    
-    razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
-    razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)#
-    razorpay_signature = models.CharField(max_length=255, blank=True, null=True)#
+    # razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
+    # razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)#
+    # razorpay_signature = models.CharField(max_length=255, blank=True, null=True)#
     
     # RazorpayX
     payout_id = models.CharField(max_length=100, blank=True, null=True)

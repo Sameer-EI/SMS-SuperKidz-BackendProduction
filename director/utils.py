@@ -320,6 +320,45 @@ def send_email_notification(to_email, subject, message):
     )
 
 
+def normalize_phone(num):
+    num = str(num).strip()
+
+    # remove spaces and weird chars
+    num = num.replace(" ", "").replace("-", "")
+
+    # ensure it starts with +91 only once
+    if num.startswith("0"):
+        num = num[1:]   # remove leading 0
+
+    if not num.startswith("+91"):
+        num = "+91" + num
+
+    return num
+
+    
+from twilio.rest import Client 
+
+def send_whatsapp(message_text, phone_number):
+    client = Client(
+        settings.TWILIO_ACCOUNT_SID,
+        settings.TWILIO_AUTH_TOKEN
+    )
+
+    try:
+        phone = normalize_phone(phone_number)
+
+        msg = client.messages.create(
+            from_=settings.TWILIO_WHATSAPP_NUMBER,
+            body=message_text,
+            to=f"whatsapp:{phone}"
+        )
+        return {"number": phone, "status": "sent", "sid": msg.sid}
+
+    except Exception as e:
+        return {"number": phone, "status": "failed", "error": str(e)}
+  
+
+
 # --------------------- Report Card attachments with validation
 
 # def reportcard_attachments(instance, filename):
