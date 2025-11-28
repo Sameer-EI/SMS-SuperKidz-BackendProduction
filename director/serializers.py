@@ -1995,6 +1995,10 @@ class ExamPaperSerializer(serializers.ModelSerializer):
         
         return value
 
+    def validate_paper_code(self, value):
+        if not value:
+            return None
+        return value
 
     def create(self, validated_data):
         subject = validated_data["subject"]
