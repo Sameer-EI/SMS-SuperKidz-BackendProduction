@@ -716,30 +716,33 @@ class OfficeStaffAttendanceView(ModelViewSet):
                 errors.append({"error": f"Invalid date format: {date_str}"})
                 continue
 
+            staff = OfficeStaff.objects.get(id=office_staff_id)
+            staff_name = staff.user.get_full_name()
+
             # Future date check
             if attendance_date > date.today():
-                errors.append({"error": "Cannot mark attendance for a future date.", "office_staff_id": office_staff_id})
+                errors.append({"error": f"Cannot mark attendance for a future date for {staff_name} on {attendance_date}.", "office_staff_id": office_staff_id})
                 continue
 
             # Sunday check
             if attendance_date.weekday() == 6:
-                errors.append({"error": "Cannot mark attendance on Sunday.", "office_staff_id": office_staff_id})
+                errors.append({"error": f"Cannot mark attendance on Sunday for {staff_name} on {attendance_date}.", "office_staff_id": office_staff_id})
                 continue
 
             # Holiday checks
             if SchoolHoliday.objects.filter(date=attendance_date).exists():
-                errors.append({"error": "Cannot mark attendance on a school holiday.", "office_staff_id": office_staff_id})
+                errors.append({"error": f"Cannot mark attendance on a school holiday for {staff_name} on {attendance_date}.", "office_staff_id": office_staff_id})
                 continue
 
             if Holiday.objects.filter(start_date__lte=attendance_date, end_date__gte=attendance_date).exists():
-                errors.append({"error": "Cannot mark attendance on a general holiday.", "office_staff_id": office_staff_id})
+                errors.append({"error": f"Cannot mark attendance on a holiday for {staff_name} on {attendance_date}.", "office_staff_id": office_staff_id})
                 continue
 
             # Only within the last 7 days
             seven_days_ago = date.today() - timedelta(days=7)
             if attendance_date < seven_days_ago:
                 errors.append({
-                    "error": "You can only mark attendance for the last 7 days.",
+                    "error": f"You can only mark attendance for the last 7 days for {staff_name}.",
                     "office_staff_id": office_staff_id
                 })
                 continue
@@ -754,7 +757,7 @@ class OfficeStaffAttendanceView(ModelViewSet):
             # Duplicate attendance check
             if OfficeStaffAttendance.objects.filter(office_staff=staff, date=attendance_date).exists():
                 errors.append({
-                    "message": "Attendance already marked",
+                    "message": f"Attendance already marked for {staff_name} on {attendance_date}.",
                     "office_staff_id": office_staff_id,
                     "date": str(attendance_date)
                 })

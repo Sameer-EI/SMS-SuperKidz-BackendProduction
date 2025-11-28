@@ -497,12 +497,9 @@ class TeacherAttendanceAPIView(APIView):
         data = request.data
 
         # Detect input type
-        if isinstance(data, dict):
-            records = [data]  # single attendance record
-        elif isinstance(data, list):
-            records = data    # multiple attendance records
-        else:
-            return Response({'error': 'Invalid input format. Must be dict or list.'}, status=status.HTTP_400_BAD_REQUEST)
+        records = [data] if isinstance(data, dict) else data if isinstance(data, list) else None
+        if records is None:
+            return Response({'error': 'Invalid input format. Must be dict or list.'}, status=400)
 
         results = []
         errors = []
@@ -517,55 +514,67 @@ class TeacherAttendanceAPIView(APIView):
                 errors.append({'error': 'teacher_id and status are required', 'data': record})
                 continue
 
-            # Parse date
             try:
                 attendance_date = datetime.strptime(date_str, "%Y-%m-%d").date()
             except ValueError:
-                errors.append({'error': f'Invalid date format in record: {date_str}'})
+                errors.append({'error': f'Invalid date format: {date_str}'})
+                continue
+
+            # Teacher existence check
+            try:
+                teacher = Teacher.objects.get(id=teacher_id)
+                teacher_name = teacher.user.get_full_name()
+            except Teacher.DoesNotExist:
+                errors.append({'error': f"Teacher not found (ID: {teacher_id})"})
                 continue
 
             # Future date validation
             if attendance_date > date.today():
-                errors.append({'error': 'Cannot mark attendance for a future date.', 'teacher_id': teacher_id})
-                continue
-
-            # Sunday check
-            if attendance_date.weekday() == 6:
-                errors.append({'error': 'Cannot mark attendance on Sunday.', 'teacher_id': teacher_id})
-                continue
-
-            # School holiday validation
-            if SchoolHoliday.objects.filter(date=attendance_date).exists():
-                errors.append({'error': 'Cannot mark attendance on a school holiday.', 'teacher_id': teacher_id})
-                continue
-
-            # General holiday validation
-            if Holiday.objects.filter(start_date__lte=attendance_date, end_date__gte=attendance_date).exists():
-                errors.append({'error': 'Cannot mark attendance on a general holiday.', 'teacher_id': teacher_id})
-                continue
-
-            # Only within the last 7 days
-            seven_days_ago = date.today() - timedelta(days=7)
-            if attendance_date < seven_days_ago:
                 errors.append({
-                    "error": "You can only mark attendance for the last 7 days.",
+                    "error": f"Cannot mark attendance for a future date for {teacher_name} on {attendance_date}.",
                     "teacher_id": teacher_id
                 })
                 continue
 
-            # Check teacher existence
-            try:
-                teacher = Teacher.objects.get(id=teacher_id)
-            except Teacher.DoesNotExist:
-                errors.append({'error': f'Teacher not found (ID: {teacher_id})'})
+            # Sunday check
+            if attendance_date.weekday() == 6:
+                errors.append({
+                    "error": f"Cannot mark attendance on Sunday for {teacher_name} on {attendance_date}.",
+                    "teacher_id": teacher_id
+                })
+                continue
+
+            # School holiday validation
+            if SchoolHoliday.objects.filter(date=attendance_date).exists():
+                errors.append({
+                    "error": f"Cannot mark attendance on a school holiday for {teacher_name} on {attendance_date}.",
+                    "teacher_id": teacher_id
+                })
+                continue
+
+            # General holiday validation
+            if Holiday.objects.filter(start_date__lte=attendance_date, end_date__gte=attendance_date).exists():
+                errors.append({
+                    "error": f"Cannot mark attendance on a holiday for {teacher_name} on {attendance_date}.",
+                    "teacher_id": teacher_id
+                })
+                continue
+
+            # Only within last 7 days
+            seven_days_ago = date.today() - timedelta(days=7)
+            if attendance_date < seven_days_ago:
+                errors.append({
+                    "error": f"You can only mark attendance for the last 7 days for {teacher_name}.",
+                    "teacher_id": teacher_id
+                })
                 continue
 
             # Already marked check
             if TeacherAttendance.objects.filter(teacher=teacher, date=attendance_date).exists():
                 errors.append({
-                    'message': 'Attendance already marked',
-                    'teacher_id': teacher_id,
-                    'date': str(attendance_date)
+                    "message": f"Attendance already marked for {teacher_name} on {attendance_date}.",
+                    "teacher_id": teacher_id,
+                    "date": str(attendance_date)
                 })
                 continue
 
@@ -577,24 +586,24 @@ class TeacherAttendanceAPIView(APIView):
             )
 
             results.append({
-                'message': 'Attendance marked successfully',
-                'teacher_id': teacher_id,
-                'status': status_input,
-                'date': str(attendance_date)
+                "message": "Attendance marked successfully",
+                "teacher_id": teacher_id,
+                "teacher_name": teacher_name,
+                "status": status_input,
+                "date": str(attendance_date)
             })
 
-        # Response formatting
         response_data = {
-            'success_count': len(results),
-            'error_count': len(errors),
-            'details': {
-                'marked': results,
-                'skipped': errors
+            "success_count": len(results),
+            "error_count": len(errors),
+            "details": {
+                "marked": results,
+                "skipped": errors
             }
         }
 
-        return Response(response_data, status=status.HTTP_200_OK if results else status.HTTP_400_BAD_REQUEST)
-   
+        return Response(response_data, status=200 if results else 400)
+  
 class TeacherAttendanceGetAPI(APIView):
     def get(self, request, id=None):
         if id:  
@@ -614,27 +623,71 @@ class TeacherAttendanceGetAPI(APIView):
     def put(self, request, id):
         try:
             attendance_record = TeacherAttendance.objects.get(id=id)
-            print(id)
         except TeacherAttendance.DoesNotExist:
             return Response({'error': 'Attendance record not found'}, status=404)
-        
-        # Holiday check
-        attendance_date_str = request.data.get('date', str(attendance_record.date))
-        attendance_date = datetime.strptime(attendance_date_str, "%Y-%m-%d").date()
 
-        if Holiday.objects.filter(start_date__lte=attendance_date, end_date__gte=attendance_date).exists():
+        teacher = attendance_record.teacher
+        teacher_name = teacher.user.get_full_name()
+
+        # New date (or fallback to existing)
+        attendance_date_str = request.data.get('date', str(attendance_record.date))
+
+        try:
+            attendance_date = datetime.strptime(attendance_date_str, "%Y-%m-%d").date()
+        except ValueError:
             return Response({
-                'error': 'Cannot update attendance on a holiday',
-                'date': attendance_date
+                'error': f'Invalid date format for {teacher_name}: {attendance_date_str}'
             }, status=400)
 
+        # Future date
+        if attendance_date > date.today():
+            return Response({
+                'error': f'Cannot update attendance for a future date for {teacher_name} on {attendance_date}.'
+            }, status=400)
+
+        # Sunday
+        if attendance_date.weekday() == 6:
+            return Response({
+                'error': f'Cannot update attendance on Sunday for {teacher_name} on {attendance_date}.'
+            }, status=400)
+
+        # School holiday
+        if SchoolHoliday.objects.filter(date=attendance_date).exists():
+            return Response({
+                'error': f'Cannot update attendance on a school holiday for {teacher_name} on {attendance_date}.'
+            }, status=400)
+
+        # General holiday
+        if Holiday.objects.filter(start_date__lte=attendance_date, end_date__gte=attendance_date).exists():
+            return Response({
+                'error': f'Cannot update attendance on a holiday for {teacher_name} on {attendance_date}.'
+            }, status=400)
+
+        # Past 7 days
+        seven_days_ago = date.today() - timedelta(days=7)
+        if attendance_date < seven_days_ago:
+            return Response({
+                'error': f'You can only update attendance within the last 7 days for {teacher_name}.'
+            }, status=400)
+
+        # Duplicate date check (if date changed)
+        if attendance_record.date != attendance_date:
+            if TeacherAttendance.objects.filter(teacher=teacher, date=attendance_date).exists():
+                return Response({
+                    'error': f'Attendance already exists for {teacher_name} on {attendance_date}.'
+                }, status=400)
+
         serializer = TeacherAttendanceSerializer(attendance_record, data=request.data, partial=True)
-        print(request.data)
-       
 
         if serializer.is_valid():
             serializer.save()
-            return Response(serializer.data)
+            return Response({
+                "message": "Attendance updated successfully",
+                "teacher_id": teacher.id,
+                "teacher_name": teacher_name,
+                "updated_data": serializer.data
+            })
+
         return Response(serializer.errors, status=400)
 
 class SubstituteAssignmentView(APIView):
