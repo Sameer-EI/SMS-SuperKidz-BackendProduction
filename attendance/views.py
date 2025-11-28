@@ -669,10 +669,12 @@ single:
   "status": "Present"}
 
 multiple:
-  {"date": "2025-11-12",
-  "Present": [1, 2],
-  "Absent": [3],
-  "Leave": [4, 5]}
+
+  [
+  {"office_staff_id": 1, "status": "Present", "date": "2025-11-12"},
+  {"office_staff_id": 2, "status": "Absent", "date": "2025-11-12"}
+  ]
+
 
 '''
 

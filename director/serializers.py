@@ -1977,24 +1977,51 @@ class ExamPaperSerializer(serializers.ModelSerializer):
         return value
         
     def validate_total_marks(self, value):
-        if value < 0:
-            raise serializers.ValidationError("Total marks cannot be negative.")
-
-        exam_type_id = self.initial_data.get("exam_type")
-        if not exam_type_id:
+        # allow empty
+        if value in [None, ""]:
             return value
 
-        try:
-            exam_type = ExamType.objects.get(id=exam_type_id)
-        except ExamType.DoesNotExist:
+        # Clean whitespace
+        value = value.strip()
+
+        # If it's numeric, apply numeric rules
+        if value.replace(".", "", 1).isdigit():  # supports floats too
+            marks = float(value)
+
+            if marks < 0:
+                raise serializers.ValidationError("Total marks cannot be negative.")
+
+            exam_type_id = self.initial_data.get("exam_type")
+            if exam_type_id:
+                try:
+                    exam_type = ExamType.objects.get(id=exam_type_id)
+                    name = exam_type.name.upper()
+
+                    if name in ["ORAL EXAM", "WRITTEN EXAM"] and marks > 100:
+                        raise serializers.ValidationError("Total marks cannot exceed 100.")
+
+                except ExamType.DoesNotExist:
+                    pass
+
+            return value  # number is valid
+
+        # If not numeric → treat it as grade (A, B, C, A+, etc.)
+        # allow anything reasonable: letters + symbols
+        allowed_chars = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ+- ")
+
+        # grade like A+, B, AB, etc.
+        if all(ch.upper() in allowed_chars for ch in value):
             return value
 
-        name = exam_type.name.upper()
-        if name in ["ORAL EXAM","WRITTEN EXAM"] and value > 100:
-            raise serializers.ValidationError("Total marks cannot exceed 100.")
-        
+        # everything else nope
+        raise serializers.ValidationError(
+            "Total marks should be either a number or a valid grade."
+        )
+
+    def validate_paper_code(self, value):
+        if not value:
+            return None
         return value
-
 
     def create(self, validated_data):
         subject = validated_data["subject"]
