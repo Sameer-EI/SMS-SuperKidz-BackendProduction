@@ -2049,41 +2049,32 @@ class ExamPaperSerializer(serializers.ModelSerializer):
             )
         return super().create(validated_data)
 
-
-
     def update(self, instance, validated_data):
-        subject = validated_data.get("subject", instance.subject)
-        teacher = validated_data.get("teacher", instance.teacher)
-        paper_code = validated_data.get("paper_code", instance.paper_code)
-        total_marks = validated_data.get("total_marks", instance.total_marks)
-        year_level = validated_data.get("year_level", instance.year_level)
-        term = validated_data.get("term", instance.term)
-        exam_type = validated_data.get("exam_type", instance.exam_type)
 
+        if "subject" in validated_data:
+            instance.subject = validated_data["subject"]
 
-        if ExamPaper.objects.exclude(id=instance.id).filter(
-            subject=subject,
-            exam_type=instance.exam_type,
-            term=instance.term,
-            year_level=instance.year_level
-        ).exists():
-            raise serializers.ValidationError(
-                f"Exam paper already exists for this subject, class, year, and exam type."
-            )
+        if "teacher" in validated_data:
+            instance.teacher = validated_data["teacher"]
 
-        if paper_code:
-            if ExamPaper.objects.exclude(id=instance.id).filter(paper_code=paper_code).exists():
-                raise serializers.ValidationError(
-                    {"paper_code": ["exam paper with this paper code already exists."]}
-                )
+        if "paper_code" in validated_data:
+            instance.paper_code = validated_data["paper_code"]
 
-        instance.subject = subject
-        instance.teacher = teacher
-        instance.paper_code = paper_code
-        instance.total_marks = total_marks
-        instance.year_level = year_level
-        instance.term = term
-        instance.exam_type = exam_type
+        if "total_marks" in validated_data:
+            instance.total_marks = validated_data["total_marks"]
+
+        if "year_level" in validated_data:
+            instance.year_level = validated_data["year_level"]
+
+        if "term" in validated_data:
+            instance.term = validated_data["term"]
+
+        if "exam_type" in validated_data:
+            instance.exam_type = validated_data["exam_type"]
+
+        # handle uploaded file
+        if "uploaded_file" in validated_data:
+            instance.uploaded_file = validated_data["uploaded_file"]
 
         instance.save()
         return instance
