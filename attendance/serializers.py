@@ -68,9 +68,20 @@ class SchoolEventSerializer(serializers.ModelSerializer):
 
 
 class OfficeStaffAttendanceSerializer(serializers.ModelSerializer):
+    office_staff_name = serializers.SerializerMethodField()
+
     class Meta:
         model = OfficeStaffAttendance
-        fields = '__all__'
+        fields = [
+            'id',
+            'date',
+            'status',
+            'office_staff',
+            'office_staff_name',
+        ]
+
+    def get_office_staff_name(self, obj):
+        return obj.office_staff.user.get_full_name() if obj.office_staff else None
 
     
 
