@@ -620,7 +620,7 @@ class ExamPaper(models.Model):
     uploaded_file = models.FileField(upload_to=ExamPaper_folder, blank=True, null=True)#
 
     class Meta:
-        unique_together = ['exam_type', 'subject', 'year_level']
+        unique_together = ['exam_type', 'subject', 'year_level','term']
     
 
     def __str__(self):
