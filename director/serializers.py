@@ -1933,6 +1933,11 @@ class ExamPaperSerializer(serializers.ModelSerializer):
             'year_level': {'write_only': True},
             'teacher': {'write_only': True},
             'paper_code': {'required': False, 'allow_null': True, 'allow_blank': True},
+            'non_field_errors': {
+                'error_messages': {
+                    'unique': "An exam paper with this exam type, subject, class, and term- already exists."
+                }
+            }
         }
 
     def get_teacher_name(self, obj):
