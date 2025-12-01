@@ -771,7 +771,7 @@ class OfficeStaffAttendanceView(ModelViewSet):
             )
 
             results.append({
-                "message": "Attendance marked successfully",
+                "message": f"Attendance marked successfully for {staff_name}",
                 "office_staff_id": office_staff_id,
                 "status": status_input,
                 "date": str(attendance_date)
