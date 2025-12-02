@@ -4218,222 +4218,113 @@ def get_current_school_year():
     ).first()
 
 class SchoolExpenseView(viewsets.ModelViewSet):
-    queryset = SchoolExpense.objects.all()
+    queryset = SchoolExpense.objects.select_related("payment", "category", "school_year")
     serializer_class = SchoolExpenseSerializer
     permission_classes = [IsAuthenticated, ExpensePermission]
-
-    # def get_queryset(self):
-    #     current_year = get_current_school_year()
-    #     if current_year:
-    #         return SchoolExpense.objects.filter(school_year=current_year)
-    #     return SchoolExpense.objects.none()
-
-    def get_queryset(self):
-        queryset = SchoolExpense.objects.all()
-
-        search = self.request.query_params.get("search")
-        if search:
-            queryset = queryset.filter(
-                Q(category__name__icontains=search) |
-                Q(description__icontains=search) |
-                Q(payment_method__icontains=search) |
-                Q(status__icontains=search) |
-                Q(created_by__first_name__icontains=search) |
-                Q(created_by__last_name__icontains=search) |
-                Q(expense_date__icontains=search)
-            )
-
-
-        school_year_id = self.request.query_params.get("school_year")
-        if school_year_id:
-            queryset = queryset.filter(school_year_id=school_year_id)
-        else:
-            current_year = get_current_school_year()
-            if current_year:
-                queryset = queryset.filter(school_year=current_year)
-
-        category_id = self.request.query_params.get("category")
-        if category_id:
-            queryset = queryset.filter(category_id=category_id)
-        month = self.request.query_params.get("month")
-        if month:
-            queryset = queryset.filter(expense_date__month=month)
-
-        status = self.request.query_params.get("status")
-        if status:
-            queryset = queryset.filter(status=status)
-
-        return queryset
-
-
-
-    def list(self, request):
-        current_year = get_current_school_year()
-        queryset = self.get_queryset()
-        serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
-
-        # return Response({
-        #     "school_year": current_year.year_name if current_year else None,
-        #     "data": serializer.data
-        # })
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
 
-        user = request.user
+        payment_method = serializer.validated_data["payment"]["payment_method"]
+        payment_data = serializer.validated_data["payment"]
 
-        payment_method = serializer.validated_data.get("payment_method")   # safe access
-        amount = serializer.validated_data.get("amount")
+        # Save payment
+        payment = Payment.objects.create(**payment_data)
 
-        if not payment_method:
-            return Response({"error": "payment_method is required"}, status=status.HTTP_400_BAD_REQUEST)
-
+        # Create expense
         expense = SchoolExpense.objects.create(
             category=serializer.validated_data["category"],
             school_year=serializer.validated_data["school_year"],
-            amount=amount,
             description=serializer.validated_data.get("description"),
-            expense_date=serializer.validated_data["expense_date"],
-            payment_method=payment_method,
-            created_by=user,
-            attachment=serializer.validated_data.get("attachment")
-
-        )
-
-        if payment_method == "cash":
-            expense.status = "approved"
-            expense.approved_by = user
-            expense.save()
-            # return Response(SchoolExpenseSerializer(expense).data, status=status.HTTP_201_CREATED)
-            return Response({"message": "Expense approved successfully","expense": SchoolExpenseSerializer(expense).data}, status=status.HTTP_201_CREATED)
-
-
-        elif payment_method == "cheque":
-            expense.status = "pending"  
-            expense.save()
-            # return Response(SchoolExpenseSerializer(expense).data, status=status.HTTP_201_CREATED)
-            return Response({"message": "Expense created and pending approval","expense": SchoolExpenseSerializer(expense).data}, status=status.HTTP_201_CREATED)
-
-
-        elif payment_method == "online":
-            # Call initiate_expense_payment function
-            # return self.initiate_expense_payment(request, expense=expense)
-            return Response({"message": "Use initiate-expense-payment API for online payments."},
-                        status=status.HTTP_400_BAD_REQUEST)
-
-        return Response({"error": "Invalid payment method"}, status=status.HTTP_400_BAD_REQUEST)
-    
-    
-    @action(detail=False, methods=["post"], url_path="initiate-expense-payment")
-    def initiate_expense_payment(self, request):
-        serializer = self.get_serializer(data=request.data, context={"request": request})
-        serializer.is_valid(raise_exception=True)
-
-        expense = serializer.save(
             created_by=request.user,
-            status="pending",
-            payment_method="online"
+            payment=payment,
         )
+
+        # OG LOGIC REBUILT PROPERLY
+        if payment_method.lower() == "cash":
+            payment.status = "Success"
+            expense.approved_by = request.user
+            payment.save()
+            expense.save()
+            return Response({
+                "message": "Expense approved successfully (Cash)",
+                "expense": SchoolExpenseSerializer(expense).data
+            })
+
+        elif payment_method.lower() == "cheque":
+            # Cheque always stays pending until verified
+            payment.status = "Pending"
+            payment.save()
+            return Response({
+                "message": "Cheque expense created, pending approval",
+                "expense": SchoolExpenseSerializer(expense).data
+            })
+
+        elif payment_method.lower() == "online":
+            return Response({
+                "message": "Use initiate-expense-payment API",
+                "expense_id": expense.id,
+                "payment_id": payment.id,
+                "expense": SchoolExpenseSerializer(expense).data
+            }, status=400)
+
+        return Response({"error": "Invalid payment method"}, status=400)
+
+    @action(detail=True, methods=["post"], url_path="initiate-online-payment")
+    def initiate_expense_payment(self, request, pk=None):
+        expense = self.get_object()
+        payment = expense.payment
 
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-        razorpay_order = client.order.create({
-            "amount": int(expense.amount * 100),
+
+        order = client.order.create({
+            "amount": int(payment.amount * 100),
             "currency": "INR",
+            "receipt": f"EXP-{expense.id}",
             "payment_capture": "1",
-            "receipt": f"EXP-{expense.id}"
         })
 
-        expense.razorpay_order_id = razorpay_order["id"]
-        expense.save()
+        payment.remarks = f"OrderID: {order['id']}"
+        payment.save()
 
         return Response({
             "expense_id": expense.id,
-            "razorpay_order_id": razorpay_order["id"],
+            "payment_id": payment.id,
+            "razorpay_order_id": order["id"],
             "razorpay_key": settings.RAZORPAY_KEY_ID,
-            "amount": str(expense.amount),
-            "currency": "INR",
-            "status": expense.status
-        }, status=status.HTTP_201_CREATED)
+            "amount": str(payment.amount),
+        })
 
+    @action(detail=True, methods=["post"], url_path="confirm-online-payment")
+    def confirm_expense_payment(self, request, pk=None):
+        expense = self.get_object()
+        payment = expense.payment
 
-
-    @action(detail=False, methods=["post"], url_path="confirm-expense-payment")
-    def confirm_expense_payment(self, request):
         data = request.data
-        required = ["razorpay_payment_id", "razorpay_order_id", "razorpay_signature", "expense_id"]
-        missing = [f for f in required if f not in data]
-        if missing:
-            return Response({"error": f"Missing fields: {', '.join(missing)}"}, status=400)
-
-        try:
-            expense = SchoolExpense.objects.get(id=data["expense_id"], razorpay_order_id=data["razorpay_order_id"])
-        except SchoolExpense.DoesNotExist:
-            return Response({"error": "Expense not found or order mismatch"}, status=404)
 
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-        try:
-            client.utility.verify_payment_signature({
-                "razorpay_order_id": data["razorpay_order_id"],
-                "razorpay_payment_id": data["razorpay_payment_id"],
-                "razorpay_signature": data["razorpay_signature"],
-            })
-        except razorpay.errors.SignatureVerificationError:
-            return Response({"error": "Payment verification failed."}, status=400)
 
-        expense.status = "approved"
-        expense.razorpay_payment_id = data["razorpay_payment_id"]
-        expense.razorpay_signature = data["razorpay_signature"]
+        client.utility.verify_payment_signature({
+            "razorpay_order_id": data["razorpay_order_id"],
+            "razorpay_payment_id": data["razorpay_payment_id"],
+            "razorpay_signature": data["razorpay_signature"]
+        })
+
+        # After success
+        payment.status = "Success"
+        payment.payment_method = "Online"
+        payment.save()
+
         expense.approved_by = request.user
         expense.save()
 
         return Response({
-            "message": "Expense payment confirmed",
+            "message": "Payment confirmed!",
             "expense": SchoolExpenseSerializer(expense).data
         })
 
 
-    def update(self, request, *args, **kwargs):
-        partial = kwargs.pop("partial", False)
-        instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data, partial=partial)
-        serializer.is_valid(raise_exception=True)
-
-        roles = [role.name.lower() for role in request.user.role.all()]
-
-        if "status" in serializer.validated_data:
-            if "director" not in roles:
-                return Response(
-                    {"error": "Only Director can update expense status."},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-
-            instance.status = serializer.validated_data["status"]
-            instance.approved_by = request.user
-            serializer.validated_data.pop("status", None)
-
-
-        # Update remaining fields
-        for attr, value in serializer.validated_data.items():
-            setattr(instance, attr, value)
-        instance.save()
-
-        return Response({
-            "message": "Expense updated successfully",
-            "data": self.get_serializer(instance).data
-        })
-
-
-
-    def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
-        instance.delete()
-        return Response(
-            {"message": "Expense deleted successfully"},
-            status=status.HTTP_200_OK
-        )
-    
 
 
 class EmployeeView(viewsets.ModelViewSet):
@@ -4546,17 +4437,6 @@ class EmployeeView(viewsets.ModelViewSet):
             return Response({"message": "Employee updated successfully", "data": serializer.data})
         return Response(serializer.errors, status=400)
 
-
-    # @action(detail=False, methods=["delete"], url_path="delete_emp")
-    # def delete_emp(self, request):
-    #     try:
-    #         employee = Employee.objects.get(id=request.data.get("id"))
-    #         employee.delete()
-    #         return Response({"message": "Employee deleted successfully."})
-    #     except Employee.DoesNotExist:
-    #         return Response({"error": "Employee not found"}, status=404)
-
-
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         instance.delete()
@@ -4564,6 +4444,8 @@ class EmployeeView(viewsets.ModelViewSet):
             {"message": "Employee deleted successfully"},
             status=status.HTTP_200_OK
         )
+
+
 
 class EmployeeSalaryView(viewsets.ModelViewSet):
     queryset = EmployeeSalary.objects.all()
@@ -4575,7 +4457,8 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
         user = self.request.user
         queryset = EmployeeSalary.objects.all()
 
-        if hasattr(user, "employee"):
+        roles = [r.name.lower() for r in user.role.all()]
+        if hasattr(user, "employee") and "director" not in roles:
             queryset = queryset.filter(user=user.employee)
 
         school_year_id = self.request.query_params.get("school_year")
@@ -4593,8 +4476,6 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
             queryset = queryset.filter(status=status)
 
         return queryset
-
-
 
 
     def create(self, request, *args, **kwargs):
@@ -4798,31 +4679,7 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
             "salaries": EmployeeSalarySerializer(created_salaries, many=True).data
         })
 
-    # def update(self, request, *args, **kwargs):
-    #     partial = kwargs.pop("partial", False)
-    #     instance = self.get_object()
-    #     serializer = self.get_serializer(instance, data=request.data, partial=partial)
-    #     serializer.is_valid(raise_exception=True)
-
-    #     roles = [role.name.lower() for role in request.user.role.all()]
-
-    #     if "status" in serializer.validated_data:
-    #         if "director" not in roles:
-    #             return Response({"error": "Only Director can update salary status."}, status=status.HTTP_403_FORBIDDEN)
-
-    #         instance.status = serializer.validated_data["status"]
-    #         instance.paid_by = request.user
-    #         serializer.validated_data.pop("status", None)
-
-    #     # Update remaining fields
-    #     for attr, value in serializer.validated_data.items():
-    #         setattr(instance, attr, value)
-    #     instance.save()
-
-    #     return Response({
-    #         "message": "Salary updated successfully",
-    #         "data": self.get_serializer(instance).data
-    #     })
+    
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop("partial", False)
         instance = self.get_object()
@@ -4833,10 +4690,10 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
         roles = [role.name.lower() for role in request_user.role.all()]
 
         # Allowed fields to update
-        allowed_fields = ["remarks", "payment_date", "status"]
+        allowed_fields = ["remarks", "payment_date", "status", "cheque_number", ]
 
         # Check restricted fields
-        restricted_fields = ["employees", "months", "deductions", "bonus", "payment_method", "cheque_number", "fund_account_id"]
+        restricted_fields = ["employees", "months", "deductions", "bonus", "payment_method","fund_account_id"]
         for field in restricted_fields:
             if field in serializer.validated_data:
                 return Response(
