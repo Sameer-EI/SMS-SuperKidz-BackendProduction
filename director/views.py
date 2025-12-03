@@ -4223,6 +4223,155 @@ class SchoolExpenseView(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, ExpensePermission]
 
     def create(self, request, *args, **kwargs):
+        data = request.data.copy()
+
+        # # ---------------------------------------------------------
+        # # 1. SALARY CATEGORY CHECK
+        # # ---------------------------------------------------------
+        # salary_category = ExpenseCategory.objects.filter(name__iexact="salary").first()
+        # selected_category = ExpenseCategory.objects.get(id=data.get("category"))
+
+        # if selected_category == salary_category:
+        #     # Disallow amount or payment in request
+        #     if "payment" in data or "amount" in data:
+        #         return Response({
+        #             "error": "You cannot provide amount or payment for Salary category. It is auto-calculated."
+        #         }, status=400)
+
+        #     # ------------------------------
+        #     # Auto-create Salary Expense
+        #     # ------------------------------
+        #     school_year = data.get("school_year")
+        #     current_month = timezone.now().strftime("%Y-%m")
+
+        #     # Get all employee salaries
+        #     salaries = EmployeeSalary.objects.filter(
+        #         month=current_month,
+        #         school_year=school_year
+        #     )
+
+        #     if not salaries.exists():
+        #         return Response({
+        #             "error": f"No employee salary records found for {current_month}."
+        #         }, status=400)
+
+        #     # Total salary amount
+        #     total_salary = salaries.aggregate(
+        #         total=models.Sum("net_amount")
+        #     )["total"]
+
+        #     # payment summary 
+        #     payment = {
+        #         "amount"==total_salary,
+        #         "payment_method"=="Auto",
+        #         "status"=="Success",
+        #         "payment_date"==timezone.now()
+        #     }
+
+        #     # Create salary expense
+        #     expense = SchoolExpense.objects.create(
+        #         category=salary_category,
+        #         school_year_id=school_year,
+        #         description=data.get("description") or f"Salary Expense for {current_month}",
+        #         payment=payment,
+        #         created_by=request.user,
+        #         approved_by=request.user
+        #     )
+
+        #     return Response({
+        #         "message": "Salary expense created automatically",
+        #         "expense": SchoolExpenseSerializer(expense).data
+        #     }, status=201)
+
+
+        # ---------------------------------------------------------
+        # 1. SALARY CATEGORY CHECK
+        # ---------------------------------------------------------
+        salary_category = ExpenseCategory.objects.filter(name__iexact="salary").first()
+        selected_category = ExpenseCategory.objects.get(id=data.get("category"))
+
+        if selected_category == salary_category:
+
+            # Disallow manual amount / payment input
+            if "payment" in data or "amount" in data:
+                return Response({
+                    "error": "You cannot provide amount or payment for Salary category. It is auto-calculated."
+                }, status=400)
+
+            # -----------------------------------------------------
+            # Detect month properly (your months are names)
+            # -----------------------------------------------------
+            MONTH_MAP = {
+                1: "January", 2: "February", 3: "March",
+                4: "April", 5: "May", 6: "June",
+                7: "July", 8: "August", 9: "September",
+                10: "October", 11: "November", 12: "December",
+            }
+
+            current_month = MONTH_MAP[timezone.now().month]
+            school_year = data.get("school_year")
+
+            # -----------------------------------------------------
+            # Fetch all employee salaries for that month
+            # -----------------------------------------------------
+            salaries = EmployeeSalary.objects.filter(
+                month=current_month,
+                school_year=school_year
+            )
+
+            if not salaries.exists():
+                return Response({
+                    "error": f"No employee salary records found for {current_month}."
+                }, status=400)
+
+            # -----------------------------------------------------
+            # Salary totals
+            # -----------------------------------------------------
+            total_salary = salaries.aggregate(total=models.Sum("net_amount"))["total"] or 0
+
+            cash_paid = salaries.filter(payment__payment_method="Cash").aggregate(
+                t=models.Sum("net_amount")
+            )["t"] or 0
+
+            cheque_paid = salaries.filter(payment__payment_method="Cheque").aggregate(
+                t=models.Sum("net_amount")
+            )["t"] or 0
+
+            online_paid = salaries.filter(payment__payment_method="Online").aggregate(
+                t=models.Sum("net_amount")
+            )["t"] or 0
+
+            # -----------------------------------------------------
+            # Create salary expense (NO PAYMENT OBJECT)
+            # -----------------------------------------------------
+            expense = SchoolExpense.objects.create(
+                category=salary_category,
+                school_year_id=school_year,
+                description=data.get("description") or f"Salary Expense for {current_month}",
+                created_by=request.user,
+                approved_by=request.user,
+                payment=None,            #  no Payment model used
+            )
+
+            return Response({
+                "message": "Salary expense created automatically",
+                "month": current_month,
+                "expense_id": expense.id,
+
+                "summary": {
+                    "total_salary": total_salary,
+                    "cash": cash_paid,
+                    "cheque": cheque_paid,
+                    "online": online_paid
+                },
+
+                "expense": SchoolExpenseSerializer(expense).data
+            }, status=201)
+
+
+        # ---------------------------------------------------------
+        # 2. NORMAL EXPENSE CREATION 
+        # ---------------------------------------------------------
         serializer = self.get_serializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
 
@@ -4253,7 +4402,6 @@ class SchoolExpenseView(viewsets.ModelViewSet):
             })
 
         elif payment_method.lower() == "cheque":
-            # Cheque always stays pending until verified
             payment.status = "Pending"
             payment.save()
             return Response({
@@ -4262,67 +4410,119 @@ class SchoolExpenseView(viewsets.ModelViewSet):
             })
 
         elif payment_method.lower() == "online":
+            payment.status = "Success"
+            expense.approved_by = request.user
+            payment.save()
+            expense.save()
             return Response({
-                "message": "Use initiate-expense-payment API",
-                "expense_id": expense.id,
-                "payment_id": payment.id,
+                "message": "Expense approved successfully (Online)",
                 "expense": SchoolExpenseSerializer(expense).data
-            }, status=400)
+            })
 
         return Response({"error": "Invalid payment method"}, status=400)
 
-    @action(detail=True, methods=["post"], url_path="initiate-online-payment")
-    def initiate_expense_payment(self, request, pk=None):
-        expense = self.get_object()
-        payment = expense.payment
 
-        client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+    # def create(self, request, *args, **kwargs):
+    #     serializer = self.get_serializer(data=request.data, context={"request": request})
+    #     serializer.is_valid(raise_exception=True)
 
-        order = client.order.create({
-            "amount": int(payment.amount * 100),
-            "currency": "INR",
-            "receipt": f"EXP-{expense.id}",
-            "payment_capture": "1",
-        })
+    #     payment_method = serializer.validated_data["payment"]["payment_method"]
+    #     payment_data = serializer.validated_data["payment"]
 
-        payment.remarks = f"OrderID: {order['id']}"
-        payment.save()
+    #     # Save payment
+    #     payment = Payment.objects.create(**payment_data)
 
-        return Response({
-            "expense_id": expense.id,
-            "payment_id": payment.id,
-            "razorpay_order_id": order["id"],
-            "razorpay_key": settings.RAZORPAY_KEY_ID,
-            "amount": str(payment.amount),
-        })
+    #     # Create expense
+    #     expense = SchoolExpense.objects.create(
+    #         category=serializer.validated_data["category"],
+    #         school_year=serializer.validated_data["school_year"],
+    #         description=serializer.validated_data.get("description"),
+    #         created_by=request.user,
+    #         payment=payment,
+    #     )
 
-    @action(detail=True, methods=["post"], url_path="confirm-online-payment")
-    def confirm_expense_payment(self, request, pk=None):
-        expense = self.get_object()
-        payment = expense.payment
+    #     # OG LOGIC REBUILT PROPERLY
+    #     if payment_method.lower() == "cash":
+    #         payment.status = "Success"
+    #         expense.approved_by = request.user
+    #         payment.save()
+    #         expense.save()
+    #         return Response({
+    #             "message": "Expense approved successfully (Cash)",
+    #             "expense": SchoolExpenseSerializer(expense).data
+    #         })
 
-        data = request.data
+    #     elif payment_method.lower() == "cheque":
+    #         # Cheque always stays pending until verified
+    #         payment.status = "Pending"
+    #         payment.save()
+    #         return Response({
+    #             "message": "Cheque expense created, pending approval",
+    #             "expense": SchoolExpenseSerializer(expense).data
+    #         })
 
-        client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+    #     elif payment_method.lower() == "online":
+    #         return Response({
+    #             "message": "Use initiate-expense-payment API",
+    #             "expense_id": expense.id,
+    #             "payment_id": payment.id,
+    #             "expense": SchoolExpenseSerializer(expense).data
+    #         }, status=400)
+        
+    #     return Response({"error": "Invalid payment method"}, status=400)
 
-        client.utility.verify_payment_signature({
-            "razorpay_order_id": data["razorpay_order_id"],
-            "razorpay_payment_id": data["razorpay_payment_id"],
-            "razorpay_signature": data["razorpay_signature"]
-        })
+    # @action(detail=True, methods=["post"], url_path="initiate-online-payment")
+    # def initiate_expense_payment(self, request, pk=None):
+    #     expense = self.get_object()
+    #     payment = expense.payment
 
-        # After success
-        payment.status = "Success"
-        payment.payment_method = "Online"
-        payment.save()
+    #     client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
 
-        expense.approved_by = request.user
-        expense.save()
+    #     order = client.order.create({
+    #         "amount": int(payment.amount * 100),
+    #         "currency": "INR",
+    #         "receipt": f"EXP-{expense.id}",
+    #         "payment_capture": "1",
+    #     })
 
-        return Response({
-            "message": "Payment confirmed!",
-            "expense": SchoolExpenseSerializer(expense).data
-        })
+    #     payment.remarks = f"OrderID: {order['id']}"
+    #     payment.save()
+
+    #     return Response({
+    #         "expense_id": expense.id,
+    #         "payment_id": payment.id,
+    #         "razorpay_order_id": order["id"],
+    #         "razorpay_key": settings.RAZORPAY_KEY_ID,
+    #         "amount": str(payment.amount),
+    #     })
+
+    # @action(detail=True, methods=["post"], url_path="confirm-online-payment")
+    # def confirm_expense_payment(self, request, pk=None):
+    #     expense = self.get_object()
+    #     payment = expense.payment
+
+    #     data = request.data
+
+    #     client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+
+    #     client.utility.verify_payment_signature({
+    #         "razorpay_order_id": data["razorpay_order_id"],
+    #         "razorpay_payment_id": data["razorpay_payment_id"],
+    #         "razorpay_signature": data["razorpay_signature"]
+    #     })
+
+    #     # After success
+    #     payment.status = "Success"
+    #     payment.payment_method = "Online"
+    #     payment.save()
+
+    #     expense.approved_by = request.user
+    #     expense.save()
+
+    #     return Response({
+    #         "message": "Payment confirmed!",
+    #         "expense": SchoolExpenseSerializer(expense).data
+    #     })
 
 
 
