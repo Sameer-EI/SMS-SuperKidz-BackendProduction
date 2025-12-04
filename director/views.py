@@ -4225,68 +4225,19 @@ class SchoolExpenseView(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         data = request.data.copy()
 
-        # # ---------------------------------------------------------
-        # # 1. SALARY CATEGORY CHECK
-        # # ---------------------------------------------------------
-        # salary_category = ExpenseCategory.objects.filter(name__iexact="salary").first()
-        # selected_category = ExpenseCategory.objects.get(id=data.get("category"))
-
-        # if selected_category == salary_category:
-        #     # Disallow amount or payment in request
-        #     if "payment" in data or "amount" in data:
-        #         return Response({
-        #             "error": "You cannot provide amount or payment for Salary category. It is auto-calculated."
-        #         }, status=400)
-
-        #     # ------------------------------
-        #     # Auto-create Salary Expense
-        #     # ------------------------------
-        #     school_year = data.get("school_year")
-        #     current_month = timezone.now().strftime("%Y-%m")
-
-        #     # Get all employee salaries
-        #     salaries = EmployeeSalary.objects.filter(
-        #         month=current_month,
-        #         school_year=school_year
-        #     )
-
-        #     if not salaries.exists():
-        #         return Response({
-        #             "error": f"No employee salary records found for {current_month}."
-        #         }, status=400)
-
-        #     # Total salary amount
-        #     total_salary = salaries.aggregate(
-        #         total=models.Sum("net_amount")
-        #     )["total"]
-
-        #     # payment summary 
-        #     payment = {
-        #         "amount"==total_salary,
-        #         "payment_method"=="Auto",
-        #         "status"=="Success",
-        #         "payment_date"==timezone.now()
-        #     }
-
-        #     # Create salary expense
-        #     expense = SchoolExpense.objects.create(
-        #         category=salary_category,
-        #         school_year_id=school_year,
-        #         description=data.get("description") or f"Salary Expense for {current_month}",
-        #         payment=payment,
-        #         created_by=request.user,
-        #         approved_by=request.user
-        #     )
-
-        #     return Response({
-        #         "message": "Salary expense created automatically",
-        #         "expense": SchoolExpenseSerializer(expense).data
-        #     }, status=201)
-
-
         # ---------------------------------------------------------
         # 1. SALARY CATEGORY CHECK
         # ---------------------------------------------------------
+
+        #payload for salary expense
+        '''
+        {
+            "school_year": 1,
+            "category": 2,
+            "month": "December"
+        }
+        '''
+
         salary_category = ExpenseCategory.objects.filter(name__iexact="salary").first()
         selected_category = ExpenseCategory.objects.get(id=data.get("category"))
 
@@ -4299,30 +4250,28 @@ class SchoolExpenseView(viewsets.ModelViewSet):
                 }, status=400)
 
             # -----------------------------------------------------
-            # Detect month properly (your months are names)
+            # choose month
             # -----------------------------------------------------
-            MONTH_MAP = {
-                1: "January", 2: "February", 3: "March",
-                4: "April", 5: "May", 6: "June",
-                7: "July", 8: "August", 9: "September",
-                10: "October", 11: "November", 12: "December",
-            }
+            requested_month = data.get("month")
 
-            current_month = MONTH_MAP[timezone.now().month]
+            MONTHS = [
+                "January", "February", "March", "April", "May", "June",
+                "July", "August", "September", "October", "November", "December"
+            ]
+
+            if not requested_month or requested_month not in MONTHS:
+                return Response({
+                    "error": "Invalid or missing month. Allowed: " + ", ".join(MONTHS)
+                }, status=400)
+
+            current_month = requested_month
             school_year = data.get("school_year")
 
-            # -----------------------------------------------------
-            # Fetch all employee salaries for that month
-            # -----------------------------------------------------
+            # Fetch employee salaries
             salaries = EmployeeSalary.objects.filter(
                 month=current_month,
                 school_year=school_year
             )
-
-            if not salaries.exists():
-                return Response({
-                    "error": f"No employee salary records found for {current_month}."
-                }, status=400)
 
             # -----------------------------------------------------
             # Salary totals
@@ -4341,13 +4290,22 @@ class SchoolExpenseView(viewsets.ModelViewSet):
                 t=models.Sum("net_amount")
             )["t"] or 0
 
+            summary_text = (
+                f"Salary Expense for {current_month}\n\n"
+                f"Total Salary: ₹{total_salary}\n"
+                f"Cash Paid: ₹{cash_paid}\n"
+                f"Cheque Paid: ₹{cheque_paid}\n"
+                f"Online Paid: ₹{online_paid}"
+            )
+
+
             # -----------------------------------------------------
             # Create salary expense (NO PAYMENT OBJECT)
             # -----------------------------------------------------
             expense = SchoolExpense.objects.create(
                 category=salary_category,
                 school_year_id=school_year,
-                description=data.get("description") or f"Salary Expense for {current_month}",
+                description=summary_text,
                 created_by=request.user,
                 approved_by=request.user,
                 payment=None,            #  no Payment model used
@@ -4357,14 +4315,6 @@ class SchoolExpenseView(viewsets.ModelViewSet):
                 "message": "Salary expense created automatically",
                 "month": current_month,
                 "expense_id": expense.id,
-
-                "summary": {
-                    "total_salary": total_salary,
-                    "cash": cash_paid,
-                    "cheque": cheque_paid,
-                    "online": online_paid
-                },
-
                 "expense": SchoolExpenseSerializer(expense).data
             }, status=201)
 
@@ -4420,6 +4370,58 @@ class SchoolExpenseView(viewsets.ModelViewSet):
             })
 
         return Response({"error": "Invalid payment method"}, status=400)
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        data = request.data.copy()
+
+        # Detect SALARY category expense
+        if instance.category.name.lower() == "salary":
+
+            # which month? from PATCH body OR fallback from description
+            month = data.get("month")
+
+            if not month:
+                # fallback: extract month from description
+                first_line = instance.description.split("\n")[0]  # "Salary Expense for December"
+                month = first_line.replace("Salary Expense for ", "").strip()
+
+            # Fetch updated salary records
+            salaries = EmployeeSalary.objects.filter(
+                month=month,
+                school_year=instance.school_year
+            )
+
+            if not salaries.exists():
+                return Response({
+                    "error": f"No employee salary records found for {month}."
+                }, status=400)
+
+            total_salary = salaries.aggregate(total=models.Sum("net_amount"))["total"] or 0
+            cash_paid = salaries.filter(payment__payment_method="Cash").aggregate(t=models.Sum("net_amount"))["t"] or 0
+            cheque_paid = salaries.filter(payment__payment_method="Cheque").aggregate(t=models.Sum("net_amount"))["t"] or 0
+            online_paid = salaries.filter(payment__payment_method="Online").aggregate(t=models.Sum("net_amount"))["t"] or 0
+
+            # rebuild description
+            new_summary = (
+                f"Salary Expense for {month}\n\n"
+                f"Total Salary: ₹{total_salary}\n"
+                f"Cash Paid: ₹{cash_paid}\n"
+                f"Cheque Paid: ₹{cheque_paid}\n"
+                f"Online Paid: ₹{online_paid}"
+            )
+
+            instance.description = new_summary
+            instance.save()
+
+            return Response({
+                "message": "Salary expense refreshed with latest records.",
+                "expense": SchoolExpenseSerializer(instance).data
+            })
+
+        # NORMAL EXPENSE update
+        return super().update(request, *args, **kwargs)
+
 
 
     # def create(self, request, *args, **kwargs):
