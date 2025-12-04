@@ -5402,7 +5402,7 @@ class StudentFeeView(viewsets.ModelViewSet):
 
 
             today = timezone.now().date()
-            if (student_fee.fee_structure.fee_type.lower() == "tution fee"
+            if (student_fee.fee_structure.fee_type.lower() == "tuition fee"
                     and student_fee.due_date
                     and today > student_fee.due_date):
                 student_fee.penalty_amount = Decimal("25.00")
