@@ -4677,7 +4677,7 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
         if employee_id:
             queryset = queryset.filter(user_id=employee_id)
         if status:
-            queryset = queryset.filter(status=status)
+            queryset = queryset.filter(payment__status=status)
 
         return queryset
 
@@ -4702,8 +4702,8 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
         if payment_method == "Cash" and cheque_number:
             return Response({"error": "Cheque number should not be provided for cash payment."}, status=400)
 
-        if payment_method == "Online" and not fund_account_id:
-            return Response({"error": "Fund account ID is required for online payment."}, status=400)
+        # if payment_method == "Online" and not fund_account_id:
+        #     return Response({"error": "Fund account ID is required for online payment."}, status=400)
 
 
         if payment_method == "Cheque" and cheque_number:
@@ -4721,7 +4721,10 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
             return Response({"error": "No employees found with the given IDs."}, status=400)
 
         today = date.today()
-        current_year = SchoolYear.objects.get(start_date__lte=today, end_date__gte=today)
+        current_year = SchoolYear.objects.filter(start_date__lte=today, end_date__gte=today).first()
+
+        if not current_year:
+            return Response({"error": "No active SchoolYear found for today."}, status=400)
 
         created_salaries = []
         total_amount = 0
