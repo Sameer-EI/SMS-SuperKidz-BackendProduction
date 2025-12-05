@@ -4223,6 +4223,105 @@ class SchoolExpenseView(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, ExpensePermission]
 
     def create(self, request, *args, **kwargs):
+        data = request.data.copy()
+
+        # ---------------------------------------------------------
+        # 1. SALARY CATEGORY CHECK
+        # ---------------------------------------------------------
+
+        #payload for salary expense
+        '''
+        {
+            "school_year": 1,
+            "category": 2,
+            "month": "December"
+        }
+        '''
+
+        salary_category = ExpenseCategory.objects.filter(name__iexact="salary").first()
+        selected_category = ExpenseCategory.objects.get(id=data.get("category"))
+
+        if selected_category == salary_category:
+
+            # Disallow manual amount / payment input
+            if "payment" in data or "amount" in data:
+                return Response({
+                    "error": "You cannot provide amount or payment for Salary category. It is auto-calculated."
+                }, status=400)
+
+            # -----------------------------------------------------
+            # choose month
+            # -----------------------------------------------------
+            requested_month = data.get("month")
+
+            MONTHS = [
+                "January", "February", "March", "April", "May", "June",
+                "July", "August", "September", "October", "November", "December"
+            ]
+
+            if not requested_month or requested_month not in MONTHS:
+                return Response({
+                    "error": "Invalid or missing month. Allowed: " + ", ".join(MONTHS)
+                }, status=400)
+
+            current_month = requested_month
+            school_year = data.get("school_year")
+
+            # Fetch employee salaries
+            salaries = EmployeeSalary.objects.filter(
+                month=current_month,
+                school_year=school_year
+            )
+
+            # -----------------------------------------------------
+            # Salary totals
+            # -----------------------------------------------------
+            total_salary = salaries.aggregate(total=models.Sum("net_amount"))["total"] or 0
+
+            cash_paid = salaries.filter(payment__payment_method="Cash").aggregate(
+                t=models.Sum("net_amount")
+            )["t"] or 0
+
+            cheque_paid = salaries.filter(payment__payment_method="Cheque").aggregate(
+                t=models.Sum("net_amount")
+            )["t"] or 0
+
+            online_paid = salaries.filter(payment__payment_method="Online").aggregate(
+                t=models.Sum("net_amount")
+            )["t"] or 0
+
+            summary_text = (
+                f"Salary Expense for {current_month}\n\n"
+                f"Total Salary: ₹{total_salary}\n"
+                f"Cash Paid: ₹{cash_paid}\n"
+                f"Cheque Paid: ₹{cheque_paid}\n"
+                f"Online Paid: ₹{online_paid}"
+            )
+
+
+            # -----------------------------------------------------
+            # Create salary expense (NO PAYMENT OBJECT)
+            # -----------------------------------------------------
+            expense = SchoolExpense.objects.create(
+                category=salary_category,
+                school_year_id=school_year,
+                description=summary_text,
+                created_by=request.user,
+                approved_by=request.user,
+                payment=None,            #  no Payment model used
+            )
+
+            return Response({
+                "message": "Salary expense created automatically",
+                "month": current_month,
+                "expense_id": expense.id,
+                "expense": SchoolExpenseSerializer(expense).data
+            }, status=201)
+
+
+        # ---------------------------------------------------------
+        # 2. NORMAL EXPENSE CREATION 
+        # ---------------------------------------------------------
         serializer = self.get_serializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
 
@@ -4253,7 +4352,6 @@ class SchoolExpenseView(viewsets.ModelViewSet):
             })
 
         elif payment_method.lower() == "cheque":
-            # Cheque always stays pending until verified
             payment.status = "Pending"
             payment.save()
             return Response({
@@ -4262,67 +4360,171 @@ class SchoolExpenseView(viewsets.ModelViewSet):
             })
 
         elif payment_method.lower() == "online":
+            payment.status = "Success"
+            expense.approved_by = request.user
+            payment.save()
+            expense.save()
             return Response({
-                "message": "Use initiate-expense-payment API",
-                "expense_id": expense.id,
-                "payment_id": payment.id,
+                "message": "Expense approved successfully (Online)",
                 "expense": SchoolExpenseSerializer(expense).data
-            }, status=400)
+            })
 
         return Response({"error": "Invalid payment method"}, status=400)
 
-    @action(detail=True, methods=["post"], url_path="initiate-online-payment")
-    def initiate_expense_payment(self, request, pk=None):
-        expense = self.get_object()
-        payment = expense.payment
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        data = request.data.copy()
 
-        client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+        # Detect SALARY category expense
+        if instance.category.name.lower() == "salary":
 
-        order = client.order.create({
-            "amount": int(payment.amount * 100),
-            "currency": "INR",
-            "receipt": f"EXP-{expense.id}",
-            "payment_capture": "1",
-        })
+            # which month? from PATCH body OR fallback from description
+            month = data.get("month")
 
-        payment.remarks = f"OrderID: {order['id']}"
-        payment.save()
+            if not month:
+                # fallback: extract month from description
+                first_line = instance.description.split("\n")[0]  # "Salary Expense for December"
+                month = first_line.replace("Salary Expense for ", "").strip()
 
-        return Response({
-            "expense_id": expense.id,
-            "payment_id": payment.id,
-            "razorpay_order_id": order["id"],
-            "razorpay_key": settings.RAZORPAY_KEY_ID,
-            "amount": str(payment.amount),
-        })
+            # Fetch updated salary records
+            salaries = EmployeeSalary.objects.filter(
+                month=month,
+                school_year=instance.school_year
+            )
 
-    @action(detail=True, methods=["post"], url_path="confirm-online-payment")
-    def confirm_expense_payment(self, request, pk=None):
-        expense = self.get_object()
-        payment = expense.payment
+            if not salaries.exists():
+                return Response({
+                    "error": f"No employee salary records found for {month}."
+                }, status=400)
 
-        data = request.data
+            total_salary = salaries.aggregate(total=models.Sum("net_amount"))["total"] or 0
+            cash_paid = salaries.filter(payment__payment_method="Cash").aggregate(t=models.Sum("net_amount"))["t"] or 0
+            cheque_paid = salaries.filter(payment__payment_method="Cheque").aggregate(t=models.Sum("net_amount"))["t"] or 0
+            online_paid = salaries.filter(payment__payment_method="Online").aggregate(t=models.Sum("net_amount"))["t"] or 0
 
-        client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+            # rebuild description
+            new_summary = (
+                f"Salary Expense for {month}\n\n"
+                f"Total Salary: ₹{total_salary}\n"
+                f"Cash Paid: ₹{cash_paid}\n"
+                f"Cheque Paid: ₹{cheque_paid}\n"
+                f"Online Paid: ₹{online_paid}"
+            )
 
-        client.utility.verify_payment_signature({
-            "razorpay_order_id": data["razorpay_order_id"],
-            "razorpay_payment_id": data["razorpay_payment_id"],
-            "razorpay_signature": data["razorpay_signature"]
-        })
+            instance.description = new_summary
+            instance.save()
 
-        # After success
-        payment.status = "Success"
-        payment.payment_method = "Online"
-        payment.save()
+            return Response({
+                "message": "Salary expense refreshed with latest records.",
+                "expense": SchoolExpenseSerializer(instance).data
+            })
 
-        expense.approved_by = request.user
-        expense.save()
+        # NORMAL EXPENSE update
+        return super().update(request, *args, **kwargs)
 
-        return Response({
-            "message": "Payment confirmed!",
-            "expense": SchoolExpenseSerializer(expense).data
-        })
+
+
+    # def create(self, request, *args, **kwargs):
+    #     serializer = self.get_serializer(data=request.data, context={"request": request})
+    #     serializer.is_valid(raise_exception=True)
+
+    #     payment_method = serializer.validated_data["payment"]["payment_method"]
+    #     payment_data = serializer.validated_data["payment"]
+
+    #     # Save payment
+    #     payment = Payment.objects.create(**payment_data)
+
+    #     # Create expense
+    #     expense = SchoolExpense.objects.create(
+    #         category=serializer.validated_data["category"],
+    #         school_year=serializer.validated_data["school_year"],
+    #         description=serializer.validated_data.get("description"),
+    #         created_by=request.user,
+    #         payment=payment,
+    #     )
+
+    #     # OG LOGIC REBUILT PROPERLY
+    #     if payment_method.lower() == "cash":
+    #         payment.status = "Success"
+    #         expense.approved_by = request.user
+    #         payment.save()
+    #         expense.save()
+    #         return Response({
+    #             "message": "Expense approved successfully (Cash)",
+    #             "expense": SchoolExpenseSerializer(expense).data
+    #         })
+
+    #     elif payment_method.lower() == "cheque":
+    #         # Cheque always stays pending until verified
+    #         payment.status = "Pending"
+    #         payment.save()
+    #         return Response({
+    #             "message": "Cheque expense created, pending approval",
+    #             "expense": SchoolExpenseSerializer(expense).data
+    #         })
+
+    #     elif payment_method.lower() == "online":
+    #         return Response({
+    #             "message": "Use initiate-expense-payment API",
+    #             "expense_id": expense.id,
+    #             "payment_id": payment.id,
+    #             "expense": SchoolExpenseSerializer(expense).data
+    #         }, status=400)
+        
+    #     return Response({"error": "Invalid payment method"}, status=400)
+
+    # @action(detail=True, methods=["post"], url_path="initiate-online-payment")
+    # def initiate_expense_payment(self, request, pk=None):
+    #     expense = self.get_object()
+    #     payment = expense.payment
+
+    #     client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+
+    #     order = client.order.create({
+    #         "amount": int(payment.amount * 100),
+    #         "currency": "INR",
+    #         "receipt": f"EXP-{expense.id}",
+    #         "payment_capture": "1",
+    #     })
+
+    #     payment.remarks = f"OrderID: {order['id']}"
+    #     payment.save()
+
+    #     return Response({
+    #         "expense_id": expense.id,
+    #         "payment_id": payment.id,
+    #         "razorpay_order_id": order["id"],
+    #         "razorpay_key": settings.RAZORPAY_KEY_ID,
+    #         "amount": str(payment.amount),
+    #     })
+
+    # @action(detail=True, methods=["post"], url_path="confirm-online-payment")
+    # def confirm_expense_payment(self, request, pk=None):
+    #     expense = self.get_object()
+    #     payment = expense.payment
+
+    #     data = request.data
+
+    #     client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+
+    #     client.utility.verify_payment_signature({
+    #         "razorpay_order_id": data["razorpay_order_id"],
+    #         "razorpay_payment_id": data["razorpay_payment_id"],
+    #         "razorpay_signature": data["razorpay_signature"]
+    #     })
+
+    #     # After success
+    #     payment.status = "Success"
+    #     payment.payment_method = "Online"
+    #     payment.save()
+
+    #     expense.approved_by = request.user
+    #     expense.save()
+
+    #     return Response({
+    #         "message": "Payment confirmed!",
+    #         "expense": SchoolExpenseSerializer(expense).data
+    #     })
 
 
 
@@ -4460,6 +4662,8 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
         roles = [r.name.lower() for r in user.role.all()]
         if hasattr(user, "employee") and "director" not in roles:
             queryset = queryset.filter(user=user.employee)
+        # if hasattr(user, "employee"):
+        #     queryset = queryset.filter(user=user.employee)
 
         school_year_id = self.request.query_params.get("school_year")
         month = self.request.query_params.get("month")
@@ -4689,11 +4893,17 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
         request_user = request.user
         roles = [role.name.lower() for role in request_user.role.all()]
 
-        # Allowed fields to update
-        allowed_fields = ["remarks", "payment_date", "status", "cheque_number", ]
+        # EMPLOYEE SALARY fields allowed
+        salary_allowed = ["remarks"]
 
-        # Check restricted fields
-        restricted_fields = ["employees", "months", "deductions", "bonus", "payment_method","fund_account_id"]
+        # PAYMENT fields allowed
+        payment_allowed = ["payment_date", "status", "cheque_number"]
+
+        # Block fields that should never update
+        restricted_fields = [
+            "employees", "months", "deductions", "bonus",
+            "payment_method", "fund_account_id"
+        ]
         for field in restricted_fields:
             if field in serializer.validated_data:
                 return Response(
@@ -4701,20 +4911,34 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-        # Update status only if Director
-        if "status" in serializer.validated_data:
-            if "director" not in roles:
-                return Response(
-                    {"error": "Only Director can update salary status."},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            instance.status = serializer.validated_data.pop("status")
-            instance.paid_by = request_user
+        # ----- UPDATE EMPLOYEE SALARY FIELDS -----
+        for field in salary_allowed:
+            if field in serializer.validated_data:
+                setattr(instance, field, serializer.validated_data[field])
 
-        # Update other allowed fields
-        for attr in allowed_fields:
-            if attr in serializer.validated_data:
-                setattr(instance, attr, serializer.validated_data[attr])
+        # ----- UPDATE PAYMENT FIELDS -----
+        payment = instance.payment
+        if payment:
+
+            # Payment Status (Director Only)
+            if "status" in serializer.validated_data:
+                if "director" not in roles:
+                    return Response(
+                        {"error": "Only Director can update salary status."},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                payment.status = serializer.validated_data["status"]
+                instance.paid_by = request_user
+
+            # Payment Date
+            if "payment_date" in serializer.validated_data:
+                payment.payment_date = serializer.validated_data["payment_date"]
+
+            # Cheque Number
+            if "cheque_number" in serializer.validated_data:
+                payment.cheque_number = serializer.validated_data["cheque_number"]
+
+            payment.save()
 
         instance.save()
 
@@ -4722,7 +4946,7 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
             "message": "Salary updated successfully",
             "data": self.get_serializer(instance).data
         })
-        
+
 class IncomeCategoryView(viewsets.ModelViewSet):
     queryset = IncomeCategory.objects.all()
     serializer_class = IncomeCategorySerializer
@@ -5200,7 +5424,7 @@ class StudentFeeView(viewsets.ModelViewSet):
 
 
             today = timezone.now().date()
-            if (student_fee.fee_structure.fee_type.lower() == "tution fee"
+            if (student_fee.fee_structure.fee_type.lower() == "tuition fee"
                     and student_fee.due_date
                     and today > student_fee.due_date):
                 student_fee.penalty_amount = Decimal("25.00")
