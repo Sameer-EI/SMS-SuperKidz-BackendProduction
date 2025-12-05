@@ -1,0 +1,68 @@
+# =========================
+# Python
+# =========================
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+*.manifest
+*.spec
+migrations/
+# =========================
+# Virtual Environment
+# =========================
+myenv/
+venv/
+ENV/
+env/
+.env/
+
+# =========================
+# Logs
+# =========================
+*.log
+
+# =========================
+# IDE / Editor
+# =========================
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# =========================
+# OS Files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Python packaging
+# =========================
+pip-wheel-metadata/
+__pypackages__/
+
+# =========================
+# dotenv / environment files
+# =========================
+.env
+.env.* 
+
+# =========================
+# Jupyter Notebook checkpoints
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Misc
+# =========================
+# *.sqlite3
+*.db
+.env
+media/

@@ -1,0 +1,63 @@
+
+# Core
+django>=5.0
+djangorestframework
+
+# Auth & JWT
+djangorestframework-simplejwt
+
+# Utilities
+django-cors-headers
+django-filter
+
+# Media & Images
+pillow
+
+# Payments
+razorpay
+
+# Database (agar PostgreSQL use karte ho)
+psycopg2-binary
+
+# Optional: for environment variables
+python-decouple
+
+asgiref==3.8.1
+certifi==2025.6.15
+channels==4.2.2
+channels_redis==4.2.1
+charset-normalizer==3.4.2
+Django==5.2.1
+django-cors-headers==4.7.0
+django-filter==25.1
+djangorestframework==3.16.0
+djangorestframework_simplejwt==5.5.0
+idna==3.10
+msgpack==1.1.1
+mysqlclient==2.2.7
+pillow==11.2.1
+PyJWT==2.9.0
+PyMySQL==1.1.1
+python-decouple==3.8
+python-dotenv==1.1.0
+razorpay==1.4.2
+redis==6.2.0
+requests==2.32.4
+setuptools==80.9.0
+sqlparse==0.5.3
+tzdata==2025.2
+urllib3==2.4.0
+twilio>=8.13.0,<9.0.0
+
+holidays>=0.28,<0.29
+
+
+
+# pip freeze > requirements.txt
+
+# pip install -r requirements.txt
+
+# pip install -r requirements.txt   # install project dependencies
+# type requirements.txt             # lisy required dependencies
+# .\.venv\Scripts\activate          # activate environment
+
