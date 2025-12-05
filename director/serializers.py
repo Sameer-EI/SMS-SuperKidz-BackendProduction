@@ -2846,11 +2846,11 @@ class StudentFeeSerializer(serializers.ModelSerializer):
                 student_fee.applied_discount = True
                 student_fee.save()
 
-            if fee_structure.fee_type.lower() == "tuition fee" and not student_fee.penalty_applied:
+            if fee_structure.fee_type.lower() == "tuition fee" and student_fee.penalty_amount == 0:# and not student_fee.penalty_applied:
                 today = timezone.now().date()
                 if student_fee.due_date and today > student_fee.due_date:
                     student_fee.penalty_amount = Decimal("25.00")
-                    student_fee.penalty_applied = True
+                    # student_fee.penalty_applied = True
                 else:
                     student_fee.penalty_amount = Decimal("0.00")
 
