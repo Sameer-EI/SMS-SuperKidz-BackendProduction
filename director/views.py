@@ -4662,6 +4662,8 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
         roles = [r.name.lower() for r in user.role.all()]
         if hasattr(user, "employee") and "director" not in roles:
             queryset = queryset.filter(user=user.employee)
+        # if hasattr(user, "employee"):
+        #     queryset = queryset.filter(user=user.employee)
 
         school_year_id = self.request.query_params.get("school_year")
         month = self.request.query_params.get("month")
@@ -4891,11 +4893,17 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
         request_user = request.user
         roles = [role.name.lower() for role in request_user.role.all()]
 
-        # Allowed fields to update
-        allowed_fields = ["remarks", "payment_date", "status", "cheque_number", ]
+        # EMPLOYEE SALARY fields allowed
+        salary_allowed = ["remarks"]
 
-        # Check restricted fields
-        restricted_fields = ["employees", "months", "deductions", "bonus", "payment_method","fund_account_id"]
+        # PAYMENT fields allowed
+        payment_allowed = ["payment_date", "status", "cheque_number"]
+
+        # Block fields that should never update
+        restricted_fields = [
+            "employees", "months", "deductions", "bonus",
+            "payment_method", "fund_account_id"
+        ]
         for field in restricted_fields:
             if field in serializer.validated_data:
                 return Response(
@@ -4903,20 +4911,34 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-        # Update status only if Director
-        if "status" in serializer.validated_data:
-            if "director" not in roles:
-                return Response(
-                    {"error": "Only Director can update salary status."},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            instance.status = serializer.validated_data.pop("status")
-            instance.paid_by = request_user
+        # ----- UPDATE EMPLOYEE SALARY FIELDS -----
+        for field in salary_allowed:
+            if field in serializer.validated_data:
+                setattr(instance, field, serializer.validated_data[field])
 
-        # Update other allowed fields
-        for attr in allowed_fields:
-            if attr in serializer.validated_data:
-                setattr(instance, attr, serializer.validated_data[attr])
+        # ----- UPDATE PAYMENT FIELDS -----
+        payment = instance.payment
+        if payment:
+
+            # Payment Status (Director Only)
+            if "status" in serializer.validated_data:
+                if "director" not in roles:
+                    return Response(
+                        {"error": "Only Director can update salary status."},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                payment.status = serializer.validated_data["status"]
+                instance.paid_by = request_user
+
+            # Payment Date
+            if "payment_date" in serializer.validated_data:
+                payment.payment_date = serializer.validated_data["payment_date"]
+
+            # Cheque Number
+            if "cheque_number" in serializer.validated_data:
+                payment.cheque_number = serializer.validated_data["cheque_number"]
+
+            payment.save()
 
         instance.save()
 
@@ -4924,7 +4946,7 @@ class EmployeeSalaryView(viewsets.ModelViewSet):
             "message": "Salary updated successfully",
             "data": self.get_serializer(instance).data
         })
-        
+
 class IncomeCategoryView(viewsets.ModelViewSet):
     queryset = IncomeCategory.objects.all()
     serializer_class = IncomeCategorySerializer
