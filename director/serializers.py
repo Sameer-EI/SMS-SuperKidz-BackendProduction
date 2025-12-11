@@ -1474,7 +1474,7 @@ class DocumentSerializer(serializers.ModelSerializer):
                 student = Student.objects.get(id=student_id)
                 rep["student_id"] = student.id
                 rep["student_name"] = f"{student.user.first_name} {student.user.last_name}"
-                studentyearlevel = StudentYearLevel.objects.get(student_id = student_id)
+                studentyearlevel = StudentYearLevel.objects.filter(student_id=student_id).first()
                 rep["year_level"] = studentyearlevel.level.level_name
                 rep["scholar_number"] = student.scholar_number
 
