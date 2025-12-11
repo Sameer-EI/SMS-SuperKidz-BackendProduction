@@ -5257,46 +5257,6 @@ class StudentFeeView(viewsets.ModelViewSet):
             student_data["due_amount"] = str(student_data["due_amount"])
 
         return Response({"unpaid_fees": list(grouped.values())})
-  
-
-
-    @action(detail=False, methods=["get"], url_path="overdue_fees")
-    def overdue_fees(self, request):
-        student_year_id = request.query_params.get("student_year_id")
-        month = request.query_params.get("month")  # month as integer (1-12)
-        school_year_id = request.query_params.get("school_year_id")
-        today = timezone.now().date()
-
-        queryset = StudentFee.objects.filter(due_amount__gt=0, due_date__lt=today)
-
-        if student_year_id:
-            queryset = queryset.filter(student_year_id=student_year_id)
-        
-        if school_year_id:
-            queryset = queryset.filter(school_year_id=school_year_id)
-        
-        if month:
-            queryset = queryset.filter(due_date__month=int(month))
-
-        if student_year_id:
-            queryset = queryset.filter(student_year_id=student_year_id)
-        
-        if school_year_id:
-            queryset = queryset.filter(school_year_id=school_year_id)
-
-        response_data = []
-        for fee in queryset:
-            response_data.append({
-                "fee_id": fee.id,
-                "fee_type": getattr(fee.fee_structure, 'fee_type', 'N/A'),
-                "original_amount": str(fee.original_amount),
-                "paid_amount": str(fee.paid_amount),
-                "due_amount": str(fee.due_amount),
-                "status": "Overdue",
-                "due_date": fee.due_date.strftime("%Y-%m-%d")
-            })
-
-        return Response(response_data, status=drf_status.HTTP_200_OK)
 
 
     @action(detail=False, methods=["get"], url_path="overdue_fees")
@@ -5365,10 +5325,13 @@ class StudentFeeView(viewsets.ModelViewSet):
         except StudentYearLevel.DoesNotExist:
             return Response({"error": "StudentYearLevel not found."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Generate a single receipt number for all fees submitted in this request
+        receipt_number = f"RCP-{timezone.now().strftime('%Y%m%d')}-{str(student_year.student.id).zfill(5)}-{int(timezone.now().timestamp()) % 10000}"
+
+
         discounts = AppliedFeeDiscount.objects.filter(student=student_year)
 
         for fee_data in fees_data:
-            # amount_paid = Decimal(str(fee_data.get("amount", "0.00")))
             amount_paid = Decimal(str(fee_data.get("amount", "0.00"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
             serializer = self.get_serializer(
@@ -5385,7 +5348,7 @@ class StudentFeeView(viewsets.ModelViewSet):
 
             due_date_str = fee_data.get("due_date")
             if due_date_str:
-                student_fee.due_date = datetime.datetime.strptime(due_date_str, "%Y-%m-%d").date()
+                student_fee.due_date = datetime.strptime(due_date_str, "%Y-%m-%d").date()
             else:
                 month = int(fee_data.get("month"))
                 year = timezone.now().year
@@ -5399,16 +5362,30 @@ class StudentFeeView(viewsets.ModelViewSet):
             discount_amount = Decimal(str(discount_obj.discount_amount if discount_obj else 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             student_fee.applied_discount = bool(discount_obj)
 
-            max_payable = (student_fee.original_amount - discount_amount - student_fee.paid_amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            # --- APPLY PENALTY BEFORE VALIDATION ---
+            today = timezone.now().date()
+            if student_fee.fee_structure.fee_type.lower() == "tuition fee" and student_fee.due_date and today > student_fee.due_date:
+                student_fee.penalty_amount = Decimal("25.00")
+            else:
+                student_fee.penalty_amount = Decimal("0.00")
+
+            # --- CALCULATE max_payable INCLUDING penalty ---
+            max_payable = (
+                student_fee.original_amount
+                - discount_amount
+                - student_fee.paid_amount
+                + student_fee.penalty_amount
+            ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
             if max_payable < 0:
                 max_payable = Decimal("0.00")
 
+            # --- VALIDATION USING CORRECT max_payable ---
             if amount_paid > max_payable:
                 return Response(
                     {"error": f"Amount cannot exceed due amount after discount: {max_payable}"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-
 
             FeePayment.objects.create(
                 student_fee=student_fee,
@@ -5434,7 +5411,6 @@ class StudentFeeView(viewsets.ModelViewSet):
             else:
                 student_fee.penalty_amount = Decimal("0.00")
 
-            # student_fee.due_amount = max(student_fee.original_amount - student_fee.paid_amount - discount_amount + student_fee.penalty_amount, Decimal("0.00"))
 
             student_fee.due_amount = max(
                 student_fee.original_amount - student_fee.paid_amount - discount_amount + student_fee.penalty_amount,
@@ -5444,7 +5420,6 @@ class StudentFeeView(viewsets.ModelViewSet):
             if payment_mode == "online":
                 student_fee.status = "pending"
             else:
-                student_fee.due_amount = student_fee.original_amount - student_fee.paid_amount + student_fee.penalty_amount
                 if student_fee.due_amount <= 0:
                     student_fee.status = "paid"
                 elif student_fee.paid_amount > 0:
@@ -5452,6 +5427,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                 else:
                     student_fee.status = "pending"
 
+            student_fee.receipt_number = receipt_number
             student_fee.save()
 
             total_amount += amount_paid
@@ -5460,13 +5436,83 @@ class StudentFeeView(viewsets.ModelViewSet):
         if payment_mode == "online":
             return self.initiate_payment(request)
 
-        output_serializer = self.get_serializer(created_records, many=True)
-        return Response({
-            "message": f"{len(created_records)} fee records submitted successfully!",
-            "total_amount_paid": total_amount,
+        
+        # # Get admission to fetch class_section
+        # admission = Admission.objects.filter(student=student_year.student).first()
+        # class_section = admission.class_section if admission else "N/A"
+
+        # Build fees_submitted array with detailed info for each fee
+        fees_submitted = []
+        for student_fee in created_records:
+            discount_for_fee = AppliedFeeDiscount.objects.filter(
+                student=student_year,
+                fee_type=student_fee.fee_structure
+            ).values_list('discount_amount', flat=True).first() or Decimal("0.00")
+            
+            month_num = student_fee.month
+            if month_num and isinstance(month_num, int) and 1 <= month_num <= 12:
+                month_name = calendar.month_name[month_num]
+            else:
+                month_name = None
+
+            fee_entry = {
+                "fee_type": student_fee.fee_structure.fee_type,
+                "month": month_name,
+                "month_number": month_num,
+                "amount_paid": str(student_fee.paid_amount),
+                "original_amount": str(student_fee.original_amount),
+                "discount": str(discount_for_fee),
+                "due_amount": str(student_fee.due_amount),
+                "status": student_fee.status,
+                "student_fee_id": student_fee.id
+            }
+            fees_submitted.append(fee_entry)
+
+        # Build response - handle both bulk and single fee submission
+        response_data = {
+            "message": "Fee record(s) submitted successfully!",
+            "receipt_number": receipt_number,
+            "total_amount_paid": str(total_amount),
             "payment_mode": payment_mode,
-            "data": output_serializer.data
-        }, status=status.HTTP_201_CREATED)
+            "payment_date": timezone.now().strftime("%Y-%m-%d"),
+            "school_year" : student_year.year.year_name if student_year.year.year_name else "N/A",
+            "student": {
+                "id": student_year.student.id,
+                "name": f"{student_year.student.user.first_name} {student_year.student.user.last_name}",
+                "roll_number": student_year.student.roll_number or "N/A",
+                "father_name": student_year.student.father_name or "N/A",
+                "mother_name": student_year.student.mother_name or "N/A",
+                "scholar_number": student_year.student.scholar_number or "N/A",
+                "class_name": student_year.level.level_name or "N/A",
+                # "class_section": class_section
+            },
+            "guardian": {
+                "name": f"{student_year.student.user.first_name} {student_year.student.user.last_name}",  # Will be replaced below
+                "contact": "N/A"
+            },
+            "success": True
+        }
+
+        # Get guardian details if available
+        try:
+            student_guardian = StudentGuardian.objects.filter(student=student_year.student).first()
+            if student_guardian:
+                guardian = student_guardian.guardian
+                response_data["guardian"] = {
+                    "name": f"{guardian.user.first_name} {guardian.user.last_name}",
+                    "contact": guardian.phone_no or "N/A"
+                }
+        except:
+            pass
+
+        # If single fee, include fee details at top level for easier access
+        if len(fees_submitted) == 1:
+            response_data["fee"] = fees_submitted[0]
+        else:
+            # If bulk, include fees array
+            response_data["fees_submitted"] = fees_submitted
+
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
 
     @action(detail=False, methods=["get"], url_path="fee_history")
@@ -5579,12 +5625,39 @@ class StudentFeeView(viewsets.ModelViewSet):
                         month=month_number
                     ).aggregate(Sum('paid_amount'))['paid_amount__sum'] or Decimal('0.00')
 
-                if total_paid >= base_amount and base_amount > 0:
+
+                # Get student fee record for this month+fee_type
+                sf = paid_fees.filter(fee_structure=fee, month=month_number).first()
+
+                penalty = Decimal("0.00")
+
+                # Case 1: StudentFee exists → use its penalty
+                if sf:
+                    penalty = sf.penalty_amount
+
+                # Case 2: No StudentFee exists → calculate penalty based on due_date
+                else:
+                    # Tuition fee only
+                    if fee.fee_type.lower() == "tuition fee":
+                        # Compute expected due date = 15th of that month
+                        year = timezone.now().year
+                        expected_due_date = date(year, month_number, 15)
+
+                        if timezone.now().date() > expected_due_date:
+                            penalty = Decimal("25.00")
+
+
+                # --- REAL DUE CALCULATION ---
+                real_due = max(base_amount - total_paid + penalty, Decimal("0.00"))
+
+                # --- REAL STATUS ---
+                if real_due == 0 and total_paid > 0:
                     status_str = "Paid"
                 elif total_paid > 0:
                     status_str = "Partially Paid"
                 else:
                     status_str = "Pending"
+
 
                 month_data["fees"].append({
                     "fee_id": fee.id,
@@ -5592,7 +5665,9 @@ class StudentFeeView(viewsets.ModelViewSet):
                     "original_amount": str(base_amount),
                     "paid_amount": str(total_paid),
                     "status": status_str,
-                    "applied_discount": str(discount_total)
+                    "applied_discount": str(discount_total),
+                    "penalty": str(penalty),
+                    "due_amount": str(real_due),
                 })
 
             if month_data["fees"]:
@@ -5777,6 +5852,124 @@ class StudentFeeView(viewsets.ModelViewSet):
             ]
         }, status=201)
 
+
+    @action(detail=False, methods=["get"], url_path="grouped_receipts")
+    def grouped_receipts(self, request):
+        student_year_id = request.query_params.get("student_year_id")
+
+        # If student_year_id is provided → filter
+        # Else → return ALL receipts
+        fees_qs = StudentFee.objects.all()
+
+        if student_year_id:
+            fees_qs = fees_qs.filter(student_year_id=student_year_id)
+
+        fees = fees_qs.select_related(
+            "student_year__student__user",
+            "student_year__level",
+            "fee_structure"
+        ).order_by("-created_at")
+
+        if not fees.exists():
+            return Response({"receipts": []})
+
+        receipt_groups = {}
+        for fee in fees:
+            if fee.receipt_number not in receipt_groups:
+                receipt_groups[fee.receipt_number] = {
+                    "receipt_number": fee.receipt_number,
+                    "payment_date": fee.created_at.date().strftime("%Y-%m-%d"),
+                    "payment_mode": fee.payments.last().payment_method if fee.payments.exists() else None,
+                    "total_amount_paid": Decimal("0.00"),
+                    "school_year": fee.school_year.year_name if fee.school_year else "N/A",
+                    "student": {
+                        "id": fee.student_year.student.id,
+                        "student_year_id": fee.student_year.id,
+                        "name": f"{fee.student_year.student.user.first_name} {fee.student_year.student.user.last_name}",
+                        "roll_number": fee.student_year.student.roll_number,
+                        "father_name": fee.student_year.student.father_name,
+                        "mother_name": fee.student_year.student.mother_name,
+                        "scholar_number": fee.student_year.student.scholar_number,
+                        "class_name": fee.student_year.level.level_name,
+                        # "class_section": getattr(
+                        #     Admission.objects.filter(student=fee.student_year.student).first(),
+                        #     "class_section",
+                        #     "N/A"
+                        # ),
+                    },
+                    "guardian": {
+                        "name": "",
+                        "contact": ""
+                    },
+                    "fees_submitted": {}
+                }
+
+            # Fee breakdown
+            discount_value = AppliedFeeDiscount.objects.filter(
+                student=fee.student_year,
+                fee_type=fee.fee_structure
+            ).values_list("discount_amount", flat=True).first() or Decimal("0.00")
+            
+            # receipt_groups[fee.receipt_number]["fees_submitted"].append({
+            #     "fee_type": fee.fee_structure.fee_type,
+            #     "month": calendar.month_name[fee.month] if fee.month else None,
+            #     "month_number": fee.month,
+            #     "amount_paid": str(fee.paid_amount),
+            #     "original_amount": str(fee.original_amount),
+            #     "discount": str(discount_value),
+            #     "due_amount": str(fee.due_amount),
+            #     "status": fee.status,
+            #     "student_fee_id": fee.id,
+            # })
+
+            month_name = calendar.month_name[fee.month] if fee.month else "Unknown"
+
+            if month_name not in receipt_groups[fee.receipt_number]["fees_submitted"]:
+                receipt_groups[fee.receipt_number]["fees_submitted"][month_name] = []
+
+            receipt_groups[fee.receipt_number]["fees_submitted"][month_name].append({
+                "fee_type": fee.fee_structure.fee_type,
+                "amount_paid": str(fee.paid_amount),
+                "original_amount": str(fee.original_amount),
+                "discount": str(discount_value),
+                "due_amount": str(fee.due_amount),
+                "status": fee.status,
+                "student_fee_id": fee.id,
+            })
+
+
+            receipt_groups[fee.receipt_number]["total_amount_paid"] += fee.paid_amount
+
+        # Guardian details → only if receipts relate to 1 student
+        student = fees.first().student_year.student
+        guardian_obj = StudentGuardian.objects.filter(student=student).first()
+        if guardian_obj:
+            g = guardian_obj.guardian
+            for rec in receipt_groups.values():
+                rec["guardian"] = {
+                    "name": f"{g.user.first_name} {g.user.last_name}",
+                    "contact": g.phone_no or "N/A",
+                }
+
+        # Convert Decimal totals to strings for JSON
+        for rec in receipt_groups.values():
+            rec["total_amount_paid"] = str(rec["total_amount_paid"])
+
+        # ---- SORT MONTHS CHRONOLOGICALLY ----
+        month_order = list(calendar.month_name)  # ['', 'January', 'February', ...]
+
+        for rec in receipt_groups.values():
+            fees_submitted = rec["fees_submitted"]
+
+            rec["fees_submitted"] = {
+                month: fees_submitted[month]
+                for month in sorted(
+                    fees_submitted.keys(),
+                    key=lambda m: month_order.index(m) if m in month_order else 999
+                )
+            }
+
+        return Response(list(receipt_groups.values()), status=200)
 
 def student_display_name(student):
     return f"{student.user.first_name} {student.user.last_name}"
@@ -6094,7 +6287,7 @@ class AppliedFeeDiscountViewSet(viewsets.ModelViewSet):
 class DefaulterNotifyView(APIView):
     def get(self, request):
         year_level_id = request.query_params.get("year_level")
-        section = request.query_params.get("section")
+        # section = request.query_params.get("section")
 
         # Filter class + section
         admissions = Admission.objects.filter(is_active=True)
@@ -6102,8 +6295,8 @@ class DefaulterNotifyView(APIView):
         if year_level_id:
             admissions = admissions.filter(year_level_id=year_level_id)
 
-        if section:
-            admissions = admissions.filter(class_section=section)
+        # if section:
+        #     admissions = admissions.filter(class_section=section)
 
         # Fetch students belonging to filtered admissions
         student_year_ids = admissions.values_list("student__id", flat=True)

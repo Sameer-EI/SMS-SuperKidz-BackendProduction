@@ -2846,22 +2846,27 @@ class StudentFeeSerializer(serializers.ModelSerializer):
                 student_fee.applied_discount = True
                 student_fee.save()
 
-            if fee_structure.fee_type.lower() == "tuition fee" and student_fee.penalty_amount == 0:# and not student_fee.penalty_applied:
-                today = timezone.now().date()
-                if student_fee.due_date and today > student_fee.due_date:
-                    student_fee.penalty_amount = Decimal("25.00")
-                    # student_fee.penalty_applied = True
-                else:
-                    student_fee.penalty_amount = Decimal("0.00")
+            # --- NEW: Apply penalty BEFORE validating payment ---
+            today = timezone.now().date()
+            if fee_structure.fee_type.lower() == "tuition fee" and student_fee.due_date and today > student_fee.due_date:
+                student_fee.penalty_amount = Decimal("25.00")
+            else:
+                student_fee.penalty_amount = Decimal("0.00")
 
-            student_fee.due_amount = student_fee.original_amount - student_fee.paid_amount + student_fee.penalty_amount
+            # --- NEW: Calculate due including penalty ---
+            student_fee.due_amount = (
+                student_fee.original_amount 
+                - student_fee.paid_amount 
+                + student_fee.penalty_amount
+            )
 
+            # --- NEW: Validate payment WITH penalty included ---
             if amount_paid > student_fee.due_amount:
                 raise serializers.ValidationError(f"Amount cannot exceed due amount: {student_fee.due_amount}")
 
 
-            student_fee.paid_amount += amount_paid
-            student_fee.due_amount = student_fee.original_amount - student_fee.paid_amount + student_fee.penalty_amount
+            # student_fee.paid_amount += amount_paid
+            student_fee.due_amount = max(student_fee.original_amount - student_fee.paid_amount + student_fee.penalty_amount, Decimal("0.00"))
 
             payment_mode = request.data.get("payment_method", "").lower()
 
