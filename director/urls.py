@@ -30,11 +30,6 @@ router.register(r'subject',subjectView)
 router.register(r'Exam-Type',ExamTypeView)
 router.register(r'Exam-Paper',ExamPaperView)
 router.register(r'Exam-Schedule',ExamScheduleView)
-# router.register(r'Student-Marks',StudentMarksView,basename='student-marks')
-
-# router.register(r'personal-social-quality', PersonalSocialQualityView, basename='personal-social-quality')
-# router.register(r'personal-social-grades', PersonalSocialGradeViewSet, basename='personal-social-grades')
-# router.register(r'non-scholastic-grades', NonScholasticGradeViewSet, basename='non-scholastic')
 router.register(r'report-cards', ReportCardView, basename='report-cards')
 
 router.register(r'income-category', IncomeCategoryView, basename='income-category')
@@ -77,9 +72,9 @@ urlpatterns = [
     path("director-dashboard/", Director_Dashboard_Summary),
     path("teacher-dashboard/<int:id>/", teacher_dashboard),
     path("guardian-dashboard/<int:id>/", guardian_dashboard),
-    path("student_dashboard/<int:id>/", student_dashboard),
+    path("student_dashboard/", student_dashboard),
     path('office-staff-dashboard/', office_staff_dashboard),
-    # path("director/fee-summary/", director_fee_summary),
+    path("director/fee-summary/", director_fee_summary),
     path('livelihood_filter/', livelihood_distribution),
     path('periods/', assigned_periods),
     path("fetch_upload_doc/",document_fetch_dashboard),
@@ -90,12 +85,13 @@ urlpatterns = [
     path('student-category-dashboard/', student_category, name='student-category'),
     path('income-distribution-dashboard/', guardian_income_distribution, name='guardian-income-distribution'), 
     # path('income-distribution-dashboard-student/', guardian_income_distribution_with_student, name='guardian-income-distribution-student'), 
-    # path("fee-dashboard/", fee_dashboard, name="fee-dashboard-summary"),    # complete dashboard
+    path("fee-dashboard/", fee_dashboard, name="fee-dashboard-summary"),    # complete dashboard
     # Termination process api below
     # path("deactivate-user/", deactivate_user, name="deactivate-user"),
     # path("reactivate-user/", reactivate_user, name="reactivate-user"),
     path("inactive-user/", list_inactive_users, name="inactive-user"),
     path("notify-defaulters/", DefaulterNotifyView.as_view(), name="notify-defaulters"),
+    path("student-fee-dashboard/", student_fee_dashboard, name="student-fee-dashboard-summary"),
 
 ]
 
