@@ -4356,6 +4356,16 @@ class SchoolExpenseView(viewsets.ModelViewSet):
         payment_method = serializer.validated_data["payment"]["payment_method"]
         payment_data = serializer.validated_data["payment"]
 
+        #cheque_number if cheque is selected
+        if payment_method.lower() == "cheque":
+            cheque_number = payment_data.get("cheque_number")
+
+            if not cheque_number:
+                return Response(
+                    {"error": "cheque_number is required for cheque payments."},
+                    status=400
+                )
+
         # Save payment
         payment = Payment.objects.create(**payment_data)
 
@@ -4447,113 +4457,32 @@ class SchoolExpenseView(viewsets.ModelViewSet):
                 "expense": SchoolExpenseSerializer(instance).data
             })
 
-        # NORMAL EXPENSE update
+        # ---------------------------------------------------------
+        # CHEQUE APPROVAL VIA UPDATE (NEW)
+        # ---------------------------------------------------------
+        if instance.payment and instance.payment.payment_method.lower() == "cheque":
+
+            if instance.payment.status == "Success":
+                return Response(
+                    {"message": "Cheque already approved."},
+                    status=400
+                )
+
+            instance.payment.status = "Success"
+            instance.payment.save()
+
+            instance.approved_by = request.user
+            instance.save()
+
+            return Response({
+                "message": "Cheque expense approved successfully",
+                "expense": SchoolExpenseSerializer(instance).data
+            })
+
+        # ---------------------------------------------------------
+        # NORMAL UPDATE (fallback)
+        # ---------------------------------------------------------
         return super().update(request, *args, **kwargs)
-
-
-
-    # def create(self, request, *args, **kwargs):
-    #     serializer = self.get_serializer(data=request.data, context={"request": request})
-    #     serializer.is_valid(raise_exception=True)
-
-    #     payment_method = serializer.validated_data["payment"]["payment_method"]
-    #     payment_data = serializer.validated_data["payment"]
-
-    #     # Save payment
-    #     payment = Payment.objects.create(**payment_data)
-
-    #     # Create expense
-    #     expense = SchoolExpense.objects.create(
-    #         category=serializer.validated_data["category"],
-    #         school_year=serializer.validated_data["school_year"],
-    #         description=serializer.validated_data.get("description"),
-    #         created_by=request.user,
-    #         payment=payment,
-    #     )
-
-    #     # OG LOGIC REBUILT PROPERLY
-    #     if payment_method.lower() == "cash":
-    #         payment.status = "Success"
-    #         expense.approved_by = request.user
-    #         payment.save()
-    #         expense.save()
-    #         return Response({
-    #             "message": "Expense approved successfully (Cash)",
-    #             "expense": SchoolExpenseSerializer(expense).data
-    #         })
-
-    #     elif payment_method.lower() == "cheque":
-    #         # Cheque always stays pending until verified
-    #         payment.status = "Pending"
-    #         payment.save()
-    #         return Response({
-    #             "message": "Cheque expense created, pending approval",
-    #             "expense": SchoolExpenseSerializer(expense).data
-    #         })
-
-    #     elif payment_method.lower() == "online":
-    #         return Response({
-    #             "message": "Use initiate-expense-payment API",
-    #             "expense_id": expense.id,
-    #             "payment_id": payment.id,
-    #             "expense": SchoolExpenseSerializer(expense).data
-    #         }, status=400)
-        
-    #     return Response({"error": "Invalid payment method"}, status=400)
-
-    # @action(detail=True, methods=["post"], url_path="initiate-online-payment")
-    # def initiate_expense_payment(self, request, pk=None):
-    #     expense = self.get_object()
-    #     payment = expense.payment
-
-    #     client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-
-    #     order = client.order.create({
-    #         "amount": int(payment.amount * 100),
-    #         "currency": "INR",
-    #         "receipt": f"EXP-{expense.id}",
-    #         "payment_capture": "1",
-    #     })
-
-    #     payment.remarks = f"OrderID: {order['id']}"
-    #     payment.save()
-
-    #     return Response({
-    #         "expense_id": expense.id,
-    #         "payment_id": payment.id,
-    #         "razorpay_order_id": order["id"],
-    #         "razorpay_key": settings.RAZORPAY_KEY_ID,
-    #         "amount": str(payment.amount),
-    #     })
-
-    # @action(detail=True, methods=["post"], url_path="confirm-online-payment")
-    # def confirm_expense_payment(self, request, pk=None):
-    #     expense = self.get_object()
-    #     payment = expense.payment
-
-    #     data = request.data
-
-    #     client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-
-    #     client.utility.verify_payment_signature({
-    #         "razorpay_order_id": data["razorpay_order_id"],
-    #         "razorpay_payment_id": data["razorpay_payment_id"],
-    #         "razorpay_signature": data["razorpay_signature"]
-    #     })
-
-    #     # After success
-    #     payment.status = "Success"
-    #     payment.payment_method = "Online"
-    #     payment.save()
-
-    #     expense.approved_by = request.user
-    #     expense.save()
-
-    #     return Response({
-    #         "message": "Payment confirmed!",
-    #         "expense": SchoolExpenseSerializer(expense).data
-    #     })
-
 
 
 
@@ -5338,9 +5267,6 @@ class StudentFeeView(viewsets.ModelViewSet):
         # Generate a single receipt number for all fees submitted in this request
         receipt_number = self.generate_receipt_number()
 
-
-        discounts = AppliedFeeDiscount.objects.filter(student=student_year)
-
         for fee_data in fees_data:
             amount_paid = Decimal(str(fee_data.get("amount", "0.00"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
@@ -5364,13 +5290,6 @@ class StudentFeeView(viewsets.ModelViewSet):
                 year = timezone.now().year
                 student_fee.due_date = date(year, month, 15)
 
-            discount_obj = AppliedFeeDiscount.objects.filter(
-                student=student_year,
-                fee_type=student_fee.fee_structure
-            ).first()
-
-            discount_amount = Decimal(str(discount_obj.discount_amount if discount_obj else 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-            student_fee.applied_discount = bool(discount_obj)
 
             # --- APPLY PENALTY BEFORE VALIDATION ---
             today = timezone.now().date()
@@ -5382,7 +5301,6 @@ class StudentFeeView(viewsets.ModelViewSet):
             # --- CALCULATE max_payable INCLUDING penalty ---
             max_payable = (
                 student_fee.original_amount
-                - discount_amount
                 - student_fee.paid_amount
                 + student_fee.penalty_amount
             ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -5423,7 +5341,7 @@ class StudentFeeView(viewsets.ModelViewSet):
 
 
             student_fee.due_amount = max(
-                student_fee.original_amount - student_fee.paid_amount - discount_amount + student_fee.penalty_amount,
+                student_fee.original_amount - student_fee.paid_amount + student_fee.penalty_amount,
                 Decimal("0.00")
             )
 
@@ -5497,23 +5415,22 @@ class StudentFeeView(viewsets.ModelViewSet):
                 # "class_section": class_section
             },
             "guardian": {
-                "name": f"{student_year.student.user.first_name} {student_year.student.user.last_name}",  # Will be replaced below
-                "contact": "N/A"
+                "name": "",  # Will be replaced below
+                "contact": ""
             },
             "success": True
         }
 
-        # Get guardian details if available
-        try:
-            student_guardian = StudentGuardian.objects.filter(student=student_year.student).first()
-            if student_guardian:
-                guardian = student_guardian.guardian
-                response_data["guardian"] = {
-                    "name": f"{guardian.user.first_name} {guardian.user.last_name}",
-                    "contact": guardian.phone_no or "N/A"
-                }
-        except:
-            pass
+        # Guardian details → only if receipts relate to 1 student
+        student = student_year.student
+
+        parent_name = student.father_name or student.mother_name or "N/A"
+        contact = student.contact_number or "N/A"
+
+        response_data["guardian"] = {
+            "name": parent_name,
+            "contact": contact,
+        }
 
         # If single fee, include fee details at top level for easier access
         if len(fees_submitted) == 1:
@@ -5802,7 +5719,7 @@ class StudentFeeView(viewsets.ModelViewSet):
             month = fee_item.get("month")
             paid_amount = Decimal(str(fee_item.get("paid_amount") or fee_item.get("amount", 0)))
 
-            if paid_amount < 0:
+            if paid_amount <= 0:
                 return Response({"error": f"Paid amount missing or zero for fee_id {fee_id}."}, status=400)
 
             try:
@@ -5824,9 +5741,9 @@ class StudentFeeView(viewsets.ModelViewSet):
                     status=400
                 )
 
-            if paid_amount > student_fee.original_amount:
+            if paid_amount > student_fee.due_amount:
                 return Response(
-                    {"error": f"Paid amount cannot exceed original amount ({student_fee.original_amount}) for fee_id {fee_id}."},
+                    {"error": f"Paid amount cannot exceed due amount ({student_fee.due_amount}) for fee_id {fee_id}"},
                     status=400
                 )
 
