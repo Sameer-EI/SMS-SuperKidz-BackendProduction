@@ -1770,79 +1770,74 @@ class ExamScheduleSerializer(serializers.Serializer):
             "papers": result,
         }
 
+class ExamScheduleTimeUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExamSchedule
+        fields = ["exam_date", "start_time", "end_time"]
 
-# class ExamScheduleSerializer(serializers.ModelSerializer):
-#     # Read-only fields for display
-#     class_name = serializers.CharField(source="class_name.level_name", read_only=True)
-#     school_year = serializers.CharField(source="term.year.year_name", read_only=True)
-#     exam_type = serializers.CharField(source="exam_type.name", read_only=True)
-#     subject = serializers.CharField(source="subject.subject_name", read_only=True)
+    def validate(self, data):
+        instance = self.instance
 
-#     # Write-only IDs for create/update
-#     class_name_id = serializers.IntegerField(write_only=True)
-#     school_year_id = serializers.IntegerField(write_only=True)
-#     exam_type_id = serializers.IntegerField(write_only=True)
-#     subject_id = serializers.IntegerField(write_only=True)
+        exam_date = data.get("exam_date", instance.exam_date)
+        start_time = data.get("start_time", instance.start_time)
+        end_time = data.get("end_time", instance.end_time)
 
-#     class Meta:
-#         model = ExamSchedule
-#         fields = [
-#             "id",
-#             # read-only
-#             "class_name",
-#             "school_year",
-#             "exam_type",
-#             "subject",
-#             # write-only IDs
-#             "class_name_id",
-#             "school_year_id",
-#             "exam_type_id",
-#             "subject_id",
-#             # normal fields (jo model me exist karte hain)
-#             "exam_date",
-#             "start_time",
-#             "end_time",
-#         ]
+        # ---- date checks ----
+        if exam_date < timezone.localdate():
+            raise serializers.ValidationError({
+                "exam_date": "Exam date cannot be in the past"
+            })
 
-#     def create(self, validated_data):
-#         class_name = YearLevel.objects.get(id=validated_data.pop("class_name_id"))
-#         term = Term.objects.get(id=validated_data.pop("school_year_id"))
-#         exam_type = ExamType.objects.get(id=validated_data.pop("exam_type_id"))
-#         subject = Subject.objects.get(id=validated_data.pop("subject_id"))
+        if exam_date.weekday() == 6:
+            raise serializers.ValidationError({
+                "exam_date": "Exams cannot be scheduled on Sunday"
+            })
 
-#         return ExamSchedule.objects.create(
-#             class_name=class_name,
-#             term=term,
-#             exam_type=exam_type,
-#             subject=subject,
-#             **validated_data
-#         )
+        # ---- time checks ----
+        if start_time >= end_time:
+            raise serializers.ValidationError({
+                "time": "Start time must be before end time"
+            })
 
-#     def update(self, instance, validated_data):
-#         if "class_name_id" in validated_data:
-#             instance.class_name = YearLevel.objects.get(
-#                 id=validated_data.pop("class_name_id")
-#             )
-#         if "school_year_id" in validated_data:
-#             instance.term = Term.objects.get(id=validated_data.pop("school_year_id"))
-#         if "exam_type_id" in validated_data:
-#             instance.exam_type = ExamType.objects.get(
-#                 id=validated_data.pop("exam_type_id")
-#             )
-#         if "subject_id" in validated_data:
-#             instance.subject = Subject.objects.get(
-#                 id=validated_data.pop("subject_id")
-#             )
+        start_dt = datetime.combine(exam_date, start_time)
+        end_dt = datetime.combine(exam_date, end_time)
 
-#         for attr, value in validated_data.items():
-#             setattr(instance, attr, value)
+        if end_dt - start_dt > timedelta(hours=3):
+            raise serializers.ValidationError({
+                "time": "Exam duration cannot exceed 3 hours"
+            })
 
-#         instance.save()
-#         return instance
+        allowed_start = time(8, 0)
+        allowed_end = time(17, 0)
 
+        if not (allowed_start <= start_time <= allowed_end):
+            raise serializers.ValidationError({
+                "start_time": "Exam must start between 8:00 AM - 5:00 PM"
+            })
 
+        if not (allowed_start <= end_time <= allowed_end):
+            raise serializers.ValidationError({
+                "end_time": "Exam must end between 8:00 AM - 5:00 PM"
+            })
 
+        # ---- class-wise daily limit ----
+        class_obj = instance.class_name
+        max_allowed = 3 if class_obj.level_order >= 15 else 1
 
+        existing_count = ExamSchedule.objects.filter(
+            class_name=instance.class_name,
+            exam_type=instance.exam_type,
+            term=instance.term,
+            exam_date=exam_date
+        ).exclude(id=instance.id).count()
+
+        if existing_count >= max_allowed:
+            raise serializers.ValidationError({
+                "exam_date": f"{class_obj.level_name} can have max "
+                             f"{max_allowed} exam(s) on {exam_date}"
+            })
+
+        return data
 
 
 
