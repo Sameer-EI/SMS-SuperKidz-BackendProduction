@@ -302,11 +302,6 @@ RAZORPAYX_KEY_SECRET = "eiGTSnGfGcQYJNPtSaOOVP5i"
 RAZORPAYX_ACCOUNT_NUMBER = "2323230028138427"
 
 
-# RAZORPAY_API_KEY = "rzp_test_4h2aRSAPbYw3f8"
-# RAZORPAY_API_KEY_SECRET = "zuSKjh7zPlms6hBUefybslov"
-
-
-
 LOGGING = {
     'version': 1,
     'handlers': {
