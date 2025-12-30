@@ -698,96 +698,48 @@ class SubstituteAssignmentView(APIView):
 
     def post(self, request):
         data = request.data
-        # print(data)
 
-        # Single dict -> wrap in list for iteration
+        # normalize input
         if isinstance(data, dict):
             data = [data]
-            many = False
-        else:
-            many = True
 
-        errors = []
-        for item in data:
-            absent_teacher = item.get("absent_teacher")
-            period = item.get("period")
-            date = item.get("date")
+        serializer = SubstituteAssignmentSerializer(data=data, many=True)
 
-            if SubstituteAssignment.objects.filter(
-                absent_teacher=absent_teacher,
-                period=period,
-                date=date
-            ).exists():
-                errors.append(
-                    f"Duplicate found: Teacher {absent_teacher} already has substitute "
-                    f"for {period} on {date}"
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        assignments = serializer.save()
+
+        # notifications
+        def notify(assignment):
+            subject = "Substitute Teacher Assignment"
+            message = (
+                f"Dear Teacher,\n\n"
+                f"On {assignment.date}, during {assignment.period},\n"
+                f"{assignment.absent_teacher} is absent.\n"
+                f"Substitute assigned: {assignment.substitute_teacher}.\n\n"
+                f"Regards,\nSchool Admin"
+            )
+
+            if assignment.absent_teacher.user.email:
+                send_email_notification(
+                    assignment.absent_teacher.user.email, subject, message
                 )
 
-        if errors:
-            return Response({"errors": errors}, status=status.HTTP_400_BAD_REQUEST)
-
-        # If single dict, unwrap data again before serializer
-        serializer_data = data if many else data[0]
-
-        serializer = SubstituteAssignmentSerializer(data=serializer_data, many=many)
-        if serializer.is_valid():
-            assignments = serializer.save()
-
-            # Notification Part
-            notifications = []
-
-            # Send email & WhatsApp notifications
-            def notify(assignment):
-                absent_teacher_email = assignment.absent_teacher.user.email  
-                substitute_teacher_email = assignment.substitute_teacher.user.email  
-
-                subject = "Substitute Teacher Assignment"
-                message = (
-                    f"Dear Teacher,\n\n"
-                    f"On {assignment.date}, during {assignment.period},\n"
-                    f"Teacher {assignment.absent_teacher} is absent.\n"
-                    f"Substitute assigned:- {assignment.substitute_teacher}.\n\n"
-                    "Regards,\nSchool Admin"
+            if assignment.substitute_teacher.user.email:
+                send_email_notification(
+                    assignment.substitute_teacher.user.email, subject, message
                 )
 
-                # Send email to absent teacher
-                if absent_teacher_email:
-                    send_email_notification(absent_teacher_email, subject, message)
+            send_whatsapp_message(message)
 
-                # Send email to substitute teacher
-                if substitute_teacher_email:
-                    send_email_notification(substitute_teacher_email, subject, message)
+        for assignment in assignments:
+            notify(assignment)
 
-                # Send WhatsApp notification
-                response = send_whatsapp_message(message)
-
-                return response
-
-            if many:
-                for assignment in assignments:
-                    response = notify(assignment)
-                    notifications.append({
-                        "absent_teacher": str(assignment.absent_teacher),
-                        "substitute_teacher": str(assignment.substitute_teacher),
-                        "date": str(assignment.date),
-                        "period": assignment.period,
-                        "response": response
-                    })
-            else:
-                assignment = assignments
-                response = notify(assignment)
-                notifications.append({
-                    "absent_teacher": str(assignment.absent_teacher),
-                    "substitute_teacher": str(assignment.substitute_teacher),
-                    "date": str(assignment.date),
-                    "period": assignment.period,
-                    "response": response
-                })
-
-            return Response({
-                "assignments": serializer.data,
-            }, status=status.HTTP_201_CREATED)
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
+        return Response(
+            {
+                "assignments": SubstituteAssignmentSerializer(assignments, many=True).data,
+                "message": "Substitute assignment(s) created successfully",
+            },
+            status=status.HTTP_201_CREATED
+        )

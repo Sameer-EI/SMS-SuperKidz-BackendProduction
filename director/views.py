@@ -3364,17 +3364,16 @@ class SchoolExpenseView(viewsets.ModelViewSet):
         # 2. CHEQUE EXPENSE → APPROVE IF STILL PENDING
         # ---------------------------------------------------------
         if instance.payment and instance.payment.payment_method.lower() == "cheque":
+            cheque_number = request.data.get("cheque_number")
+            if cheque_number:
+                instance.payment.cheque_number = cheque_number
 
-            # approve only once
             if instance.payment.status != "Success":
                 instance.payment.status = "Success"
-                instance.payment.save()
-
                 instance.approved_by = request.user
                 instance.save()
 
-            # no return here — allow description update 
-
+            instance.payment.save()
 
         # ---------------------------------------------------------
         # 3. ONLY DESCRIPTION CAN BE UPDATED
