@@ -2799,7 +2799,15 @@ class ExamScheduleView(viewsets.ModelViewSet):
             assigned_class_ids = TeacherYearLevel.objects.filter(
                 teacher=teacher
             ).values_list("year_level_id", flat=True)
-            queryset = ExamSchedule.objects.select_related("class_name", "term", "term__year", "exam_type", "subject").filter(class_name_id__in=assigned_class_ids)
+            if not assigned_class_ids:
+                return Response(
+                    {"error": "No classes assigned to this teacher"},
+                    status=400
+                )
+
+            queryset = ExamSchedule.objects.select_related(
+                "class_name", "term", "term__year", "exam_type", "subject"
+            ).filter(class_name_id__in=assigned_class_ids)
 
         elif "student" in role_names:
             student = Student.objects.filter(user=user).first()
