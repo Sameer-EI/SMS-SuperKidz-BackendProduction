@@ -22,6 +22,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from director.views import send_whatsapp_message 
 # from permission import RoleBasedPermission
 from attendance.views import Holiday
+from django.db import transaction
 
 
 
@@ -56,108 +57,154 @@ class TeacherView(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='assign-teacher-details')
     def assign_teacher_details(self, request):
         teacher_id = request.data.get("teacher_id")
-        print(teacher_id)
         yearlevel_id = request.data.get("yearlevel_id")
-        print(yearlevel_id)
         subject_ids = request.data.get("subject_ids", [])
-        print(subject_ids)
         period_ids = request.data.get("period_ids", [])
-        print(period_ids)
+        term_id = request.data.get("term_id")
+        classroom_id = request.data.get("classroom_id")
 
-        # Validate teacher
-        if not teacher_id:
-            return Response({"error": "teacher_id is required."}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            teacher = Teacher.objects.get(id=teacher_id)
-        except Teacher.DoesNotExist:
-            return Response({"error": "Invalid teacher_id."}, status=status.HTTP_404_NOT_FOUND)
 
-        # Validate year level
-        if not yearlevel_id:
-            return Response({"error": "yearlevel_id is required."}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            yearlevel = YearLevel.objects.get(id=yearlevel_id)
-        except YearLevel.DoesNotExist:
-            return Response({"error": "Invalid yearlevel_id."}, status=status.HTTP_404_NOT_FOUND)
-
-        # Validate subjects
-        if not subject_ids:
-            return Response({"error": "At least one subject_id is required."}, status=status.HTTP_400_BAD_REQUEST)
-        subjects = Subject.objects.filter(id__in=subject_ids)
-        if subjects.count() != len(subject_ids):
-            return Response({"error": "One or more invalid subject_ids."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Validate periods
-        if not period_ids:
-            return Response({"error": "At least one period_id is required."}, status=status.HTTP_400_BAD_REQUEST)
-        periods = Period.objects.filter(id__in=period_ids)
-        if periods.count() != len(period_ids):
-            return Response({"error": "One or more invalid period_ids."}, status=status.HTTP_400_BAD_REQUEST)
-        
-         # Check teacher's current period load # added back as of 06Oct25
-        existing_classperiods = ClassPeriod.objects.filter(teacher=teacher)
-        if existing_classperiods.count() + len(subject_ids) > 6:
-            return Response({"error": "Teacher cannot be assigned more than 6 periods."}, status=status.HTTP_400_BAD_REQUEST)
-
+        errors = []
         assigned = []
-    
+        to_create = []
 
-        for subject in subjects:
-            # prevent duplicate subject for same teacher in same class
-            if ClassPeriod.objects.filter(teacher=teacher, subject=subject, year_level=yearlevel).exists():
-                return Response(
-                    {"error": f"Teacher is already assigned {subject.subject_name} in {yearlevel.level_name}."},
-                    status=status.HTTP_400_BAD_REQUEST
+        # ---- basic validations ----
+        if not teacher_id:
+            return Response({"error": "teacher_id is required."}, status=400)
+
+        if not yearlevel_id:
+            return Response({"error": "yearlevel_id is required."}, status=400)
+
+        if not subject_ids:
+            return Response({"error": "At least one subject_id is required."}, status=400)
+
+        if not period_ids:
+            return Response({"error": "At least one period_id is required."}, status=400)
+
+        if len(subject_ids) != len(period_ids):
+            return Response(
+                {"error": "subject_ids and period_ids length must be equal."},
+                status=400
+            )
+        
+        if not term_id:
+            return Response({"error": "term_id is required."}, status=400)
+
+        if not classroom_id:
+            return Response({"error": "classroom_id is required."}, status=400)
+
+        term = Term.objects.filter(id=term_id).first()
+        if not term:
+            return Response({"error": "Invalid term_id."}, status=404)
+
+        classroom = ClassRoom.objects.filter(id=classroom_id).first()
+        if not classroom:
+            return Response({"error": "Invalid classroom_id."}, status=404)
+
+
+        # ---- fetch main objects ----
+        teacher = Teacher.objects.filter(id=teacher_id).first()
+        if not teacher:
+            return Response({"error": "Invalid teacher_id."}, status=404)
+
+        yearlevel = YearLevel.objects.filter(id=yearlevel_id).first()
+        if not yearlevel:
+            return Response({"error": "Invalid yearlevel_id."}, status=404)
+
+        subjects = list(Subject.objects.filter(id__in=subject_ids))
+        if len(subjects) != len(subject_ids):
+            return Response({"error": "One or more invalid subject_ids."}, status=400)
+
+        periods = list(Period.objects.filter(id__in=period_ids))
+        if len(periods) != len(period_ids):
+            return Response({"error": "One or more invalid period_ids."}, status=400)
+
+        # ---- load limit check ----
+        if ClassPeriod.objects.filter(teacher=teacher).count() + len(subjects) > 6:
+            return Response(
+                {"error": "Teacher cannot be assigned more than 6 periods."},
+                status=400
+            )
+
+        # ---- main logic ----
+        for subject, period in zip(subjects, periods):
+
+            # duplicate check (class + period)
+            # ---- teacher time conflict check ----
+            if ClassPeriod.objects.filter(
+                year_level=yearlevel,
+                term=term,
+                start_time__start_period_time=period.start_period_time,
+                end_time__end_period_time=period.end_period_time
+            ).exists():
+                errors.append(
+                    f"{yearlevel.level_name} already has a class scheduled "
+                    f"on {period.name} ({period.start_period_time}-{period.end_period_time})."
                 )
+                continue
 
-            for period in periods:
-                #Lunch/Break validation
-                lunch_names = ["lunch", "lunch break", "midday break", "recess", "break"]
-                if period.name.lower() in lunch_names:
-                    return Response(
-                        {"error": f"Teacher cannot be assigned during {period.name}"},
-                        status=status.HTTP_400_BAD_REQUEST
-                        )
-                #Prevent teacher period conflict
-                if ClassPeriod.objects.filter(teacher=teacher, start_time=period, end_time=period).exists():
-                    return Response(
-                        {"error": f"Teacher is already assigned in period {period.name} ({period.start_period_time} - {period.end_period_time})."},
-                        status=status.HTTP_400_BAD_REQUEST
-                        
-                    )
-
-                # Assign teacher to subject + period
-                cp = ClassPeriod.objects.create(
-                    teacher=teacher,
-                    subject=subject,
-                    year_level=yearlevel,
-                    term=Term.objects.first(),
-                    start_time=period,
-                    end_time=period,
-                    classroom=ClassRoom.objects.first(),
-                    name=f"{subject.subject_name} - {period.name}"
+            if ClassPeriod.objects.filter(
+                classroom=classroom,
+                term=term,
+            ).filter(
+                start_time__start_period_time=period.start_period_time,
+                end_time__end_period_time=period.end_period_time
+            ).exists():
+                errors.append(
+                    f"Classroom {classroom.room_name} is already occupied "
+                    f"on {period.name} ({period.start_period_time}-{period.end_period_time})."
                 )
-                print(cp)
-                assigned.append({
-                    "subject": subject.subject_name,
-                    "period": period.name,
-                    "time": f"{period.start_period_time} - {period.end_period_time}"
-                })
-                break  
+                continue
 
-      
-            try:
-                ty = TeacherYearLevel.objects.get(teacher=teacher, year_level=yearlevel)
-            except TeacherYearLevel.DoesNotExist:
-                ty = None  # record does not exist, but do not create
+            if ClassPeriod.objects.filter(teacher=teacher).filter(
+                start_time__start_period_time=period.start_period_time,
+                end_time__end_period_time=period.end_period_time
+            ).exists():
+                errors.append(
+                    f"Teacher {teacher.user.first_name} {teacher.user.last_name} "
+                    f"is already assigned to another class on {period.name} "
+                    f"({period.start_period_time}-{period.end_period_time})."
+                )
+                continue
+
+
+            to_create.append(ClassPeriod(
+                teacher=teacher,
+                subject=subject,
+                year_level=yearlevel,
+                start_time=period,
+                end_time=period,
+                term=term,
+                classroom=classroom,
+                name=f"{subject.subject_name} - {period.name}"
+            ))
+
+            assigned.append({
+                "subject": subject.subject_name,
+                "period": period.name
+            })
+
+        # ---- final checks ----
+        if errors:
+            return Response({"errors": errors}, status=400)
+
+        if not to_create:
+            return Response(
+                {"error": "No assignments could be created."},
+                status=400
+            )
+
+        # ---- save ----
+        with transaction.atomic():
+            ClassPeriod.objects.bulk_create(to_create)
 
         return Response({
             "message": "Teacher assigned successfully.",
             "teacher": f"{teacher.user.first_name} {teacher.user.last_name}",
             "year_level": yearlevel.level_name,
             "assigned_subjects_periods": assigned
-        }, status=status.HTTP_200_OK)
-
+        }, status=200)
+   
    
     
     @action(detail=False, methods=['get'], url_path='all-teacher-assignments')
