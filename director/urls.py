@@ -72,7 +72,7 @@ urlpatterns = [
     path("director-dashboard/", Director_Dashboard_Summary),
     path("teacher-dashboard/<int:id>/", teacher_dashboard),
     path("guardian-dashboard/<int:id>/", guardian_dashboard),
-    path("student_dashboard/", student_dashboard),
+    path("student_dashboard/<int:id>/", student_dashboard),
     path('office-staff-dashboard/', office_staff_dashboard),
     path("director/fee-summary/", director_fee_summary),
     path('livelihood_filter/', livelihood_distribution),
