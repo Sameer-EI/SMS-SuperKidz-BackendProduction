@@ -2256,24 +2256,41 @@ class EmployeeSalarySerializer(serializers.ModelSerializer):
 
     
     created_at = serializers.DateTimeField(required=False)
-    
+    # cheque_no = serializers.SerializerMethodField()
     payment_status = serializers.SerializerMethodField()
     payment_method = serializers.SerializerMethodField()
-    cheque_no = serializers.SerializerMethodField()
+    # cheque_number = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     fund_account_id = serializers.SerializerMethodField()
     month = serializers.ChoiceField(choices=EmployeeSalary.MONTH_CHOICES)
 
     status = serializers.CharField(write_only=True, required=False)
     payment_date = serializers.DateField(write_only=True, required=False)
     cheque_number = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
+    payment = PaymentSerializer(read_only=True)
 
 
     class Meta:
         model = EmployeeSalary
         fields = [
-            "id","user","employee_name","gross_amount","deductions","bonus","net_amount",
-            "month","school_year_name","payment","paid_by","paid_by_name","remarks","created_at","payment_method",
-            "cheque_number","fund_account_id","payment_status","status","payment_date","cheque_no"
+            "id",
+            "user",
+            "employee_name",
+            "gross_amount",
+            "deductions",
+            "bonus",
+            "net_amount",
+            "month",
+            "school_year_name",
+            "payment",
+            "paid_by",
+            "paid_by_name",
+            "remarks",
+            "created_at",
+            "payment_method",
+            "cheque_number",
+            "fund_account_id",
+            "payment_status","status","payment_date",
+            # "cheque_no"
         ]
         extra_kwargs = {
             "user": {"required": False},
@@ -2283,14 +2300,15 @@ class EmployeeSalarySerializer(serializers.ModelSerializer):
             "paid_by": {"read_only": True},
             "school_year": {"read_only": True},
         }
+
     def get_payment_status(self, obj):
         return obj.payment.status if obj.payment else None
 
     def get_payment_method(self, obj):
         return obj.payment.payment_method if obj.payment else None
 
-    def get_cheque_no(self, obj):
-        return obj.payment.cheque_number if obj.payment else None
+    # def get_cheque_no(self, obj):
+    #     return obj.payment.cheque_number if obj.payment else None
 
     def get_fund_account_id(self, obj):
         return obj.payment.fund_account_id if obj.payment else None
@@ -2356,6 +2374,7 @@ class EmployeeSalarySerializer(serializers.ModelSerializer):
         if qs.exists():
             raise serializers.ValidationError("This cheque number is already used.")
         return value
+
     def validate_created_at(self, value):
         """
         Agar user sirf date (YYYY-MM-DD) bhejta hai, to datetime banaye.
