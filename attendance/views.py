@@ -347,24 +347,56 @@ class TeacherAttendanceDashboard(ViewSet):
 class StudentOwnAttendanceViewSet(ViewSet):
     def retrieve(self, request, pk=None):
         today = date.today()
+
+        date_str = request.query_params.get("date")
         month = int(request.query_params.get("month", today.month))
         year = int(request.query_params.get("year", today.year))
 
-        # Get student by ID
-        student = get_object_or_404(Student, id=pk)
+        # ---- date parsing ----
+        try:
+            selected_date = (
+                datetime.strptime(date_str, "%Y-%m-%d").date()
+                if date_str else None
+            )
+        except ValueError:
+            return Response(
+                {"error": "Invalid date format. Use YYYY-MM-DD."},
+                status=400
+            )
 
-        # Get all attendance records
+        # ---- student ----
+        student = get_object_or_404(Student, id=pk)
         attendance_qs = StudentAttendance.objects.filter(student=student)
 
-        # Get latest year_level from attendance
-        latest_attendance = attendance_qs.order_by('-marked_at').first()
+        # ---- latest class ----
+        latest_attendance = attendance_qs.order_by("-marked_at").first()
         year_level_name = (
             latest_attendance.year_level.level_name
             if latest_attendance and latest_attendance.year_level
             else "N/A"
         )
 
-        # Monthly summary
+        # ==================================================
+        # DATE-WISE VIEW (if date is passed)
+        # ==================================================
+        if selected_date:
+            day_qs = attendance_qs.filter(marked_at=selected_date)
+
+            return Response({
+                "student_name": f"{student.user.first_name} {student.user.last_name}",
+                "year_level": year_level_name,
+                "filter_date": selected_date.strftime("%Y-%m-%d"),
+                "attendance": {
+                    "present": day_qs.filter(status="P").count(),
+                    "absent": day_qs.filter(status="A").count(),
+                    "leave": day_qs.filter(status="L").count(),
+                    "total": day_qs.count(),
+                }
+            })
+
+        # ==================================================
+        # MONTHLY SUMMARY
+        # ==================================================
         monthly = attendance_qs.filter(marked_at__year=year, marked_at__month=month)
         m_present = monthly.filter(status='P').count()
         m_absent = monthly.filter(status='A').count()
@@ -372,7 +404,9 @@ class StudentOwnAttendanceViewSet(ViewSet):
         m_total = monthly.count()
         m_percentage = (m_present / m_total * 100) if m_total else 0.0
 
-        # Yearly summary
+        # ==================================================
+        # YEARLY SUMMARY
+        # ==================================================
         yearly = attendance_qs.filter(marked_at__year=year)
         y_present = yearly.filter(status='P').count()
         y_absent = yearly.filter(status='A').count()
