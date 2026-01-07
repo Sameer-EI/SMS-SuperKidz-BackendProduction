@@ -422,77 +422,102 @@ class AllTeachersWithYearLevelsAPIView(APIView):
 
 class AbsentTeacherFreeReplacementAPIView(APIView):
     def get(self, request):
-        date_value = request.GET.get('date_value')
-        teacher_id = request.GET.get('teacher_id')
+        date_value = request.GET.get("date_value")
+        teacher_id = request.GET.get("teacher_id")
 
+        # ---- date handling ----
         try:
-            target_date = datetime.strptime(date_value, "%Y-%m-%d").date() if date_value else timezone.now().date()
+            target_date = (
+                datetime.strptime(date_value, "%Y-%m-%d").date()
+                if date_value else timezone.now().date()
+            )
         except ValueError:
             return Response(
                 {"error": "Invalid date format. Use YYYY-MM-DD."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # 1) Absent & Present sets build
+        # ---- attendance sets ----
         absent_ids = set(
-            TeacherAttendance.objects.filter(date=target_date, status__iexact="absent")
-            .values_list("teacher_id", flat=True)
-        )
-        present_ids = set(
-            TeacherAttendance.objects.filter(date=target_date, status__iexact="present")
-            .values_list("teacher_id", flat=True)
+            TeacherAttendance.objects.filter(
+                date=target_date, status__iexact="absent"
+            ).values_list("teacher_id", flat=True)
         )
 
-        # 2) Absent teachers list (only with assigned periods)
-        absent_teachers_qs = Teacher.objects.filter(
-            id__in=absent_ids,
+        leave_ids = set(
+            TeacherAttendance.objects.filter(
+                date=target_date, status__iexact="leave"
+            ).values_list("teacher_id", flat=True)
+        )
+
+        present_ids = set(
+            TeacherAttendance.objects.filter(
+                date=target_date, status__iexact="present"
+            ).values_list("teacher_id", flat=True)
+        )
+
+        # ---- inactive = absent + leave ----
+        inactive_ids = absent_ids | leave_ids
+
+        # ---- fetch inactive teachers having periods ----
+        inactive_teachers_qs = Teacher.objects.filter(
+            id__in=inactive_ids,
             assigned_periods__isnull=False
         ).distinct().select_related("user")
 
         if teacher_id:
-            absent_teachers_qs = absent_teachers_qs.filter(id=teacher_id)
+            inactive_teachers_qs = inactive_teachers_qs.filter(id=teacher_id)
 
-        if not absent_teachers_qs.exists():
+        if not inactive_teachers_qs.exists():
             return Response({"absent_teachers": []}, status=status.HTTP_200_OK)
 
         result = []
 
-        for teacher in absent_teachers_qs:
-            # 3) Absent teacher ke assigned periods
-            periods = ClassPeriod.objects.filter(teacher=teacher)\
-                .select_related("subject", "start_time", "year_level")\
+        for teacher in inactive_teachers_qs:
+            teacher_status = "leave" if teacher.id in leave_ids else "absent"
+
+            # ---- periods of inactive teacher ----
+            periods = (
+                ClassPeriod.objects
+                .filter(teacher=teacher)
+                .select_related("subject", "start_time", "year_level")
                 .order_by("start_time")
+            )
 
             period_data = []
 
             for p in periods:
-                # 4) Busy teachers = jo isi time slot par kahin class le rahe hain
+                # ---- teachers already busy in same time slot ----
                 busy_teacher_ids = set(
-                    ClassPeriod.objects.filter(start_time=p.start_time)
-                    .values_list("teacher_id", flat=True)
+                    ClassPeriod.objects.filter(
+                        start_time=p.start_time
+                    ).values_list("teacher_id", flat=True)
                 )
 
-                # 5) Free teachers = Present - busy - absent
-                candidate_ids = present_ids - busy_teacher_ids - absent_ids
+                # ---- free teachers = present - busy - inactive ----
+                candidate_ids = present_ids - busy_teacher_ids - inactive_ids
 
-                # 6) Same class (year_level) ke teachers
+                # ---- same class teachers ----
                 same_class_teacher_ids = set(
-                    ClassPeriod.objects.filter(year_level=p.year_level)
-                    .values_list("teacher_id", flat=True)
+                    ClassPeriod.objects.filter(
+                        year_level=p.year_level
+                    ).values_list("teacher_id", flat=True)
                 )
 
-                # 7) Divide into same class & other class
                 same_class_free_ids = candidate_ids & same_class_teacher_ids
                 other_class_free_ids = candidate_ids - same_class_free_ids
 
-                # Querysets
-                same_class_teachers_qs = Teacher.objects.filter(id__in=same_class_free_ids)\
-                    .select_related("user")\
+                same_class_teachers_qs = (
+                    Teacher.objects.filter(id__in=same_class_free_ids)
+                    .select_related("user")
                     .order_by("user__first_name", "user__last_name")
+                )
 
-                other_teachers_qs = Teacher.objects.filter(id__in=other_class_free_ids)\
-                    .select_related("user")\
+                other_teachers_qs = (
+                    Teacher.objects.filter(id__in=other_class_free_ids)
+                    .select_related("user")
                     .order_by("user__first_name", "user__last_name")
+                )
 
                 same_class_free_teachers = [
                     {
@@ -514,8 +539,31 @@ class AbsentTeacherFreeReplacementAPIView(APIView):
                     for t in other_teachers_qs
                 ]
 
-                #  merged free teachers list
-                all_free_teachers = same_class_free_teachers + other_class_free_teachers
+                all_free_teachers = (
+                    same_class_free_teachers + other_class_free_teachers
+                )
+
+                sub_assignment = (
+                    SubstituteAssignment.objects
+                    .filter(
+                        absent_teacher=teacher,
+                        period=str(p.id),   
+                        date=target_date
+                    )
+                    .select_related("substitute_teacher__user")
+                    .first()
+                )
+
+                substitute_teacher_data = None
+
+                if sub_assignment:
+                    sub_teacher = sub_assignment.substitute_teacher
+                    substitute_teacher_data = {
+                        "id": sub_teacher.id,
+                        "name": f"{sub_teacher.user.first_name} {sub_teacher.user.last_name}".strip(),
+                        "email": sub_teacher.user.email,
+                    }
+
 
                 period_data.append({
                     "period_id": p.id,
@@ -524,19 +572,22 @@ class AbsentTeacherFreeReplacementAPIView(APIView):
                     "year_level": p.year_level.level_name if p.year_level else None,
                     "same_class_free_teachers": same_class_free_teachers,
                     "other_class_free_teachers": other_class_free_teachers,
-                    "all_free_teachers": all_free_teachers
+                    "all_free_teachers": all_free_teachers,
                 })
 
             result.append({
                 "absent_teacher": {
                     "id": teacher.id,
                     "name": f"{teacher.user.first_name} {teacher.user.last_name}".strip(),
-                    "email": teacher.user.email
+                    "email": teacher.user.email,
+                    "status": teacher_status,
+                    "substitute_teacher": substitute_teacher_data,
                 },
                 "periods": period_data
             })
 
         return Response({"absent_teachers": result}, status=status.HTTP_200_OK)
+
 
 
 class TeacherAttendanceAPIView(APIView):
