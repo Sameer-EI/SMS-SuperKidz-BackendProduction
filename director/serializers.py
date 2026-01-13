@@ -2759,7 +2759,7 @@ class StudentFeeSerializer(serializers.ModelSerializer):
         if request and "submit_fee" in str(request.path):
             student_year = StudentYearLevel.objects.get(id=validated_data["student_year_id"])
             fee_structure = FeeStructure.objects.get(id=validated_data["fee_structure_id"])
-            school_year = SchoolYear.objects.get(id=validated_data["school_year_id"])
+            school_year = student_year.year
             month = validated_data.get("month")
             amount_paid = Decimal(validated_data.get("amount_paid", "0.00"))
             user = request.user

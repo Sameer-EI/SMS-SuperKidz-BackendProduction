@@ -470,3 +470,32 @@ def reportcard_attachments(instance, filename):
     )
 
     return os.path.join(folder, filename)
+
+
+# ---------------------------------- Fee Due Year Utility --------------------------------------------
+from datetime import date
+from decimal import Decimal
+from django.utils import timezone
+
+def get_fee_due_year(school_year, month):
+    # Apr–Dec → start year, Jan–Mar → end year
+    if month >= 4:
+        return int(school_year.start_date.year)
+    return int(school_year.end_date.year)
+
+
+def calculate_penalty(fee_type, school_year, month):
+    if fee_type.lower() != "tuition fee":
+        return Decimal("0.00")
+
+    today = timezone.now().date()
+
+    # decide correct year for the month
+    due_year = get_fee_due_year(school_year, month)
+    due_date = date(due_year, month, 15)
+
+    if today > due_date:
+        return Decimal("25.00")
+
+    return Decimal("0.00")
+
