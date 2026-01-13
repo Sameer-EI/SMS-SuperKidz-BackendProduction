@@ -4228,9 +4228,9 @@ class StudentFeeView(viewsets.ModelViewSet):
             return self.initiate_payment(request)
 
         
-        # Get admission to fetch class_section
-        admission = Admission.objects.filter(student=student_year.student).first()
-        class_section = admission.class_section if admission else "N/A"
+        # # Get admission to fetch class_section
+        # admission = Admission.objects.filter(student=student_year.student).first()
+        # class_section = admission.class_section if admission else "N/A"
 
         # Build fees_submitted array with detailed info for each fee
         fees_submitted = []
@@ -4275,7 +4275,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                 "mother_name": student_year.student.mother_name or "N/A",
                 "scholar_number": student_year.student.scholar_number or "N/A",
                 "class_name": student_year.level.level_name or "N/A",
-                "class_section": class_section
+                # "class_section": class_section
             },
             "guardian": {
                 "name": "",  # Will be replaced below
