@@ -4144,16 +4144,22 @@ class StudentFeeView(viewsets.ModelViewSet):
                 student_fee.due_date = datetime.strptime(due_date_str, "%Y-%m-%d").date()
             else:
                 month = int(fee_data.get("month"))
-                year = timezone.now().year
-                student_fee.due_date = date(year, month, 15)
+                due_year = get_fee_due_year(student_fee.school_year, month)
+                student_fee.due_date = date(due_year, month, 15)
+
+            student_fee.penalty_amount = calculate_penalty(
+                fee_type=student_fee.fee_structure.fee_type,
+                school_year=student_fee.school_year,
+                month=student_fee.month
+            )
 
 
-            # --- APPLY PENALTY BEFORE VALIDATION ---
-            today = timezone.now().date()
-            if student_fee.fee_structure.fee_type.lower() == "tuition fee" and student_fee.due_date and today > student_fee.due_date:
-                student_fee.penalty_amount = Decimal("25.00")
-            else:
-                student_fee.penalty_amount = Decimal("0.00")
+            # # --- APPLY PENALTY BEFORE VALIDATION ---
+            # today = timezone.now().date()
+            # if student_fee.fee_structure.fee_type.lower() == "tuition fee" and student_fee.due_date and today > student_fee.due_date:
+            #     student_fee.penalty_amount = Decimal("25.00")
+            # else:
+            #     student_fee.penalty_amount = Decimal("0.00")
 
             # --- CALCULATE max_payable INCLUDING penalty ---
             max_payable = (
@@ -4188,13 +4194,13 @@ class StudentFeeView(viewsets.ModelViewSet):
             )['total'] or Decimal("0.00")
 
 
-            today = timezone.now().date()
-            if (student_fee.fee_structure.fee_type.lower() == "tuition fee"
-                    and student_fee.due_date
-                    and today > student_fee.due_date):
-                student_fee.penalty_amount = Decimal("25.00")
-            else:
-                student_fee.penalty_amount = Decimal("0.00")
+            # today = timezone.now().date()
+            # if (student_fee.fee_structure.fee_type.lower() == "tuition fee"
+            #         and student_fee.due_date
+            #         and today > student_fee.due_date):
+            #     student_fee.penalty_amount = Decimal("25.00")
+            # else:
+            #     student_fee.penalty_amount = Decimal("0.00")
 
 
             student_fee.due_amount = max(
@@ -4222,9 +4228,9 @@ class StudentFeeView(viewsets.ModelViewSet):
             return self.initiate_payment(request)
 
         
-        # # Get admission to fetch class_section
-        # admission = Admission.objects.filter(student=student_year.student).first()
-        # class_section = admission.class_section if admission else "N/A"
+        # Get admission to fetch class_section
+        admission = Admission.objects.filter(student=student_year.student).first()
+        class_section = admission.class_section if admission else "N/A"
 
         # Build fees_submitted array with detailed info for each fee
         fees_submitted = []
@@ -4269,7 +4275,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                 "mother_name": student_year.student.mother_name or "N/A",
                 "scholar_number": student_year.student.scholar_number or "N/A",
                 "class_name": student_year.level.level_name or "N/A",
-                # "class_section": class_section
+                "class_section": class_section
             },
             "guardian": {
                 "name": "",  # Will be replaced below
@@ -4297,7 +4303,6 @@ class StudentFeeView(viewsets.ModelViewSet):
             response_data["fees_submitted"] = fees_submitted
 
         return Response(response_data, status=status.HTTP_201_CREATED)
-
 
     @action(detail=False, methods=["get"], url_path="fee_history")
     def fee_history(self, request):
@@ -4380,12 +4385,16 @@ class StudentFeeView(viewsets.ModelViewSet):
         year_level = student_year_level.level
         year_level_fees = FeeStructure.objects.filter(year_level=year_level)
         paid_fees = StudentFee.objects.filter(student_year=student_year_level)
-
-        MONTHS = {month: i for i, month in enumerate(calendar.month_name) if month}
-
+        
         result = []
+        
+        ACADEMIC_MONTHS = [
+            4, 5, 6, 7, 8, 9, 10, 11, 12,  # Apr–Dec
+            1, 2, 3                       # Jan–Mar
+        ]
 
-        for month_name, month_number in MONTHS.items():
+        for month_number in ACADEMIC_MONTHS:
+            month_name = calendar.month_name[month_number]
             month_data = {"month": month_name, "fees": []}
 
             for fee in year_level_fees:
@@ -4398,7 +4407,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                 # print(base_amount)
                 base_amount = max(base_amount, Decimal('0.00'))  
                 if fee.fee_type.lower() == "admission fee":
-                    if month_name != "January":
+                    if month_name != "April":
                         continue
                     total_paid = paid_fees.filter(fee_structure=fee).aggregate(
                         Sum('paid_amount')
@@ -4411,24 +4420,22 @@ class StudentFeeView(viewsets.ModelViewSet):
 
 
                 # Get student fee record for this month+fee_type
-                sf = paid_fees.filter(fee_structure=fee, month=month_number).first()
+                sf = paid_fees.filter(
+                    fee_structure=fee,
+                    month=month_number
+                ).first()
 
-                penalty = Decimal("0.00")
-
-                # Case 1: StudentFee exists → use its penalty
                 if sf:
+                    total_paid = sf.paid_amount
                     penalty = sf.penalty_amount
-
-                # Case 2: No StudentFee exists → calculate penalty based on due_date
                 else:
-                    # Tuition fee only
-                    if fee.fee_type.lower() == "tuition fee":
-                        # Compute expected due date = 15th of that month
-                        year = timezone.now().year
-                        expected_due_date = date(year, month_number, 15)
-
-                        if timezone.now().date() > expected_due_date:
-                            penalty = Decimal("25.00")
+                    #  Only calculate when no record exists
+                    total_paid = Decimal("0.00")
+                    penalty = calculate_penalty(
+                        fee_type=fee.fee_type,
+                        school_year=student_year_level.year,
+                        month=month_number,
+                    )
 
 
                 # --- REAL DUE CALCULATION ---
@@ -4781,7 +4788,7 @@ class StudentFeeView(viewsets.ModelViewSet):
             month = fee.month
             if month not in monthly_map:
                 monthly_map[month] = {
-                    "month": month,
+                    "month": calendar.month_name[month],
                     "total_amount": Decimal("0.00"),
                     "paid_amount": Decimal("0.00"),
                     "due_amount": Decimal("0.00"),
@@ -5258,9 +5265,24 @@ class DefaulterNotifyView(APIView):
                 due_amount__gt=0
             )
 
-            fee_lines = ""
+            # Group fees by month
+            month_wise_fees = defaultdict(list)
+            total_due = 0
+
             for fee in unpaid_fees:
-                fee_lines += f"- {fee.fee_structure.fee_type}: ₹{fee.due_amount}\n"
+                month_name = fee.get_month_display()
+                month_wise_fees[month_name].append(fee)
+                total_due += fee.due_amount   # sum total
+
+            fee_lines = ""
+
+            for month, fees in month_wise_fees.items():
+                fee_lines += f"{month}\n"
+                for f in fees:
+                    fee_lines += f"- {f.fee_structure.fee_type} : ₹{f.due_amount}\n"
+                fee_lines += "\n" 
+
+            fee_lines += f"Total Due Amount : ₹{total_due}\n"
 
             # Final message
             message = (
@@ -5278,13 +5300,10 @@ class DefaulterNotifyView(APIView):
             # Send WhatsApp
             if phone:
                 send_whatsapp(message, phone)
-                result=send_whatsapp(message, phone)
-                print("WHATSAPP RESULT =>", result)
-
 
         return Response(
             {
-                "message": "Email notification and whatsapp message sent to all defaulters.",
+                "message": "Notifications sent to all defaulters.",
                 "defaulters_count": len(defaulters),
             },
             status=status.HTTP_200_OK,
