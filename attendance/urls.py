@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import *
 
 router = DefaultRouter()
-router.register(r'multiple-attendance', MultipleAttendanceViewSet1, basename='MultipleAttendanceViewSet1')
+router.register(r'student-attendance', StudentAttendanceView, basename='StudentAttendanceViewSet')
 router.register(r'api/report', AttendanceReportViewSet, basename='attendance-report')
 router.register(r'director-dashboard', DirectorAttendanceDashboard, basename='attendance-text-summary')
 router.register(r'teacher-dashboard', TeacherAttendanceDashboard, basename='teacher-student-attendance')
@@ -13,6 +13,7 @@ router.register(r'guardian/attendance', GuardianChildrenAttendanceViewSet, basen
 router.register('events', SchoolEventViewSet, basename='event')
 router.register(r'holidays',HolidayViewSet,basename='holidays')
 router.register("office-staff-attendance", OfficeStaffAttendanceView, basename="office-staff-attendance")
+router.register("teacher-attendance", TeacherAttendanceView, basename="teacher-attendance")
 
 
 urlpatterns = [

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from . models import SubstituteAssignment, Teacher, TeacherYearLevel , TeacherAttendance ,SubstituteAssignment
+from . models import SubstituteAssignment, Teacher, TeacherYearLevel, SubstituteAssignment
 from authentication . models import User
 from director . models import Role
 from django.db import IntegrityError
@@ -393,38 +393,3 @@ class SubstituteAssignmentSerializer(serializers.ModelSerializer):
 
         return attrs
 
-
-# [
-    # {
-    #     "absent_teacher": 1,
-    #     "substitute_teacher": 6,
-    #     "year_level": 15,
-    #     "period": "Period 1",
-    #     "date": "2025-08-18"
-    # },
-#     {
-#         "absent_teacher": 1,
-#         "substitute_teacher": 7,
-#         "year_level": 15,
-#         "period": "Period 2",
-#         "date": "2025-08-18"
-#     },
-    # {
-    #     "absent_teacher": 2,
-    #     "substitute_teacher": 8,
-    #     "year_level": 15,
-    #     "period": "Period 1",
-    #     "date": "2025-08-18"
-    # }
-# ]
-
-
-class TeacherAttendanceSerializer(serializers.ModelSerializer):
-    teacher_name = serializers.SerializerMethodField()
-
-    class Meta:
-        model = TeacherAttendance
-        fields = ["id", "date", "status", "teacher", "teacher_name"]
-
-    def get_teacher_name(self, obj):
-        return f"{obj.teacher.user.first_name} {obj.teacher.user.last_name}"

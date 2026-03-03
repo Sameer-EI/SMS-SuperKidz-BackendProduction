@@ -6,7 +6,7 @@ from rest_framework import status, viewsets
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
-from attendance.models import SchoolHoliday
+from attendance.models import SchoolHoliday, Attendance
 
 from .models import Teacher,TeacherYearLevel
 from .serializers import *
@@ -304,10 +304,7 @@ class TeacherView(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK)
     
     
-  
-from rest_framework import viewsets, status
-from rest_framework.response import Response
-from .models import TeacherYearLevel
+
 from .serializers import TeacherYearLevelSerializer
 from director.permission import RoleBasedPermissionteacheryearlevel
 
@@ -332,13 +329,6 @@ class TeacherYearLevelView(viewsets.ModelViewSet):
 
 
 
-from collections import defaultdict
-from datetime import datetime
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from django.utils import timezone
-
 class AllTeachersWithYearLevelsAPIView(APIView):
     def get(self, request):
         date_value = request.GET.get('date_value')
@@ -362,8 +352,8 @@ class AllTeachersWithYearLevelsAPIView(APIView):
         result = []
 
         for teacher in teachers:
-            attendance = TeacherAttendance.objects.filter(teacher=teacher, date=target_date).first()
-            attendance_status = attendance.status.lower() if attendance else "not marked"
+            attendance = Attendance.objects.filter(teacher=teacher,marked_at=target_date).first()
+            attendance_status = (attendance.get_status_display().lower()if attendance else "not marked")
 
             if filter_status != 'all':
                 if attendance_status == "not marked":
@@ -439,20 +429,23 @@ class AbsentTeacherFreeReplacementAPIView(APIView):
 
         # ---- attendance sets ----
         absent_ids = set(
-            TeacherAttendance.objects.filter(
-                date=target_date, status__iexact="absent"
+            Attendance.objects.filter(
+                marked_at=target_date,
+                status="A"
             ).values_list("teacher_id", flat=True)
         )
 
         leave_ids = set(
-            TeacherAttendance.objects.filter(
-                date=target_date, status__iexact="leave"
+            Attendance.objects.filter(
+                marked_at=target_date,
+                status="L"
             ).values_list("teacher_id", flat=True)
         )
 
         present_ids = set(
-            TeacherAttendance.objects.filter(
-                date=target_date, status__iexact="present"
+            Attendance.objects.filter(
+                marked_at=target_date,
+                status="P"
             ).values_list("teacher_id", flat=True)
         )
 
@@ -589,204 +582,6 @@ class AbsentTeacherFreeReplacementAPIView(APIView):
         return Response({"absent_teachers": result}, status=status.HTTP_200_OK)
 
 
-
-class TeacherAttendanceAPIView(APIView):
-    def post(self, request):
-        data = request.data
-
-        # Detect input type
-        records = [data] if isinstance(data, dict) else data if isinstance(data, list) else None
-        if records is None:
-            return Response({'error': 'Invalid input format. Must be dict or list.'}, status=400)
-
-        results = []
-        errors = []
-
-        for record in records:
-            teacher_id = record.get('teacher_id')
-            status_input = record.get('status')
-            date_str = record.get('date', str(date.today()))
-
-            # Missing fields
-            if not teacher_id or not status_input:
-                errors.append({'error': 'teacher_id and status are required', 'data': record})
-                continue
-
-            try:
-                attendance_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-            except ValueError:
-                errors.append({'error': f'Invalid date format: {date_str}'})
-                continue
-
-            # Teacher existence check
-            try:
-                teacher = Teacher.objects.get(id=teacher_id)
-                teacher_name = teacher.user.get_full_name()
-            except Teacher.DoesNotExist:
-                errors.append({'error': f"Teacher not found (ID: {teacher_id})"})
-                continue
-
-            # Future date validation
-            if attendance_date > date.today():
-                errors.append({
-                    "error": f"Cannot mark attendance for a future date for {teacher_name} on {attendance_date}.",
-                    "teacher_id": teacher_id
-                })
-                continue
-
-            # Sunday check
-            if attendance_date.weekday() == 6:
-                errors.append({
-                    "error": f"Cannot mark attendance on Sunday for {teacher_name} on {attendance_date}.",
-                    "teacher_id": teacher_id
-                })
-                continue
-
-            # School holiday validation
-            if SchoolHoliday.objects.filter(date=attendance_date).exists():
-                errors.append({
-                    "error": f"Cannot mark attendance on a school holiday for {teacher_name} on {attendance_date}.",
-                    "teacher_id": teacher_id
-                })
-                continue
-
-            # General holiday validation
-            if Holiday.objects.filter(start_date__lte=attendance_date, end_date__gte=attendance_date).exists():
-                errors.append({
-                    "error": f"Cannot mark attendance on a holiday for {teacher_name} on {attendance_date}.",
-                    "teacher_id": teacher_id
-                })
-                continue
-
-            # Only within last 7 days
-            seven_days_ago = date.today() - timedelta(days=7)
-            if attendance_date < seven_days_ago:
-                errors.append({
-                    "error": f"You can only mark attendance for the last 7 days for {teacher_name}.",
-                    "teacher_id": teacher_id
-                })
-                continue
-
-            # Already marked check
-            if TeacherAttendance.objects.filter(teacher=teacher, date=attendance_date).exists():
-                errors.append({
-                    "message": f"Attendance already marked for {teacher_name} on {attendance_date}.",
-                    "teacher_id": teacher_id,
-                    "date": str(attendance_date)
-                })
-                continue
-
-            # Create attendance
-            TeacherAttendance.objects.create(
-                teacher=teacher,
-                date=attendance_date,
-                status=status_input
-            )
-
-            results.append({
-                "message": "Attendance marked successfully",
-                "teacher_id": teacher_id,
-                "teacher_name": teacher_name,
-                "status": status_input,
-                "date": str(attendance_date)
-            })
-
-        response_data = {
-            "success_count": len(results),
-            "error_count": len(errors),
-            "details": {
-                "marked": results,
-                "skipped": errors
-            }
-        }
-
-        return Response(response_data, status=200 if results else 400)
-  
-class TeacherAttendanceGetAPI(APIView):
-    def get(self, request, id=None):
-        if id:  
-            try:
-                attendance_record = TeacherAttendance.objects.get(id=id)
-                # print(attendance_record)
-            except TeacherAttendance.DoesNotExist:
-                return Response({'error': 'Attendance record not found'}, status=404)
-            serializer = TeacherAttendanceSerializer(attendance_record)
-        else:  
-            attendance_records = TeacherAttendance.objects.all()
-            # print(attendance_records)
-            serializer = TeacherAttendanceSerializer(attendance_records, many=True)
-        return Response(serializer.data)
-
-    
-    def put(self, request, id):
-        try:
-            attendance_record = TeacherAttendance.objects.get(id=id)
-        except TeacherAttendance.DoesNotExist:
-            return Response({'error': 'Attendance record not found'}, status=404)
-
-        teacher = attendance_record.teacher
-        teacher_name = teacher.user.get_full_name()
-
-        # New date (or fallback to existing)
-        attendance_date_str = request.data.get('date', str(attendance_record.date))
-
-        try:
-            attendance_date = datetime.strptime(attendance_date_str, "%Y-%m-%d").date()
-        except ValueError:
-            return Response({
-                'error': f'Invalid date format for {teacher_name}: {attendance_date_str}'
-            }, status=400)
-
-        # Future date
-        if attendance_date > date.today():
-            return Response({
-                'error': f'Cannot update attendance for a future date for {teacher_name} on {attendance_date}.'
-            }, status=400)
-
-        # Sunday
-        if attendance_date.weekday() == 6:
-            return Response({
-                'error': f'Cannot update attendance on Sunday for {teacher_name} on {attendance_date}.'
-            }, status=400)
-
-        # School holiday
-        if SchoolHoliday.objects.filter(date=attendance_date).exists():
-            return Response({
-                'error': f'Cannot update attendance on a school holiday for {teacher_name} on {attendance_date}.'
-            }, status=400)
-
-        # General holiday
-        if Holiday.objects.filter(start_date__lte=attendance_date, end_date__gte=attendance_date).exists():
-            return Response({
-                'error': f'Cannot update attendance on a holiday for {teacher_name} on {attendance_date}.'
-            }, status=400)
-
-        # Past 7 days
-        seven_days_ago = date.today() - timedelta(days=7)
-        if attendance_date < seven_days_ago:
-            return Response({
-                'error': f'You can only update attendance within the last 7 days for {teacher_name}.'
-            }, status=400)
-
-        # Duplicate date check (if date changed)
-        if attendance_record.date != attendance_date:
-            if TeacherAttendance.objects.filter(teacher=teacher, date=attendance_date).exists():
-                return Response({
-                    'error': f'Attendance already exists for {teacher_name} on {attendance_date}.'
-                }, status=400)
-
-        serializer = TeacherAttendanceSerializer(attendance_record, data=request.data, partial=True)
-
-        if serializer.is_valid():
-            serializer.save()
-            return Response({
-                "message": "Attendance updated successfully",
-                "teacher_id": teacher.id,
-                "teacher_name": teacher_name,
-                "updated_data": serializer.data
-            })
-
-        return Response(serializer.errors, status=400)
 
 class SubstituteAssignmentView(APIView):
     def get(self, request):
