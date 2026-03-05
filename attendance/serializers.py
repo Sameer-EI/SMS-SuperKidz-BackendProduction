@@ -91,7 +91,7 @@ class StudentAttendanceSerializer(serializers.ModelSerializer):
                     level_id=year_level_id
             ).exists():
                 raise serializers.ValidationError(
-                    f"Student {student.id}-{student.user.get_full_name} does not belong to this year level."
+                    f"{student.user.get_full_name()} - {student.id} does not belong to this year level."
                 )
 
         # Duplicate check here (student specific)
@@ -303,7 +303,8 @@ class TeacherAttendanceSerializer(serializers.ModelSerializer):
         # Duplicate attendance check
         already_marked = Attendance.objects.filter(
             teacher_id__in=all_ids,
-            marked_at=marked_at
+            marked_at=marked_at,
+            student__isnull=True
         ).values_list("teacher_id", flat=True)
 
         if already_marked:

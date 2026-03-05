@@ -51,7 +51,7 @@ class Attendance(models.Model):
             ),
             models.UniqueConstraint(
                 fields=['teacher', 'marked_at'],
-                condition=Q(teacher__isnull=False),
+                condition=Q(teacher__isnull=False) & Q(student__isnull=True),
                 name='unique_teacher_attendance'
             ),
             models.UniqueConstraint(
