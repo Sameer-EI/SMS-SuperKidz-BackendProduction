@@ -324,8 +324,8 @@ from decimal import Decimal
 from django.utils import timezone
 
 def get_fee_due_year(school_year, month):
-    # Apr–Dec → start year, Jan–Mar → end year
-    if month >= 4:
+    # For a July-start academic year: Jul–Dec → start year, Jan–Jun → end year
+    if month >= 7:
         return int(school_year.start_date.year)
     return int(school_year.end_date.year)
 
@@ -335,11 +335,28 @@ def calculate_penalty(fee_type, school_year, month):
         return Decimal("0.00")
 
     today = timezone.now().date()
+    today_month = today.month
+    today_year = today.year
 
-    # decide correct year for the month
-    due_year = get_fee_due_year(school_year, month)
+    # Determine the correct year for this month based on TODAY's date
+    # If we're currently in months 1-6, fees starting July are for THIS year
+    # If we're currently in months 7-12, fees starting July next year are for NEXT year
+    if today_month <= 6:
+        # Currently Jan-June
+        if month >= 7:
+            due_year = today_year
+        else:
+            due_year = today_year + 1
+    else:
+        # Currently Jul-Dec
+        if month >= 7:
+            due_year = today_year
+        else:
+            due_year = today_year + 1
+    
     due_date = date(due_year, month, 15)
 
+    # Only apply penalty if the due date has actually passed
     if today > due_date:
         return Decimal("25.00")
 

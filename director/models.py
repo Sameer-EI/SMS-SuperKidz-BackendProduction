@@ -408,12 +408,12 @@ class FeeStructure(models.Model):
         ('Maintenance','Maintenance'),
         ('Form Fee','Form Fee'),
         ('Others','Others'),
+        ('Annual Charges','Annual Charges'),
         ]
     
     master_fee = models.ForeignKey(MasterFee,on_delete=models.CASCADE,related_name="fee_structures")
     fee_type = models.CharField(max_length=100,choices=FEE_TYPE)#add chioce 
     fee_amount = models.FloatField()
-    # year_level = models.ForeignKey("YearLevel",on_delete=models.CASCADE,related_name="fee_structures")
     year_level = models.ManyToManyField("YearLevel", related_name="fee_structures")  # Multiple classes
 
 

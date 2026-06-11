@@ -4387,8 +4387,8 @@ class StudentFeeView(viewsets.ModelViewSet):
         result = []
         
         ACADEMIC_MONTHS = [
-            4, 5, 6, 7, 8, 9, 10, 11, 12,  # Apr–Dec
-            1, 2, 3                       # Jan–Mar
+            7, 8, 9, 10, 11, 12,  # Jul–Dec
+            1, 2, 3, 4, 5, 6      # Jan–Jun
         ]
 
         for month_number in ACADEMIC_MONTHS:
@@ -4396,6 +4396,12 @@ class StudentFeeView(viewsets.ModelViewSet):
             month_data = {"month": month_name, "fees": []}
 
             for fee in year_level_fees:
+                payment_structure = fee.master_fee.payment_structure if fee.master_fee else "monthly"
+                if payment_structure == "yearly" and month_number != 7:
+                    continue
+                if payment_structure == "quarterly" and month_number not in (7, 10, 1, 4):
+                    continue
+
                 discount_total = AppliedFeeDiscount.objects.filter(
                     student=student_year_level,
                     fee_type=fee
@@ -4405,7 +4411,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                 # print(base_amount)
                 base_amount = max(base_amount, Decimal('0.00'))  
                 if fee.fee_type.lower() == "admission fee":
-                    if month_name != "April":
+                    if month_name != "July":
                         continue
                     total_paid = paid_fees.filter(fee_structure=fee).aggregate(
                         Sum('paid_amount')
