@@ -4671,6 +4671,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                     "fee_type": sf.fee_structure.fee_type,
                     "original_amount": str(sf.original_amount),
                     "paid_amount": str(sf.paid_amount),
+                    "penalty": str(sf.penalty_amount),
                     "due_amount": str(sf.due_amount),
                     "status": sf.status,
                     "month": calendar.month_name[sf.month] if sf.month else None,
@@ -5367,6 +5368,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                 "amount_paid": str(fee.paid_amount),
                 "original_amount": str(fee.original_amount),
                 "discount": str(discount_value),
+                "penalty": str(fee.penalty_amount),
                 "due_amount": str(fee.due_amount),
                 "status": fee.status,
                 "student_fee_id": fee.id,
@@ -5436,6 +5438,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                     "total_amount": Decimal("0.00"),
                     "paid_amount": Decimal("0.00"),
                     "due_amount": Decimal("0.00"),
+                    "penalty_amount": Decimal("0.00"),
                     "fee_type": []
                 }
 
@@ -5447,6 +5450,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                 "type": fee.fee_structure.fee_type,
                 "amount": float(total)
             })
+            monthly_map[month]["penalty_amount"] += fee.penalty_amount
 
         result = {
             "student_id": student_year.student.id,
@@ -5464,6 +5468,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                 "total_amount": float(data["total_amount"]),
                 "paid_amount": float(data["paid_amount"]),
                 "due_amount": float(data["due_amount"]),
+                "penalty_amount": float(data["penalty_amount"]),
             })
 
         return Response(result)
