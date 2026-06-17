@@ -32,7 +32,7 @@ from decimal import Decimal, InvalidOperation
 import razorpay
 from django.conf import settings
 from django.shortcuts import get_object_or_404
-from datetime import datetime
+from datetime import datetime, date
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import viewsets, status
@@ -4000,6 +4000,76 @@ class StudentFeeView(viewsets.ModelViewSet):
         unique_suffix = uuid.uuid4().hex[:4].upper()
         return f'REC-{today}-{new_number:05d}-{unique_suffix}'
 
+    def _successful_fee_paid_amount(self, student_fee):
+        return (
+            FeePayment.objects.filter(
+                student_fee=student_fee,
+                status="success"
+            ).aggregate(total=Sum("amount"))["total"]
+            or Decimal("0.00")
+        )
+
+    def _refresh_fee_payment_totals(self, student_fee):
+        student_fee.paid_amount = self._successful_fee_paid_amount(student_fee)
+        student_fee.due_amount = max(
+            student_fee.original_amount
+            - student_fee.paid_amount
+            + student_fee.penalty_amount,
+            Decimal("0.00")
+        )
+        if student_fee.due_amount <= 0:
+            student_fee.status = "paid"
+        elif student_fee.paid_amount > 0:
+            student_fee.status = "partial"
+        else:
+            student_fee.status = "pending"
+        student_fee.save()
+        return student_fee
+
+    def _decimal_amount(self, value):
+        return Decimal(str(value or 0)).quantize(
+            Decimal("0.01"),
+            rounding=ROUND_HALF_UP
+        )
+
+    def _custom_penalty_allocations(self, fee_data, target_months):
+        month_penalties = (
+            fee_data.get("month_penalties")
+            or fee_data.get("penalties_by_month")
+            or {}
+        )
+        if isinstance(month_penalties, dict) and month_penalties:
+            return [
+                self._decimal_amount(
+                    month_penalties.get(str(month), month_penalties.get(month, 0))
+                )
+                for month in target_months
+            ]
+
+        if isinstance(month_penalties, list) and month_penalties:
+            penalty_map = {
+                item.get("month"): item.get("amount", item.get("penalty_amount", 0))
+                for item in month_penalties
+            }
+            return [
+                self._decimal_amount(penalty_map.get(month, 0))
+                for month in target_months
+            ]
+
+        total_penalty = self._decimal_amount(
+            fee_data.get("penalty_amount", fee_data.get("penalty", 0))
+        )
+        if not target_months:
+            return []
+
+        per_month = (total_penalty / len(target_months)).quantize(
+            Decimal("0.01"),
+            rounding=ROUND_HALF_UP
+        )
+        allocations = [per_month for _ in target_months]
+        allocations[-1] += total_penalty - sum(allocations)
+        return allocations
+
     
     @action(detail=False, methods=["get"], url_path="student_unpaid_fees")
     def student_unpaid_fees(self, request):
@@ -4099,11 +4169,23 @@ class StudentFeeView(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='submit_fee')
     def submit_fee(self, request):
-        payment_mode = request.data.get("payment_method", "").lower()
+        # payment_mode = request.data.get("payment_method", "").lower()
         cheque_number = request.data.get("cheque_number") 
         student_year_id = request.data.get("student_year_id")
         school_year_id = request.data.get("school_year_id")
         fees_data = request.data.get("fees", [])
+        payment_methods = request.data.get("payment_methods", [])
+        payment_mode = request.data.get("payment_method")
+        if payment_mode and not payment_methods:
+            payment_methods = [
+                {
+                    "method": payment_mode.lower(),
+                    "amount": sum(
+                        Decimal(str(fee.get("amount", 0)))
+                        for fee in fees_data
+                    )
+                }
+            ]
 
         if not student_year_id or not fees_data:
             return Response(
@@ -4113,6 +4195,7 @@ class StudentFeeView(viewsets.ModelViewSet):
 
         total_amount = Decimal("0.00")
         created_records = []
+        created_payment_ids = []
 
         try:
             student_year = StudentYearLevel.objects.get(id=student_year_id)
@@ -4122,110 +4205,363 @@ class StudentFeeView(viewsets.ModelViewSet):
         # Generate a single receipt number for all fees submitted in this request
         receipt_number = self.generate_receipt_number()
 
-        for fee_data in fees_data:
-            amount_paid = Decimal(str(fee_data.get("amount", "0.00"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-
-            serializer = self.get_serializer(
-                data={
-                    "student_year_id": student_year_id,
-                    "fee_structure_id": fee_data.get("fee_type_id"),
-                    "school_year_id": school_year_id,
-                    "month": fee_data.get("month"),
-                },
-                context={'request': request, 'payment_method': payment_mode}
-            )
-            serializer.is_valid(raise_exception=True)
-            student_fee = serializer.save()
-
-            due_date_str = fee_data.get("due_date")
-            if due_date_str:
-                student_fee.due_date = datetime.strptime(due_date_str, "%Y-%m-%d").date()
-            else:
-                month = int(fee_data.get("month"))
-                due_year = get_fee_due_year(student_fee.school_year, month)
-                student_fee.due_date = date(due_year, month, 15)
-
-            student_fee.penalty_amount = calculate_penalty(
-                fee_type=student_fee.fee_structure.fee_type,
-                school_year=student_fee.school_year,
-                month=student_fee.month
+        if not payment_methods:
+            return Response(
+                {"error": "payment_methods or payment_method is required."},
+                status=status.HTTP_400_BAD_REQUEST
             )
 
-
-            # # --- APPLY PENALTY BEFORE VALIDATION ---
-            # today = timezone.now().date()
-            # if student_fee.fee_structure.fee_type.lower() == "tuition fee" and student_fee.due_date and today > student_fee.due_date:
-            #     student_fee.penalty_amount = Decimal("25.00")
-            # else:
-            #     student_fee.penalty_amount = Decimal("0.00")
-
-            # --- CALCULATE max_payable INCLUDING penalty ---
-            max_payable = (
-                student_fee.original_amount
-                - student_fee.paid_amount
-                + student_fee.penalty_amount
-            ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-
-            if max_payable < 0:
-                max_payable = Decimal("0.00")
-
-            # --- VALIDATION USING CORRECT max_payable ---
-            if amount_paid > max_payable:
+        allowed_payment_methods = {"cash", "online", "cheque"}
+        normalized_payment_methods = []
+        for item in payment_methods:
+            method = str(item.get("method", "")).lower()
+            amount = Decimal(str(item.get("amount", 0))).quantize(
+                Decimal("0.01"),
+                rounding=ROUND_HALF_UP
+            )
+            if method not in allowed_payment_methods:
                 return Response(
-                    {"error": f"Amount cannot exceed due amount after discount: {max_payable}"},
+                    {"error": f"Invalid payment method: {method}"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
+            if amount <= 0:
+                return Response(
+                    {"error": "Each payment method amount must be greater than zero."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            normalized_payment_methods.append({"method": method, "amount": amount})
 
-            FeePayment.objects.create(
-                student_fee=student_fee,
-                amount=amount_paid,
-                payment_method=payment_mode,
-                cheque_number=cheque_number,
-                status="success" if payment_mode != "online" else "initiated",
-                payment_date=timezone.now() if payment_mode != "online" else None,
-                received_by=request.user,
-                notes=f"Fee payment for {student_fee.fee_structure.fee_type} - Month {student_fee.month}"
+        payment_methods = normalized_payment_methods
+        original_payment_methods = [
+            {"method": item["method"], "amount": item["amount"]}
+            for item in payment_methods
+        ]
+        split_total = sum(item["amount"] for item in payment_methods)
+        fee_total = sum(
+            Decimal(str(fee.get("amount", 0))).quantize(
+                Decimal("0.01"),
+                rounding=ROUND_HALF_UP
+            )
+            for fee in fees_data
+        )
+
+        if split_total != fee_total:
+            return Response(
+                {
+                    "error":
+                    f"Split payment total ({split_total}) "
+                    f"must equal fee total ({fee_total})"
+                },
+                status=400
             )
 
-            student_fee.paid_amount = FeePayment.objects.filter(student_fee=student_fee).aggregate(
-                total=Sum('amount')
-            )['total'] or Decimal("0.00")
+        for fee_data in fees_data:
+            amount_paid = Decimal(str(fee_data.get("amount", "0.00"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            months = fee_data.get("months")
+            selected_student_fees = []
 
-
-            # today = timezone.now().date()
-            # if (student_fee.fee_structure.fee_type.lower() == "tuition fee"
-            #         and student_fee.due_date
-            #         and today > student_fee.due_date):
-            #     student_fee.penalty_amount = Decimal("25.00")
-            # else:
-            #     student_fee.penalty_amount = Decimal("0.00")
-
-
-            student_fee.due_amount = max(
-                student_fee.original_amount - student_fee.paid_amount + student_fee.penalty_amount,
-                Decimal("0.00")
-            )
-
-            if payment_mode == "online":
-                student_fee.status = "pending"
+            if months:
+                target_months = months
             else:
+                target_months = [fee_data.get("month")]
+            penalty_allocations = self._custom_penalty_allocations(
+                fee_data,
+                target_months
+            )
+
+            for month, penalty_amount in zip(target_months, penalty_allocations):
+                serializer = self.get_serializer(
+                    data={
+                        "student_year_id": student_year_id,
+                        "fee_structure_id": fee_data.get("fee_type_id"),
+                        "school_year_id": school_year_id,
+                        "month": month,
+                    },
+                    context={"request": request}
+                )
+                serializer.is_valid(raise_exception=True)
+                student_fee = serializer.save()
+
+                due_date_str = fee_data.get("due_date")
+                if due_date_str:
+                    student_fee.due_date = datetime.strptime(
+                        due_date_str,
+                        "%Y-%m-%d"
+                    ).date()
+                elif student_fee.month:
+                    due_year = get_fee_due_year(
+                        student_fee.school_year,
+                        student_fee.month
+                    )
+                    student_fee.due_date = date(
+                        due_year,
+                        student_fee.month,
+                        15
+                    )
+
+                student_fee.penalty_amount = penalty_amount
+                student_fee.paid_amount = self._successful_fee_paid_amount(student_fee)
+                student_fee.due_amount = max(
+                    student_fee.original_amount
+                    - student_fee.paid_amount
+                    + student_fee.penalty_amount,
+                    Decimal("0.00")
+                ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 if student_fee.due_amount <= 0:
                     student_fee.status = "paid"
                 elif student_fee.paid_amount > 0:
                     student_fee.status = "partial"
                 else:
                     student_fee.status = "pending"
+                student_fee.receipt_number = receipt_number
+                student_fee.save()
+                selected_student_fees.append(student_fee)
 
-            student_fee.receipt_number = receipt_number
-            student_fee.save()
+            selected_due = sum(
+                student_fee.due_amount
+                for student_fee in selected_student_fees
+            ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+            if amount_paid > selected_due:
+                return Response(
+                    {
+                        "error": f"Amount cannot exceed selected due amount: {selected_due}",
+                        "selected_due_amount": str(selected_due),
+                        "selected_fees": [
+                            {
+                                "student_fee_id": student_fee.id,
+                                "fee_type": student_fee.fee_structure.fee_type,
+                                "month": student_fee.month,
+                                "penalty_amount": str(student_fee.penalty_amount),
+                                "due_amount": str(student_fee.due_amount),
+                                "paid_amount": str(student_fee.paid_amount),
+                                "status": student_fee.status,
+                            }
+                            for student_fee in selected_student_fees
+                        ]
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            fee_amount_remaining = amount_paid
+            for student_fee in selected_student_fees:
+                fee_due_remaining = student_fee.due_amount
+
+                while fee_due_remaining > 0 and fee_amount_remaining > 0:
+                    payment = next(
+                        (
+                            item
+                            for item in payment_methods
+                            if item["amount"] > 0
+                        ),
+                        None
+                    )
+
+                    if not payment:
+                        return Response(
+                            {"error": "Payment method amounts were exhausted before fees were fully allocated."},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+
+                    method = payment["method"].lower()
+                    allocated = min(
+                        fee_due_remaining,
+                        fee_amount_remaining,
+                        payment["amount"]
+                    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+                    if allocated <= 0:
+                        break
+
+                    fee_payment = FeePayment.objects.create(
+                        student_fee=student_fee,
+                        amount=allocated,
+                        payment_method=method,
+                        cheque_number=cheque_number,
+                        status=(
+                            "pending"
+                            if method == "online"
+                            else "success"
+                        ),
+                        payment_date=(
+                            None
+                            if method == "online"
+                            else timezone.now()
+                        ),
+                        received_by=request.user,
+                        notes=f"Fee payment for {student_fee.fee_structure.fee_type}"
+                    )
+                    created_payment_ids.append(fee_payment.id)
+
+                    payment["amount"] -= allocated
+                    fee_amount_remaining -= allocated
+                    fee_due_remaining -= allocated
+
+                self._refresh_fee_payment_totals(student_fee)
+                student_fee.receipt_number = receipt_number
+                student_fee.save()
+                created_records.append(student_fee)
 
             total_amount += amount_paid
-            created_records.append(student_fee)
 
-        if payment_mode == "online":
-            return self.initiate_payment(request)
+        # if payment_mode == "online":
+        #     return self.initiate_payment(request)
 
-        
+        payment_amounts = {
+            "cash": Decimal("0.00"),
+            "online": Decimal("0.00"),
+            "cheque": Decimal("0.00"),
+        }
+        for item in original_payment_methods:
+            payment_amounts[item["method"]] += item["amount"]
+
+        active_payment_modes = [
+            method
+            for method, amount in payment_amounts.items()
+            if amount > 0
+        ]
+        response_payment_mode = (
+            active_payment_modes[0]
+            if len(active_payment_modes) == 1
+            else "both"
+        )
+
+        def build_fee_response(message):
+            fees_submitted = []
+            for student_fee in created_records:
+                discount_for_fee = AppliedFeeDiscount.objects.filter(
+                    student=student_year,
+                    fee_type=student_fee.fee_structure
+                ).values_list('discount_amount', flat=True).first() or Decimal("0.00")
+                
+                month_num = student_fee.month
+                if month_num and isinstance(month_num, int) and 1 <= month_num <= 12:
+                    month_name = calendar.month_name[month_num]
+                else:
+                    month_name = None
+
+                fees_submitted.append({
+                    "fee_type": student_fee.fee_structure.fee_type,
+                    "month": month_name,
+                    "month_number": month_num,
+                    "amount_paid": str(student_fee.paid_amount),
+                    "original_amount": str(student_fee.original_amount),
+                    "discount": str(discount_for_fee),
+                    "penalty_amount": str(student_fee.penalty_amount),
+                    "due_amount": str(student_fee.due_amount),
+                    "status": student_fee.status,
+                    "student_fee_id": student_fee.id
+                })
+
+            student = student_year.student
+            response_data = {
+                "message": message,
+                "receipt_number": receipt_number,
+                "total_amount_paid": str(total_amount),
+                "payment_mode": response_payment_mode,
+                "payment_date": timezone.now().strftime("%Y-%m-%d"),
+                "school_year" : student_year.year.year_name if student_year.year.year_name else "N/A",
+                "student": {
+                    "id": student.id,
+                    "name": f"{student.user.first_name} {student.user.last_name}",
+                    "roll_number": student.roll_number or "N/A",
+                    "father_name": student.father_name or "N/A",
+                    "mother_name": student.mother_name or "N/A",
+                    "scholar_number": student.scholar_number or "N/A",
+                    "class_name": student_year.level.level_name or "N/A",
+                    # "class_section": class_section
+                },
+                "guardian": {
+                    "name": student.father_name or student.mother_name or "N/A",
+                    "contact": student.contact_number or "N/A"
+                },
+                "amount_paid_by_mode": {
+                    method: str(amount)
+                    for method, amount in payment_amounts.items()
+                },
+                "payments_by_mode": [
+                    {
+                        "payment_mode": method,
+                        "amount_paid": str(amount),
+                    }
+                    for method, amount in payment_amounts.items()
+                    if amount > 0
+                ],
+                "success": True
+            }
+
+            if len(fees_submitted) == 1:
+                response_data["fee"] = fees_submitted[0]
+            else:
+                response_data["fees_submitted"] = fees_submitted
+
+            return response_data
+
+        online_amount = FeePayment.objects.filter(
+            id__in=created_payment_ids,
+            payment_method="online",
+            status="pending"
+        ).aggregate(
+            total=Sum("amount")
+        )["total"] or Decimal("0.00")
+
+        if online_amount > 0:
+            client = razorpay.Client(
+                auth=(
+                    settings.RAZORPAY_KEY_ID,
+                    settings.RAZORPAY_KEY_SECRET
+                )
+            )
+
+            razorpay_order = client.order.create({
+                "amount": int(online_amount * 100),
+                "currency": "INR",
+                "payment_capture": "1",
+                "receipt": receipt_number
+            })
+
+            FeePayment.objects.filter(
+                id__in=created_payment_ids,
+                payment_method="online",
+                status="pending"
+            ).update(
+                razorpay_order_id=razorpay_order["id"]
+            )
+
+            response_data = build_fee_response("Payment initiated successfully.")
+            response_data.update({
+                "online_amount": str(online_amount),
+                "razorpay_order_id": razorpay_order["id"],
+                "razorpay_key_id":settings.RAZORPAY_KEY_ID,
+                "pending_online_payments": [
+                    {
+                        "student_fee_id": payment.student_fee_id,
+                        "fee_type_id": payment.student_fee.fee_structure_id,
+                        "fee_type": payment.student_fee.fee_structure.fee_type,
+                        "month": payment.student_fee.month,
+                        "amount": str(payment.amount),
+                    }
+                    for payment in FeePayment.objects.filter(
+                        id__in=created_payment_ids,
+                        payment_method="online",
+                        status="pending",
+                        razorpay_order_id=razorpay_order["id"]
+                    ).select_related("student_fee__fee_structure")
+                ],
+                "fees": [
+                    {
+                        "student_fee_id": fee.id,
+                        "fee_type": fee.fee_structure.fee_type,
+                        "month": fee.month,
+                        "paid_amount": str(fee.paid_amount),
+                        "due_amount": str(fee.due_amount),
+                        "status": fee.status
+                    }
+                    for fee in created_records
+                ]
+            })
+            return Response(response_data)
+
         # # Get admission to fetch class_section
         # admission = Admission.objects.filter(student=student_year.student).first()
         # class_section = admission.class_section if admission else "N/A"
@@ -4262,7 +4598,7 @@ class StudentFeeView(viewsets.ModelViewSet):
             "message": "Fee record(s) submitted successfully!",
             "receipt_number": receipt_number,
             "total_amount_paid": str(total_amount),
-            "payment_mode": payment_mode,
+            "payment_mode": response_payment_mode,
             "payment_date": timezone.now().strftime("%Y-%m-%d"),
             "school_year" : student_year.year.year_name if student_year.year.year_name else "N/A",
             "student": {
@@ -4279,6 +4615,18 @@ class StudentFeeView(viewsets.ModelViewSet):
                 "name": "",  # Will be replaced below
                 "contact": ""
             },
+            "amount_paid_by_mode": {
+                method: str(amount)
+                for method, amount in payment_amounts.items()
+            },
+            "payments_by_mode": [
+                {
+                    "payment_mode": method,
+                    "amount_paid": str(amount),
+                }
+                for method, amount in payment_amounts.items()
+                if amount > 0
+            ],
             "success": True
         }
 
@@ -4368,84 +4716,185 @@ class StudentFeeView(viewsets.ModelViewSet):
         return Response(response_data)
 
 
+    # @action(  detail=False, methods=["get"], url_path="fee_preview")
+    # def preview(self, request):
+    #     student_year_id = request.query_params.get("student_year_id")
+
+    #     if not student_year_id:
+    #         return Response({"detail": "student_year_id is required"}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+    #     try:
+    #         student_year_level = StudentYearLevel.objects.get(id=student_year_id)
+    #     except StudentYearLevel.DoesNotExist:
+    #         return Response({"detail": "StudentYearLevel not found"}, status=drf_status.HTTP_404_NOT_FOUND)
+
+    #     year_level = student_year_level.level
+    #     year_level_fees = FeeStructure.objects.filter(year_level=year_level)
+    #     paid_fees = StudentFee.objects.filter(student_year=student_year_level)
+        
+    #     result = []
+        
+    #     ACADEMIC_MONTHS = [
+    #         7, 8, 9, 10, 11, 12,  # Jul–Dec
+    #         1, 2, 3, 4, 5, 6      # Jan–Jun
+    #     ]
+
+    #     for month_number in ACADEMIC_MONTHS:
+    #         month_name = calendar.month_name[month_number]
+    #         month_data = {"month": month_name, "fees": []}
+
+    #         for fee in year_level_fees:
+    #             payment_structure = fee.master_fee.payment_structure if fee.master_fee else "monthly"
+    #             if payment_structure == "yearly" and month_number != 7:
+    #                 continue
+    #             if payment_structure == "quarterly" and month_number not in (7, 10, 1, 4):
+    #                 continue
+
+    #             discount_total = AppliedFeeDiscount.objects.filter(
+    #                 student=student_year_level,
+    #                 fee_type=fee
+    #             ).aggregate(total_discount=Sum('discount_amount'))['total_discount'] or Decimal('0.00')
+
+    #             base_amount = Decimal(fee.fee_amount) - Decimal(discount_total)
+    #             # print(base_amount)
+    #             base_amount = max(base_amount, Decimal('0.00'))  
+    #             if fee.fee_type.lower() == "admission fee":
+    #                 if month_name != "July":
+    #                     continue
+    #                 total_paid = paid_fees.filter(fee_structure=fee).aggregate(
+    #                     Sum('paid_amount')
+    #                 )['paid_amount__sum'] or Decimal('0.00')
+    #             else:
+    #                 total_paid = paid_fees.filter(
+    #                     fee_structure=fee,
+    #                     month=month_number
+    #                 ).aggregate(Sum('paid_amount'))['paid_amount__sum'] or Decimal('0.00')
+
+
+    #             # Get student fee record for this month+fee_type
+    #             sf = paid_fees.filter(
+    #                 fee_structure=fee,
+    #                 month=month_number
+    #             ).first()
+
+    #             if sf:
+    #                 total_paid = sf.paid_amount
+    #                 penalty = sf.penalty_amount
+    #             else:
+    #                 total_paid = Decimal("0.00")
+    #                 penalty = Decimal("0.00")
+
+
+    #             # --- REAL DUE CALCULATION ---
+    #             real_due = max(base_amount - total_paid + penalty, Decimal("0.00"))
+
+    #             # --- REAL STATUS ---
+    #             if real_due == 0 and total_paid > 0:
+    #                 status_str = "Paid"
+    #             elif total_paid > 0:
+    #                 status_str = "Partially Paid"
+    #             else:
+    #                 status_str = "Pending"
+
+
+    #             month_data["fees"].append({
+    #                 "fee_id": fee.id,
+    #                 "fee_type": fee.fee_type,
+    #                 "original_amount": str(base_amount),
+    #                 "paid_amount": str(total_paid),
+    #                 "status": status_str,
+    #                 "applied_discount": str(discount_total),
+    #                 "penalty": str(penalty),
+    #                 "due_amount": str(real_due),
+    #             })
+
+    #         if month_data["fees"]:
+    #             result.append(month_data)
+
+    #     return Response(result)
     @action(detail=False, methods=["get"], url_path="fee_preview")
     def preview(self, request):
         student_year_id = request.query_params.get("student_year_id")
 
         if not student_year_id:
-            return Response({"detail": "student_year_id is required"}, status=drf_status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "student_year_id is required"},
+                status=drf_status.HTTP_400_BAD_REQUEST
+            )
 
         try:
             student_year_level = StudentYearLevel.objects.get(id=student_year_id)
         except StudentYearLevel.DoesNotExist:
-            return Response({"detail": "StudentYearLevel not found"}, status=drf_status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"detail": "StudentYearLevel not found"},
+                status=drf_status.HTTP_404_NOT_FOUND
+            )
 
         year_level = student_year_level.level
         year_level_fees = FeeStructure.objects.filter(year_level=year_level)
         paid_fees = StudentFee.objects.filter(student_year=student_year_level)
-        
-        result = []
-        
-        ACADEMIC_MONTHS = [
-            7, 8, 9, 10, 11, 12,  # Jul–Dec
-            1, 2, 3, 4, 5, 6      # Jan–Jun
-        ]
 
-        for month_number in ACADEMIC_MONTHS:
-            month_name = calendar.month_name[month_number]
-            month_data = {"month": month_name, "fees": []}
+        CYCLES = {
+            "Jul-Sep + May": [5, 7, 8, 9],
+            "Oct-Dec + Jun": [6, 10, 11, 12],
+            "Jan-Apr": [1, 2, 3, 4],
+        }
 
-            for fee in year_level_fees:
-                payment_structure = fee.master_fee.payment_structure if fee.master_fee else "monthly"
-                if payment_structure == "yearly" and month_number != 7:
-                    continue
-                if payment_structure == "quarterly" and month_number not in (7, 10, 1, 4):
-                    continue
+        result = {
+            "annual_fees": [],
+            "monthly_fees_by_cycle": {}
+        }
 
-                discount_total = AppliedFeeDiscount.objects.filter(
+        for fee in year_level_fees:
+
+            payment_structure = (
+                fee.master_fee.payment_structure
+                if fee.master_fee
+                else "monthly"
+            )
+
+            discount_total = (
+                AppliedFeeDiscount.objects.filter(
                     student=student_year_level,
                     fee_type=fee
-                ).aggregate(total_discount=Sum('discount_amount'))['total_discount'] or Decimal('0.00')
+                ).aggregate(
+                    total_discount=Sum("discount_amount")
+                )["total_discount"]
+                or Decimal("0.00")
+            )
 
-                base_amount = Decimal(fee.fee_amount) - Decimal(discount_total)
-                # print(base_amount)
-                base_amount = max(base_amount, Decimal('0.00'))  
-                if fee.fee_type.lower() == "admission fee":
-                    if month_name != "July":
-                        continue
-                    total_paid = paid_fees.filter(fee_structure=fee).aggregate(
-                        Sum('paid_amount')
-                    )['paid_amount__sum'] or Decimal('0.00')
-                else:
-                    total_paid = paid_fees.filter(
-                        fee_structure=fee,
-                        month=month_number
-                    ).aggregate(Sum('paid_amount'))['paid_amount__sum'] or Decimal('0.00')
+            base_amount = Decimal(fee.fee_amount) - discount_total
+            base_amount = max(base_amount, Decimal("0.00"))
 
+            # ==========================
+            # ANNUAL FEES
+            # ==========================
+            if payment_structure == "yearly":
 
-                # Get student fee record for this month+fee_type
-                sf = paid_fees.filter(
-                    fee_structure=fee,
-                    month=month_number
-                ).first()
+                total_paid = (
+                    paid_fees.filter(
+                        fee_structure=fee
+                    ).aggregate(
+                        total=Sum("paid_amount")
+                    )["total"]
+                    or Decimal("0.00")
+                )
 
-                if sf:
-                    total_paid = sf.paid_amount
-                    penalty = sf.penalty_amount
-                else:
-                    #  Only calculate when no record exists
-                    total_paid = Decimal("0.00")
-                    penalty = calculate_penalty(
-                        fee_type=fee.fee_type,
-                        school_year=student_year_level.year,
-                        month=month_number,
+                sf = (
+                    paid_fees.filter(
+                        fee_structure=fee
                     )
+                    .order_by("-id")
+                    .first()
+                )
 
+                penalty = sf.penalty_amount if sf else Decimal("0.00")
 
-                # --- REAL DUE CALCULATION ---
-                real_due = max(base_amount - total_paid + penalty, Decimal("0.00"))
+                real_due = max(
+                    base_amount - total_paid + penalty,
+                    Decimal("0.00")
+                )
 
-                # --- REAL STATUS ---
                 if real_due == 0 and total_paid > 0:
                     status_str = "Paid"
                 elif total_paid > 0:
@@ -4453,23 +4902,101 @@ class StudentFeeView(viewsets.ModelViewSet):
                 else:
                     status_str = "Pending"
 
-
-                month_data["fees"].append({
+                result["annual_fees"].append({
                     "fee_id": fee.id,
                     "fee_type": fee.fee_type,
+                    "fee_category": "annual",
                     "original_amount": str(base_amount),
                     "paid_amount": str(total_paid),
                     "status": status_str,
                     "applied_discount": str(discount_total),
                     "penalty": str(penalty),
                     "due_amount": str(real_due),
+                    "payment_breakdown": {}
                 })
 
-            if month_data["fees"]:
-                result.append(month_data)
+                continue
+
+            # ==========================
+            # MONTHLY FEES GROUPED BY CYCLE
+            # ==========================
+            for cycle_name, months in CYCLES.items():
+
+                cycle_original = Decimal("0.00")
+                cycle_paid = Decimal("0.00")
+                cycle_due = Decimal("0.00")
+                cycle_penalty = Decimal("0.00")
+
+                month_details = []
+
+                for month_number in months:
+
+                    sf = paid_fees.filter(
+                        fee_structure=fee,
+                        month=month_number
+                    ).first()
+
+                    if sf:
+                        total_paid = sf.paid_amount
+                        penalty = sf.penalty_amount
+                    else:
+                        total_paid = Decimal("0.00")
+                        penalty = Decimal("0.00")
+
+                    real_due = max(
+                        base_amount - total_paid + penalty,
+                        Decimal("0.00")
+                    )
+
+                    if real_due == 0 and total_paid > 0:
+                        status_str = "Paid"
+                    elif total_paid > 0:
+                        status_str = "Partially Paid"
+                    else:
+                        status_str = "Pending"
+
+                    cycle_original += base_amount
+                    cycle_paid += total_paid
+                    cycle_due += real_due
+                    cycle_penalty += penalty
+
+                    month_details.append({
+                        "month": month_number,
+                        "month_name": calendar.month_name[month_number],
+                        "original_amount": str(base_amount),
+                        "paid_amount": str(total_paid),
+                        "status": status_str,
+                        "penalty": str(penalty),
+                        "due_amount": str(real_due),
+                    })
+
+                if cycle_name not in result["monthly_fees_by_cycle"]:
+                    result["monthly_fees_by_cycle"][cycle_name] = []
+
+                result["monthly_fees_by_cycle"][cycle_name].append({
+                    "fee_id": fee.id,
+                    "fee_type": fee.fee_type,
+                    "fee_category": "monthly",
+                    "payment_period": cycle_name,
+                    "cycle_selectable": True,
+                    "original_amount": str(cycle_original),
+                    "paid_amount": str(cycle_paid),
+                    "status": (
+                        "Paid"
+                        if cycle_due == 0 and cycle_paid > 0
+                        else (
+                            "Partially Paid"
+                            if cycle_paid > 0
+                            else "Pending"
+                        )
+                    ),
+                    "applied_discount": str(discount_total),
+                    "penalty": str(cycle_penalty),
+                    "due_amount": str(cycle_due),
+                    "months": month_details
+                })
 
         return Response(result)
-
 
     @action(detail=False, methods=["POST"], url_path="initiate_payment")
     def initiate_payment(self, request):
@@ -4490,14 +5017,19 @@ class StudentFeeView(viewsets.ModelViewSet):
 
         receipt_number = self.generate_receipt_number()
         created_fees = []
+        pending_payment_items = []
 
         for fee_dict in fees_data:
             fee_id = fee_dict.get("fee_id") or fee_dict.get("fee_type_id")
             month = fee_dict.get("month")
+            paid_amount = Decimal(str(fee_dict.get("amount") or fee_dict.get("paid_amount", 0))).quantize(
+                Decimal("0.01"),
+                rounding=ROUND_HALF_UP
+            )
             try:
                 fee_obj = FeeStructure.objects.get(id=fee_id)
             except FeeStructure.DoesNotExist:
-                continue
+                return Response({"error": f"FeeStructure not found for fee_id {fee_id}."}, status=400)
 
             school_year_id = data.get("school_year_id")
             if school_year_id:
@@ -4524,11 +5056,21 @@ class StudentFeeView(viewsets.ModelViewSet):
             )
 
             created_fees.append(student_fee)
+            if paid_amount > 0:
+                if paid_amount > student_fee.due_amount:
+                    return Response(
+                        {"error": f"Paid amount cannot exceed due amount ({student_fee.due_amount}) for fee_id {fee_id}"},
+                        status=400
+                    )
+                pending_payment_items.append((student_fee, paid_amount))
 
         total_amount = sum(Decimal(str(fee_dict.get("amount") or fee_dict.get("paid_amount", 0))) for fee_dict in fees_data)
 
         if total_amount < Decimal("1.00"):
             return Response({"error": "Paid amount must be at least 1 INR to create Razorpay order."}, status=400)
+
+        if not pending_payment_items:
+            return Response({"error": "No valid online payment amount found."}, status=400)
 
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
         try:
@@ -4541,9 +5083,22 @@ class StudentFeeView(viewsets.ModelViewSet):
         except Exception as e:
             return Response({"error": f"Razorpay order creation failed: {str(e)}"}, status=500)
 
+        for student_fee, paid_amount in pending_payment_items:
+            FeePayment.objects.create(
+                student_fee=student_fee,
+                amount=paid_amount,
+                payment_method="online",
+                status="pending",
+                payment_date=None,
+                received_by=request.user,
+                notes=f"Online fee payment initiated for {student_fee.fee_structure.fee_type}",
+                razorpay_order_id=razorpay_order["id"]
+            )
+
         return Response({
             "message": "Payment initiated successfully - status pending.",
             "razorpay_order_id": razorpay_order["id"],
+            "razorpay_key_id" : settings.RAZORPAY_KEY_ID,
             "receipt_number": receipt_number,
             "fees": [
                 {
@@ -4562,7 +5117,6 @@ class StudentFeeView(viewsets.ModelViewSet):
         data = request.data.copy()
         required_fields = [
             "student_year_id", "selected_fees",
-            "payment_mode", "received_by", 
             "razorpay_order_id", "razorpay_payment_id", "razorpay_signature"
         ]
         missing = [f for f in required_fields if f not in data]
@@ -4571,8 +5125,24 @@ class StudentFeeView(viewsets.ModelViewSet):
 
         student_year_id = data["student_year_id"]
         selected_fees = data["selected_fees"]  
-        payment_mode = data["payment_mode"]
-        received_by = data["received_by"]
+        received_by = data.get("received_by")
+        razorpay_order_id = data["razorpay_order_id"]
+        razorpay_payment_id = data["razorpay_payment_id"]
+        razorpay_signature = data["razorpay_signature"]
+
+        try:
+            client.utility.verify_payment_signature({
+                "razorpay_order_id": razorpay_order_id,
+                "razorpay_payment_id": razorpay_payment_id,
+                "razorpay_signature": razorpay_signature
+            })
+        except SignatureVerificationError:
+            FeePayment.objects.filter(
+                razorpay_order_id=razorpay_order_id,
+                payment_method="online",
+                status="pending"
+            ).update(status="failed")
+            return Response({"error": "Invalid Razorpay payment signature."}, status=400)
 
         try:
             student_year = StudentYearLevel.objects.get(id=student_year_id)
@@ -4609,32 +5179,101 @@ class StudentFeeView(viewsets.ModelViewSet):
                     status=400
                 )
 
+            pending_payment_qs = FeePayment.objects.filter(
+                student_fee=student_fee,
+                payment_method="online",
+                status="pending",
+                razorpay_order_id=razorpay_order_id
+            ).order_by("id")
+
+            pending_payment = pending_payment_qs.first()
+            if not pending_payment:
+                return Response(
+                    {"error": f"Pending online payment not found for fee_id {fee_id} and month {month}."},
+                    status=400
+                )
+
+            if paid_amount != pending_payment.amount:
+                return Response(
+                    {"error": f"Confirmed amount ({paid_amount}) must match initiated online amount ({pending_payment.amount}) for fee_id {fee_id}."},
+                    status=400
+                )
+
             if paid_amount > student_fee.due_amount:
                 return Response(
                     {"error": f"Paid amount cannot exceed due amount ({student_fee.due_amount}) for fee_id {fee_id}"},
                     status=400
                 )
 
-            student_fee.paid_amount += paid_amount
-            student_fee.due_amount = max(student_fee.original_amount - student_fee.paid_amount, Decimal("0.00"))
-            student_fee.status = "paid" if student_fee.due_amount == 0 else "partial"
-            student_fee.save()
+            pending_payment.status = "success"
+            pending_payment.payment_date = timezone.now()
+            if received_by:
+                pending_payment.received_by_id = received_by
+            pending_payment.razorpay_payment_id = razorpay_payment_id
+            pending_payment.razorpay_signature = razorpay_signature
+            pending_payment.save()
 
-            payment = FeePayment.objects.create(
-                student_fee=student_fee,
-                amount=paid_amount,
-                payment_method=payment_mode,
-                status="success",
-                payment_date=timezone.now(),
-                received_by_id=received_by,
-                razorpay_order_id=data["razorpay_order_id"],
-                razorpay_payment_id=data["razorpay_payment_id"],
-                razorpay_signature=data["razorpay_signature"]
-            )
-            created_payments.append(payment)
+            self._refresh_fee_payment_totals(student_fee)
+            created_payments.append(pending_payment)
 
+        receipt_number = created_payments[0].student_fee.receipt_number if created_payments else None
+        receipt_payments = FeePayment.objects.filter(
+            student_fee__receipt_number=receipt_number,
+            status="success"
+        )
+        payment_amounts = {
+            "cash": Decimal("0.00"),
+            "online": Decimal("0.00"),
+            "cheque": Decimal("0.00"),
+        }
+        for payment in receipt_payments:
+            payment_amounts[payment.payment_method] += payment.amount
+
+        total_amount = sum(payment_amounts.values())
+        active_payment_modes = [
+            method
+            for method, amount in payment_amounts.items()
+            if amount > 0
+        ]
+        response_payment_mode = (
+            active_payment_modes[0]
+            if len(active_payment_modes) == 1
+            else "both"
+        )
+
+        student = student_year.student
         return Response({
             "message": "Payment confirmed successfully.",
+            "receipt_number": receipt_number,
+            "total_amount_paid": str(total_amount),
+            "payment_mode": response_payment_mode,
+            "payment_date": timezone.now().strftime("%Y-%m-%d"),
+            "school_year" : student_year.year.year_name if student_year.year.year_name else "N/A",
+            "student": {
+                "id": student.id,
+                "name": f"{student.user.first_name} {student.user.last_name}",
+                "roll_number": student.roll_number or "N/A",
+                "father_name": student.father_name or "N/A",
+                "mother_name": student.mother_name or "N/A",
+                "scholar_number": student.scholar_number or "N/A",
+                "class_name": student_year.level.level_name or "N/A",
+            },
+            "guardian": {
+                "name": student.father_name or student.mother_name or "N/A",
+                "contact": student.contact_number or "N/A"
+            },
+            "amount_paid_by_mode": {
+                method: str(amount)
+                for method, amount in payment_amounts.items()
+            },
+            "payments_by_mode": [
+                {
+                    "payment_mode": method,
+                    "amount_paid": str(amount),
+                }
+                for method, amount in payment_amounts.items()
+                if amount > 0
+            ],
             "payments": [
                 {
                     "id": p.id,
@@ -4644,7 +5283,8 @@ class StudentFeeView(viewsets.ModelViewSet):
                     "month": p.student_fee.month,
                     "receipt_number": p.student_fee.receipt_number
                 } for p in created_payments
-            ]
+            ],
+            "success": True
         }, status=201)
 
 

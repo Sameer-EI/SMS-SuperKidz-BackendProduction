@@ -2747,22 +2747,22 @@ class StudentFeeSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context.get("request")
-        payment_method = validated_data.get("payment_method") or self.context.get("payment_method")
-        cheque_number = validated_data.get("cheque_number")
+        # payment_method = validated_data.get("payment_method") or self.context.get("payment_method")
+        # cheque_number = validated_data.get("cheque_number")
 
         # if payment_method.lower() == "cheque" and not cheque_number:
         #     raise serializers.ValidationError("Cheque number is required when payment method is cheque.")
 
-        if not payment_method:
-            raise serializers.ValidationError("Payment method is required.")
+        # if not payment_method:
+        #     raise serializers.ValidationError("Payment method is required.")
 
         if request and "submit_fee" in str(request.path):
             student_year = StudentYearLevel.objects.get(id=validated_data["student_year_id"])
             fee_structure = FeeStructure.objects.get(id=validated_data["fee_structure_id"])
             school_year = student_year.year
             month = validated_data.get("month")
-            amount_paid = Decimal(validated_data.get("amount_paid", "0.00"))
-            user = request.user
+            # amount_paid = Decimal(validated_data.get("amount_paid", "0.00"))
+            # user = request.user
 
             if not fee_structure.year_level.filter(id=student_year.level.id).exists():
                 raise serializers.ValidationError(
@@ -2770,7 +2770,7 @@ class StudentFeeSerializer(serializers.ModelSerializer):
                 )
 
             applied_discount_obj = AppliedFeeDiscount.objects.filter(
-                student_id=student_year.student.id, fee_type=fee_structure
+                student=student_year, fee_type=fee_structure
             ).first()
 
             if applied_discount_obj:
@@ -2801,41 +2801,28 @@ class StudentFeeSerializer(serializers.ModelSerializer):
                 student_fee.applied_discount = True
                 student_fee.save()
 
-            # --- NEW: Apply penalty BEFORE validating payment ---
-            today = timezone.now().date()
-            if fee_structure.fee_type.lower() == "tuition fee" and student_fee.due_date and today > student_fee.due_date:
-                student_fee.penalty_amount = Decimal("25.00")
-            else:
-                student_fee.penalty_amount = Decimal("0.00")
-
-            # --- NEW: Calculate due including penalty ---
             student_fee.due_amount = (
                 student_fee.original_amount 
                 - student_fee.paid_amount 
                 + student_fee.penalty_amount
             )
 
-            # --- NEW: Validate payment WITH penalty included ---
-            if amount_paid > student_fee.due_amount:
-                raise serializers.ValidationError(f"Amount cannot exceed due amount: {student_fee.due_amount}")
-
-
             # student_fee.paid_amount += amount_paid
             student_fee.due_amount = max(student_fee.original_amount - student_fee.paid_amount + student_fee.penalty_amount, Decimal("0.00"))
 
-            payment_mode = request.data.get("payment_method", "").lower()
+            # payment_mode = request.data.get("payment_method", "").lower()
 
-            if payment_mode == "online":
-                student_fee.status = "pending"
-            else:
-                student_fee.paid_amount += amount_paid
-                student_fee.due_amount = student_fee.original_amount - student_fee.paid_amount + student_fee.penalty_amount
-                if student_fee.due_amount <= 0:
-                    student_fee.status = "paid"
-                elif student_fee.paid_amount > 0:
-                    student_fee.status = "partial"
-                else:
-                    student_fee.status = "pending"
+            # if payment_mode == "online":
+            #     student_fee.status = "pending"
+            # else:
+            #     student_fee.paid_amount += amount_paid
+            #     student_fee.due_amount = student_fee.original_amount - student_fee.paid_amount + student_fee.penalty_amount
+            #     if student_fee.due_amount <= 0:
+            #         student_fee.status = "paid"
+            #     elif student_fee.paid_amount > 0:
+            #         student_fee.status = "partial"
+            #     else:
+            #         student_fee.status = "pending"
 
 
             student_fee.save()
