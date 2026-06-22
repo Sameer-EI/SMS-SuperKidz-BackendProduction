@@ -455,7 +455,7 @@ class StudentFee(models.Model):
     status = models.CharField(max_length=20, choices=[('pending', 'Pending'),('partial', 'Partial'),('paid', 'Paid'),], default='pending')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    receipt_number = models.CharField(max_length=50, editable=False, blank=True, auto_created=True)
+    receipt_number = models.CharField(max_length=225, editable=False, blank=True, auto_created=True)
 
     def __str__(self):
         return f"{self.student_year.student.user.first_name} - {self.fee_structure.fee_type} - paid amount {self.paid_amount} - due amount {self.due_amount} - {self.status}  - {self.school_year.year_name}  - month {self.month}"
@@ -491,6 +491,7 @@ class FeePayment(models.Model):
     razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
     razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)#
     razorpay_signature = models.CharField(max_length=255, blank=True, null=True)#
+    receipt_number = models.CharField(max_length=225, editable=False, blank=True, auto_created=True)
 
     class Meta:
         db_table = "fee_payment"

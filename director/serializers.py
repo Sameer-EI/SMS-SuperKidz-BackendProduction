@@ -2713,7 +2713,7 @@ class StudentFeeSerializer(serializers.ModelSerializer):
     def get_month_name(self, obj):
         if obj.month and 1 <= obj.month <= 12:
             return calendar.month_name[obj.month]
-        return "Unknown"
+        return "Annual"
 
     def get_student_name(self, obj):
         student = obj.student_year.student

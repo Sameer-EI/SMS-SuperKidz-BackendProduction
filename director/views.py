@@ -3,7 +3,7 @@ import requests
 from requests.auth import HTTPBasicAuth
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from django.db.models import Count
+from django.db.models import Count, Prefetch
 from collections import OrderedDict
 from director.permission import *
 from rest_framework.exceptions import ValidationError
@@ -53,6 +53,7 @@ client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_S
 
 import random
 import string
+import re
 from django.db.models import Sum, F, Value, DecimalField
 from django.db.models.functions import Coalesce
 from django.db.models import Q
@@ -4032,6 +4033,46 @@ class StudentFeeView(viewsets.ModelViewSet):
             rounding=ROUND_HALF_UP
         )
 
+    def _school_year_bounds(self, school_year):
+        year_name = getattr(school_year, "year_name", "") or ""
+        years = re.findall(r"\d{4}", year_name)
+        if len(years) >= 2:
+            return int(years[0]), int(years[1])
+        if len(years) == 1:
+            start_year = int(years[0])
+            return start_year, start_year + 1
+        current_year = timezone.now().year
+        return current_year, current_year + 1
+
+    def _fee_month_year(self, school_year, month_number):
+        start_year, end_year = self._school_year_bounds(school_year)
+        return start_year if month_number and month_number >= 7 else end_year
+
+    def _fee_month_label(self, school_year, month_number, short=False):
+        if not month_number:
+            return None
+        month_name = (
+            calendar.month_abbr[month_number]
+            if short
+            else calendar.month_name[month_number]
+        )
+        return f"{month_name} {self._fee_month_year(school_year, month_number)}"
+
+    def _successful_payment_amounts(self, payment_ids):
+        payment_amounts = {
+            "cash": Decimal("0.00"),
+            "online": Decimal("0.00"),
+            "cheque": Decimal("0.00"),
+        }
+        payments = FeePayment.objects.filter(
+            id__in=payment_ids,
+            status="success"
+        )
+        for payment in payments:
+            if payment.payment_method in payment_amounts:
+                payment_amounts[payment.payment_method] += payment.amount
+        return payment_amounts
+
     def _custom_penalty_allocations(self, fee_data, target_months):
         month_penalties = (
             fee_data.get("month_penalties")
@@ -4073,54 +4114,123 @@ class StudentFeeView(viewsets.ModelViewSet):
     
     @action(detail=False, methods=["get"], url_path="student_unpaid_fees")
     def student_unpaid_fees(self, request):
-        queryset = StudentFee.objects.filter(status__in=["pending", "partial"]).select_related(
-            "student_year__student", "student_year__level", "school_year", "fee_structure"
-        ).prefetch_related("payments")
+        student_id = request.query_params.get("student_id")
+        student_years = StudentYearLevel.objects.select_related(
+            "student__user", "level", "year"
+        )
 
+        if student_id:
+            if not student_id.isdigit():
+                return Response({"error": "student_id must be a valid number"}, status=400)
+            student_years = student_years.filter(student_id=student_id)
+
+        months = [7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6]
         grouped = {}
-        for fee in queryset:
-            student = fee.student_year.student
-            student_id = student.id
-            month_name = calendar.month_name[fee.month] if fee.month else "Unknown"
-            school_year_name = fee.school_year.year_name if fee.school_year else "Unknown"
-            year_level = fee.student_year.level.level_name
 
-            if student_id not in grouped:
-                grouped[student_id] = {
+        for student_year in student_years:
+            student = student_year.student
+            student_key = student.id
+            school_year = student_year.year
+            year_level = student_year.level.level_name
+
+            if student_key not in grouped:
+                grouped[student_key] = {
                     "student": {
-                        "id": student_id,
+                        "id": student_key,
                         "name": f"{student.user.first_name} {student.user.last_name}",
-                        "scholar_number": student.scholar_number 
+                        "scholar_number": student.scholar_number
                     },
-                    "month": month_name,
-                    "school_year": school_year_name,
+                    "school_year": school_year.year_name if school_year else "Unknown",
                     "year_level_fees_grouped": [],
                     "total_amount": Decimal("0.00"),
                     "paid_amount": Decimal("0.00"),
                     "due_amount": Decimal("0.00"),
                 }
 
-            yl_group = next((yl for yl in grouped[student_id]["year_level_fees_grouped"] if yl["year_level"] == year_level), None)
+            yl_group = next((yl for yl in grouped[student_key]["year_level_fees_grouped"] if yl["year_level"] == year_level), None)
             if not yl_group:
                 yl_group = {"year_level": year_level, "fees": []}
-                grouped[student_id]["year_level_fees_grouped"].append(yl_group)
+                grouped[student_key]["year_level_fees_grouped"].append(yl_group)
 
-            yl_group["fees"].append({
-                "id": fee.id,
-                "fee_type": fee.fee_structure.fee_type,
-                "amount": str(fee.original_amount)
-            })
+            fee_structures = FeeStructure.objects.filter(
+                year_level=student_year.level
+            ).select_related("master_fee")
 
-            grouped[student_id]["total_amount"] += fee.original_amount
-            grouped[student_id]["paid_amount"] += fee.paid_amount
-            grouped[student_id]["due_amount"] += fee.due_amount
+            for fee_structure in fee_structures:
+                payment_structure = (
+                    fee_structure.master_fee.payment_structure
+                    if fee_structure.master_fee
+                    else "monthly"
+                )
+                fee_type = fee_structure.fee_type
 
+                discount_total = (
+                    AppliedFeeDiscount.objects.filter(
+                        student=student_year,
+                        fee_type=fee_structure
+                    ).aggregate(total=Sum("discount_amount"))["total"]
+                    or Decimal("0.00")
+                )
+                base_amount = max(
+                    Decimal(str(fee_structure.fee_amount)) - discount_total,
+                    Decimal("0.00")
+                )
+
+                target_months = [None] if payment_structure == "yearly" else []
+                if fee_type.lower() == "tuition fee" and payment_structure != "yearly":
+                    target_months = months
+
+                for fee_month in target_months:
+                    fee_records = StudentFee.objects.filter(
+                        student_year=student_year,
+                        fee_structure=fee_structure,
+                        school_year=school_year,
+                        month=fee_month,
+                    )
+                    paid_amount = (
+                        FeePayment.objects.filter(
+                            student_fee__in=fee_records,
+                            status="success"
+                        ).aggregate(total=Sum("amount"))["total"]
+                        or Decimal("0.00")
+                    )
+                    penalty_amount = (
+                        fee_records.aggregate(total=Sum("penalty_amount"))["total"]
+                        or Decimal("0.00")
+                    )
+                    total_amount = base_amount + penalty_amount
+                    due_amount = max(total_amount - paid_amount, Decimal("0.00"))
+
+                    if due_amount <= 0:
+                        continue
+
+                    yl_group["fees"].append({
+                        "fee_structure_id": fee_structure.id,
+                        "fee_type": fee_type,
+                        "month": calendar.month_name[fee_month] if fee_month else "Annual",
+                        "total_amount": str(total_amount),
+                        "paid_amount": str(paid_amount),
+                        "due_amount": str(due_amount),
+                        "status": "partial" if paid_amount > 0 else "pending",
+                    })
+
+                    grouped[student_key]["total_amount"] += total_amount
+                    grouped[student_key]["paid_amount"] += paid_amount
+                    grouped[student_key]["due_amount"] += due_amount
+
+        unpaid_fees = []
         for student_data in grouped.values():
+            student_data["year_level_fees_grouped"] = [
+                yl for yl in student_data["year_level_fees_grouped"] if yl["fees"]
+            ]
+            if not student_data["year_level_fees_grouped"]:
+                continue
             student_data["total_amount"] = str(student_data["total_amount"])
             student_data["paid_amount"] = str(student_data["paid_amount"])
             student_data["due_amount"] = str(student_data["due_amount"])
+            unpaid_fees.append(student_data)
 
-        return Response({"unpaid_fees": list(grouped.values())})
+        return Response({"unpaid_fees": unpaid_fees})
 
 
     @action(detail=False, methods=["get"], url_path="overdue_fees")
@@ -4130,38 +4240,106 @@ class StudentFeeView(viewsets.ModelViewSet):
         school_year_id = request.query_params.get("school_year_id")
         today = timezone.now().date()
 
-        queryset = StudentFee.objects.filter(due_amount__gt=0, due_date__lt=today)
+        annual_fee_types = {"admission fee", "form fee", "caution fee", "annual charges"}
+        tuition_cycles = {
+            "Jul-Sep + May": {"months": [7, 8, 9, 5], "due_month": 7},
+            "Oct-Dec + Jun": {"months": [10, 11, 12, 6], "due_month": 10},
+            "Jan-Apr": {"months": [1, 2, 3, 4], "due_month": 1},
+        }
+
+        def tuition_cycle_for_month(month_number):
+            for cycle_name, cycle in tuition_cycles.items():
+                if month_number in cycle["months"]:
+                    return cycle_name, cycle
+            return None, None
+
+        def cycle_due_date(school_year, cycle):
+            due_month = cycle["due_month"]
+            return date(get_fee_due_year(school_year, due_month), due_month, 15)
+
+        queryset = StudentFee.objects.filter(due_amount__gt=0).select_related(
+            "student_year__student__user",
+            "student_year__level",
+            "fee_structure",
+            "fee_structure__master_fee",
+            "school_year",
+        )
 
         if student_year_id:
             queryset = queryset.filter(student_year_id=student_year_id)
         if school_year_id:
             queryset = queryset.filter(school_year_id=school_year_id)
         if month:
-            queryset = queryset.filter(due_date__month=int(month))
+            queryset = queryset.filter(Q(month=int(month)) | Q(due_date__month=int(month)))
 
         response_data = []
+        tuition_groups = {}
         for fee in queryset:
             student_year = fee.student_year
             student = getattr(student_year, 'student', None)
             year_level = getattr(student_year, 'level', None)
+            fee_type = getattr(fee.fee_structure, 'fee_type', 'N/A')
+            fee_type_key = fee_type.lower()
+            payment_structure = (
+                fee.fee_structure.master_fee.payment_structure
+                if fee.fee_structure and fee.fee_structure.master_fee
+                else "monthly"
+            )
 
             if student and student.user:
                 student_name = f"{student.user.first_name} {student.user.last_name}"
             else:
                 student_name = "N/A"
 
+            if payment_structure == "yearly" and fee_type_key in annual_fee_types:
+                response_data.append({
+                    "fee_id": fee.id,
+                    "fee_type": fee_type,
+                    "original_amount": str(fee.original_amount),
+                    "paid_amount": str(fee.paid_amount),
+                    "due_amount": str(fee.due_amount),
+                    "status": "Overdue",
+                    "due_date": fee.due_date.strftime("%Y-%m-%d") if fee.due_date else None,
+                    "student_name": student_name,
+                    "scholar_number": getattr(student, 'scholar_number', 'N/A'),
+                    "class_name": getattr(year_level, 'level_name', 'N/A'),
+                    "month": "Annual"
+                })
+                continue
+
+            if fee_type_key != "tuition fee" or not fee.month:
+                continue
+
+            cycle_name, cycle = tuition_cycle_for_month(fee.month)
+            if not cycle_name or today <= cycle_due_date(fee.school_year, cycle):
+                continue
+
+            group_key = (student_year.id, fee.school_year_id, cycle_name)
+            if group_key not in tuition_groups:
+                tuition_groups[group_key] = {
+                    "fee_id": fee.id,
+                    "fee_type": "Tuition Fee",
+                    "original_amount": Decimal("0.00"),
+                    "paid_amount": Decimal("0.00"),
+                    "due_amount": Decimal("0.00"),
+                    "status": "Overdue",
+                    "due_date": cycle_due_date(fee.school_year, cycle).strftime("%Y-%m-%d"),
+                    "student_name": student_name,
+                    "scholar_number": getattr(student, 'scholar_number', 'N/A'),
+                    "class_name": getattr(year_level, 'level_name', 'N/A'),
+                    "month": cycle_name
+                }
+
+            tuition_groups[group_key]["original_amount"] += fee.original_amount
+            tuition_groups[group_key]["paid_amount"] += fee.paid_amount
+            tuition_groups[group_key]["due_amount"] += fee.due_amount
+
+        for group in tuition_groups.values():
             response_data.append({
-                "fee_id": fee.id,
-                "fee_type": getattr(fee.fee_structure, 'fee_type', 'N/A'),
-                "original_amount": str(fee.original_amount),
-                "paid_amount": str(fee.paid_amount),
-                "due_amount": str(fee.due_amount),
-                "status": "Overdue",
-                "due_date": fee.due_date.strftime("%Y-%m-%d"),
-                "student_name": student_name,
-                "scholar_number": getattr(student, 'scholar_number', 'N/A'),
-                "class_name": getattr(year_level, 'level_name', 'N/A'),  # <- change name to level_name
-                "month": calendar.month_name[fee.due_date.month]  # <- Month ka name
+                **group,
+                "original_amount": str(group["original_amount"]),
+                "paid_amount": str(group["paid_amount"]),
+                "due_amount": str(group["due_amount"]),
             })
 
         return Response(response_data, status=drf_status.HTTP_200_OK)
@@ -4245,12 +4423,19 @@ class StudentFeeView(viewsets.ModelViewSet):
             for fee in fees_data
         )
 
-        if split_total != fee_total:
+        # if split_total != fee_total:
+        #     return Response(
+        #         {
+        #             "error":
+        #             f"Split payment total ({split_total}) "
+        #             f"must equal fee total ({fee_total})"
+        #         },
+        #         status=400
+        #     )
+        if split_total > fee_total:
             return Response(
                 {
-                    "error":
-                    f"Split payment total ({split_total}) "
-                    f"must equal fee total ({fee_total})"
+                    "error": f"Payment amount ({split_total}) cannot exceed fee amount ({fee_total})"
                 },
                 status=400
             )
@@ -4358,10 +4543,11 @@ class StudentFeeView(viewsets.ModelViewSet):
                     )
 
                     if not payment:
-                        return Response(
-                            {"error": "Payment method amounts were exhausted before fees were fully allocated."},
-                            status=status.HTTP_400_BAD_REQUEST
-                        )
+                        break
+                        # return Response(
+                        #     {"error": "Payment method amounts were exhausted before fees were fully allocated."},
+                        #     status=status.HTTP_400_BAD_REQUEST
+                        # )
 
                     method = payment["method"].lower()
                     allocated = min(
@@ -4378,6 +4564,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                         amount=allocated,
                         payment_method=method,
                         cheque_number=cheque_number,
+                        receipt_number=receipt_number,
                         status=(
                             "pending"
                             if method == "online"
@@ -4389,7 +4576,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                             else timezone.now()
                         ),
                         received_by=request.user,
-                        notes=f"Fee payment for {student_fee.fee_structure.fee_type}"
+                        notes=f"Fee payment for {student_fee.fee_structure.fee_type} & month- {student_fee.month}"
                     )
                     created_payment_ids.append(fee_payment.id)
 
@@ -4427,6 +4614,22 @@ class StudentFeeView(viewsets.ModelViewSet):
         )
 
         def build_fee_response(message):
+            response_payment_amounts = self._successful_payment_amounts(
+                created_payment_ids
+            )
+            response_total_paid = sum(response_payment_amounts.values())
+            response_active_payment_modes = [
+                method
+                for method, amount in response_payment_amounts.items()
+                if amount > 0
+            ]
+            response_payment_mode = (
+                response_active_payment_modes[0]
+                if len(response_active_payment_modes) == 1
+                else "both"
+                if response_active_payment_modes
+                else None
+            )
             fees_submitted = []
             for student_fee in created_records:
                 discount_for_fee = AppliedFeeDiscount.objects.filter(
@@ -4457,7 +4660,7 @@ class StudentFeeView(viewsets.ModelViewSet):
             response_data = {
                 "message": message,
                 "receipt_number": receipt_number,
-                "total_amount_paid": str(total_amount),
+                "total_amount_paid": str(response_total_paid),
                 "payment_mode": response_payment_mode,
                 "payment_date": timezone.now().strftime("%Y-%m-%d"),
                 "school_year" : student_year.year.year_name if student_year.year.year_name else "N/A",
@@ -4477,14 +4680,14 @@ class StudentFeeView(viewsets.ModelViewSet):
                 },
                 "amount_paid_by_mode": {
                     method: str(amount)
-                    for method, amount in payment_amounts.items()
+                    for method, amount in response_payment_amounts.items()
                 },
                 "payments_by_mode": [
                     {
                         "payment_mode": method,
                         "amount_paid": str(amount),
                     }
-                    for method, amount in payment_amounts.items()
+                    for method, amount in response_payment_amounts.items()
                     if amount > 0
                 ],
                 "success": True
@@ -4593,11 +4796,28 @@ class StudentFeeView(viewsets.ModelViewSet):
             }
             fees_submitted.append(fee_entry)
 
+        response_payment_amounts = self._successful_payment_amounts(
+            created_payment_ids
+        )
+        response_total_paid = sum(response_payment_amounts.values())
+        response_active_payment_modes = [
+            method
+            for method, amount in response_payment_amounts.items()
+            if amount > 0
+        ]
+        response_payment_mode = (
+            response_active_payment_modes[0]
+            if len(response_active_payment_modes) == 1
+            else "both"
+            if response_active_payment_modes
+            else None
+        )
+
         # Build response - handle both bulk and single fee submission
         response_data = {
             "message": "Fee record(s) submitted successfully!",
             "receipt_number": receipt_number,
-            "total_amount_paid": str(total_amount),
+            "total_amount_paid": str(response_total_paid),
             "payment_mode": response_payment_mode,
             "payment_date": timezone.now().strftime("%Y-%m-%d"),
             "school_year" : student_year.year.year_name if student_year.year.year_name else "N/A",
@@ -4617,14 +4837,14 @@ class StudentFeeView(viewsets.ModelViewSet):
             },
             "amount_paid_by_mode": {
                 method: str(amount)
-                for method, amount in payment_amounts.items()
+                for method, amount in response_payment_amounts.items()
             },
             "payments_by_mode": [
                 {
                     "payment_mode": method,
                     "amount_paid": str(amount),
                 }
-                for method, amount in payment_amounts.items()
+                for method, amount in response_payment_amounts.items()
                 if amount > 0
             ],
             "success": True
@@ -4841,6 +5061,13 @@ class StudentFeeView(viewsets.ModelViewSet):
             "Jan-Apr": [1, 2, 3, 4],
         }
 
+        CYCLE_LABELS = {
+            "Jul-Sep + May": "Jul-Sep {start_year} + May {end_year}",
+            "Oct-Dec + Jun": "Oct-Dec {start_year} + Jun {end_year}",
+            "Jan-Apr": "Jan-Apr {end_year}",
+        }
+        start_year, end_year = self._school_year_bounds(student_year_level.year)
+
         result = {
             "annual_fees": [],
             "monthly_fees_by_cycle": {}
@@ -4964,6 +5191,14 @@ class StudentFeeView(viewsets.ModelViewSet):
                     month_details.append({
                         "month": month_number,
                         "month_name": calendar.month_name[month_number],
+                        "month_year": self._fee_month_year(
+                            student_year_level.year,
+                            month_number
+                        ),
+                        "month_label": self._fee_month_label(
+                            student_year_level.year,
+                            month_number
+                        ),
                         "original_amount": str(base_amount),
                         "paid_amount": str(total_paid),
                         "status": status_str,
@@ -4979,6 +5214,10 @@ class StudentFeeView(viewsets.ModelViewSet):
                     "fee_type": fee.fee_type,
                     "fee_category": "monthly",
                     "payment_period": cycle_name,
+                    "payment_period_with_year": CYCLE_LABELS[cycle_name].format(
+                        start_year=start_year,
+                        end_year=end_year
+                    ),
                     "cycle_selectable": True,
                     "original_amount": str(cycle_original),
                     "paid_amount": str(cycle_paid),
@@ -5055,6 +5294,9 @@ class StudentFeeView(viewsets.ModelViewSet):
                     "receipt_number": receipt_number
                 }
             )
+            if student_fee.receipt_number != receipt_number:
+                student_fee.receipt_number = receipt_number
+                student_fee.save(update_fields=["receipt_number"])
 
             created_fees.append(student_fee)
             if paid_amount > 0:
@@ -5088,6 +5330,7 @@ class StudentFeeView(viewsets.ModelViewSet):
             FeePayment.objects.create(
                 student_fee=student_fee,
                 amount=paid_amount,
+                receipt_number=receipt_number,
                 payment_method="online",
                 status="pending",
                 payment_date=None,
@@ -5212,14 +5455,25 @@ class StudentFeeView(viewsets.ModelViewSet):
                 pending_payment.received_by_id = received_by
             pending_payment.razorpay_payment_id = razorpay_payment_id
             pending_payment.razorpay_signature = razorpay_signature
-            pending_payment.save()
+            update_fields = [
+                "status",
+                "payment_date",
+                "razorpay_payment_id",
+                "razorpay_signature",
+            ]
+            if received_by:
+                update_fields.append("received_by")
+            pending_payment.save(update_fields=update_fields)
 
+            if student_fee.receipt_number != pending_payment.receipt_number:
+                student_fee.receipt_number = pending_payment.receipt_number
+                student_fee.save(update_fields=["receipt_number"])
             self._refresh_fee_payment_totals(student_fee)
             created_payments.append(pending_payment)
 
-        receipt_number = created_payments[0].student_fee.receipt_number if created_payments else None
+        receipt_number = created_payments[0].receipt_number if created_payments else None
         receipt_payments = FeePayment.objects.filter(
-            student_fee__receipt_number=receipt_number,
+            receipt_number=receipt_number,
             status="success"
         )
         payment_amounts = {
@@ -5282,7 +5536,10 @@ class StudentFeeView(viewsets.ModelViewSet):
                     "amount": str(p.amount),
                     "status": p.status,
                     "month": p.student_fee.month,
-                    "receipt_number": p.student_fee.receipt_number
+                    "receipt_number": p.receipt_number,
+                    "razorpay_order_id": p.razorpay_order_id,
+                    "razorpay_payment_id": p.razorpay_payment_id,
+                    "razorpay_signature": p.razorpay_signature,
                 } for p in created_payments
             ],
             "success": True
@@ -5292,112 +5549,129 @@ class StudentFeeView(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], url_path="grouped_receipts")
     def grouped_receipts(self, request):
         student_year_id = request.query_params.get("student_year_id")
+        receipt_number = request.query_params.get("receipt_number")
 
-        # If student_year_id is provided → filter
-        # Else → return ALL receipts
-        fees_qs = StudentFee.objects.all()
+        payments_qs = FeePayment.objects.filter(
+            status="success"
+        ).exclude(
+            receipt_number__isnull=True
+        ).exclude(
+            receipt_number=""
+        )
 
         if student_year_id:
-            fees_qs = fees_qs.filter(student_year_id=student_year_id)
+            payments_qs = payments_qs.filter(
+                student_fee__student_year_id=student_year_id
+            )
 
-        fees = fees_qs.select_related(
-            "student_year__student__user",
-            "student_year__level",
-            "fee_structure"
-        ).order_by("-created_at")
+        if receipt_number:
+            payments_qs = payments_qs.filter(receipt_number=receipt_number)
 
-        if not fees.exists():
+        payments = payments_qs.select_related(
+            "student_fee__student_year__student__user",
+            "student_fee__student_year__level",
+            "student_fee__fee_structure",
+            "student_fee__school_year",
+        ).order_by("-created_at", "-id")
+
+        if not payments.exists():
             return Response({"receipts": []})
 
-        receipt_groups = {}
-        for fee in fees:
-            if fee.receipt_number not in receipt_groups:
-                receipt_groups[fee.receipt_number] = {
-                    "receipt_number": fee.receipt_number,
-                    "payment_date": fee.created_at.date().strftime("%Y-%m-%d"),
-                    "payment_mode": fee.payments.last().payment_method if fee.payments.exists() else None,
+        receipt_groups = OrderedDict()
+        for payment in payments:
+            fee = payment.student_fee
+            student_year = fee.student_year
+            student = student_year.student
+            group_receipt_number = payment.receipt_number
+            payment_date = payment.payment_date or payment.created_at
+
+            if group_receipt_number not in receipt_groups:
+                receipt_groups[group_receipt_number] = {
+                    "receipt_number": group_receipt_number,
+                    "payment_date": payment_date.date().strftime("%Y-%m-%d"),
+                    "payment_mode": None,
+                    "cash_amount_paid": Decimal("0.00"),
+                    "online_amount_paid": Decimal("0.00"),
+                    "cheque_amount_paid": Decimal("0.00"),
                     "total_amount_paid": Decimal("0.00"),
                     "school_year": fee.school_year.year_name if fee.school_year else "N/A",
                     "student": {
-                        "id": fee.student_year.student.id,
-                        "student_year_id": fee.student_year.id,
-                        "name": f"{fee.student_year.student.user.first_name} {fee.student_year.student.user.last_name}",
-                        "roll_number": fee.student_year.student.roll_number,
-                        "father_name": fee.student_year.student.father_name,
-                        "mother_name": fee.student_year.student.mother_name,
-                        "scholar_number": fee.student_year.student.scholar_number,
-                        "class_name": fee.student_year.level.level_name,
-                        # "class_section": getattr(
-                        #     Admission.objects.filter(student=fee.student_year.student).first(),
-                        #     "class_section",
-                        #     "N/A"
-                        # ),
+                        "id": student.id,
+                        "student_year_id": student_year.id,
+                        "name": f"{student.user.first_name} {student.user.last_name}",
+                        "roll_number": student.roll_number,
+                        "father_name": student.father_name,
+                        "mother_name": student.mother_name,
+                        "scholar_number": student.scholar_number,
+                        "class_name": student_year.level.level_name,
                     },
                     "guardian": {
-                        "name": "",
-                        "contact": ""
+                        "name": student.father_name or student.mother_name or "N/A",
+                        "contact": student.contact_number or "N/A",
                     },
                     "fees_submitted": {}
                 }
 
-            # Fee breakdown
+            method = (payment.payment_method or "").lower()
+            if method == "cash":
+                receipt_groups[group_receipt_number]["cash_amount_paid"] += payment.amount
+            elif method == "online":
+                receipt_groups[group_receipt_number]["online_amount_paid"] += payment.amount
+            elif method == "cheque":
+                receipt_groups[group_receipt_number]["cheque_amount_paid"] += payment.amount
+
             discount_value = AppliedFeeDiscount.objects.filter(
-                student=fee.student_year,
+                student=student_year,
                 fee_type=fee.fee_structure
             ).values_list("discount_amount", flat=True).first() or Decimal("0.00")
-            
-            # receipt_groups[fee.receipt_number]["fees_submitted"].append({
-            #     "fee_type": fee.fee_structure.fee_type,
-            #     "month": calendar.month_name[fee.month] if fee.month else None,
-            #     "month_number": fee.month,
-            #     "amount_paid": str(fee.paid_amount),
-            #     "original_amount": str(fee.original_amount),
-            #     "discount": str(discount_value),
-            #     "due_amount": str(fee.due_amount),
-            #     "status": fee.status,
-            #     "student_fee_id": fee.id,
-            # })
 
             month_name = calendar.month_name[fee.month] if fee.month else "Unknown"
 
-            if month_name not in receipt_groups[fee.receipt_number]["fees_submitted"]:
-                receipt_groups[fee.receipt_number]["fees_submitted"][month_name] = []
+            if month_name not in receipt_groups[group_receipt_number]["fees_submitted"]:
+                receipt_groups[group_receipt_number]["fees_submitted"][month_name] = []
 
-            receipt_groups[fee.receipt_number]["fees_submitted"][month_name].append({
+            receipt_groups[group_receipt_number]["fees_submitted"][month_name].append({
+                "payment_id": payment.id,
+                "student_fee_id": fee.id,
                 "fee_type": fee.fee_structure.fee_type,
-                "amount_paid": str(fee.paid_amount),
+                "amount_paid": str(payment.amount),
+                "payment_method": payment.payment_method,
+                "payment_status": payment.status,
+                "payment_date": payment_date.strftime("%Y-%m-%d"),
+                "cheque_number": payment.cheque_number,
                 "original_amount": str(fee.original_amount),
                 "discount": str(discount_value),
                 "penalty": str(fee.penalty_amount),
                 "due_amount": str(fee.due_amount),
                 "status": fee.status,
-                "student_fee_id": fee.id,
             })
 
-
-            receipt_groups[fee.receipt_number]["total_amount_paid"] += fee.paid_amount
-
-        # Guardian details → only if receipts relate to 1 student
-        student = fees.first().student_year.student
-        parent_name = student.father_name or student.mother_name or "N/A"
-        contact = student.contact_number if student.contact_number else "N/A"
+            receipt_groups[group_receipt_number]["total_amount_paid"] += payment.amount
 
         for rec in receipt_groups.values():
-            rec["guardian"] = {
-                "name": parent_name,
-                "contact": contact,
-            }
+            payment_modes = []
+            if rec["cash_amount_paid"] > 0:
+                payment_modes.append("cash")
+            if rec["online_amount_paid"] > 0:
+                payment_modes.append("online")
+            if rec["cheque_amount_paid"] > 0:
+                payment_modes.append("cheque")
 
-        # Convert Decimal totals to strings for JSON
-        for rec in receipt_groups.values():
+            rec["payment_mode"] = (
+                payment_modes[0]
+                if len(payment_modes) == 1
+                else "+".join(payment_modes)
+                if payment_modes
+                else None
+            )
+            rec["cash_amount_paid"] = str(rec["cash_amount_paid"])
+            rec["online_amount_paid"] = str(rec["online_amount_paid"])
+            rec["cheque_amount_paid"] = str(rec["cheque_amount_paid"])
             rec["total_amount_paid"] = str(rec["total_amount_paid"])
 
-        # ---- SORT MONTHS CHRONOLOGICALLY ----
-        month_order = list(calendar.month_name)  # ['', 'January', 'February', ...]
-
+        month_order = list(calendar.month_name)
         for rec in receipt_groups.values():
             fees_submitted = rec["fees_submitted"]
-
             rec["fees_submitted"] = {
                 month: fees_submitted[month]
                 for month in sorted(
@@ -5423,34 +5697,56 @@ class StudentFeeView(viewsets.ModelViewSet):
             return Response({"error": "Student not found"}, status=404)
 
         fees = (
-            StudentFee.objects.filter(student_year=student_year)
-            .select_related("fee_structure")
-            .order_by("month")
+            StudentFee.objects.filter(
+                student_year=student_year,
+                paid_amount__gt=0
+            )
+            .select_related("fee_structure", "fee_structure__master_fee")
+            .order_by("month", "id")
         )
 
         monthly_map = {}
+        seen_fee_keys = set()
 
         for fee in fees:
-            month = fee.month
+            payment_structure = (
+                fee.fee_structure.master_fee.payment_structure
+                if fee.fee_structure and fee.fee_structure.master_fee
+                else "monthly"
+            )
+            fee_type = fee.fee_structure.fee_type if fee.fee_structure else ""
+
+            if fee_type.lower() == "tuition fee" and fee.month:
+                month = int(fee.month)
+            elif payment_structure == "yearly":
+                month = 0
+            else:
+                continue
+
+            fee_key = (month, fee.fee_structure_id)
+            if fee_key in seen_fee_keys:
+                continue
+            seen_fee_keys.add(fee_key)
+
             if month not in monthly_map:
                 monthly_map[month] = {
-                    "month": calendar.month_name[month],
+                    "month": calendar.month_name[month] if month else "Annual",
                     "total_amount": Decimal("0.00"),
                     "paid_amount": Decimal("0.00"),
                     "due_amount": Decimal("0.00"),
                     "penalty_amount": Decimal("0.00"),
-                    "fee_type": []
+                    "fee_type": [],
                 }
 
             total = fee.original_amount + fee.penalty_amount
 
             monthly_map[month]["total_amount"] += total
             monthly_map[month]["paid_amount"] += fee.paid_amount
-            monthly_map[month]["fee_type"].append({
-                "type": fee.fee_structure.fee_type,
-                "amount": float(total)
-            })
             monthly_map[month]["penalty_amount"] += fee.penalty_amount
+            monthly_map[month]["fee_type"].append({
+                "type": fee_type,
+                "amount": float(total),
+            })
 
         result = {
             "student_id": student_year.student.id,
@@ -5470,7 +5766,6 @@ class StudentFeeView(viewsets.ModelViewSet):
                 "due_amount": float(data["due_amount"]),
                 "penalty_amount": float(data["penalty_amount"]),
             })
-
         return Response(result)
 
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="unpaid-fees")
@@ -5488,10 +5783,11 @@ class StudentFeeView(viewsets.ModelViewSet):
         ranking = request.query_params.get("ranking") == "true"
         top = request.query_params.get("top")
 
-        qs = StudentFee.objects.filter(due_amount__gt=0).select_related(
+        qs = StudentFee.objects.all().select_related(
             "student_year__student__user",
             "student_year__level",
-            "fee_structure"
+            "fee_structure",
+            "fee_structure__master_fee",
         )
 
         # Teacher restriction
@@ -5506,36 +5802,77 @@ class StudentFeeView(viewsets.ModelViewSet):
         if month:
             qs = qs.filter(month=month)
 
-        if min_due:
-            qs = qs.filter(due_amount__gte=min_due)
+        grouped_fees = {}
+        for fee in qs:
+            fee_type = fee.fee_structure.fee_type if fee.fee_structure else ""
+            payment_structure = (
+                fee.fee_structure.master_fee.payment_structure
+                if fee.fee_structure and fee.fee_structure.master_fee
+                else "monthly"
+            )
 
-        if max_due:
-            qs = qs.filter(due_amount__lte=max_due)
+            if not fee.month and payment_structure != "yearly":
+                continue
 
-        # Ranking logic
-        if ranking:
-            qs = qs.order_by("-due_amount")
-
-        if top and ranking:
-            try:
-                qs = qs[:int(top)]
-            except ValueError:
-                pass
+            fee_key = (
+                fee.student_year_id,
+                fee.fee_structure_id,
+                fee.school_year_id,
+                fee.month,
+            )
+            if fee_key not in grouped_fees or fee.id > grouped_fees[fee_key].id:
+                grouped_fees[fee_key] = fee
 
         data = []
-        for fee in qs:
+        for fee_key, fee in grouped_fees.items():
+            matching_fees = StudentFee.objects.filter(
+                student_year_id=fee.student_year_id,
+                fee_structure_id=fee.fee_structure_id,
+                school_year_id=fee.school_year_id,
+                month=fee.month,
+            )
+            paid_amount = (
+                FeePayment.objects.filter(
+                    student_fee__in=matching_fees,
+                    status="success"
+                ).aggregate(total=Sum("amount"))["total"]
+                or Decimal("0.00")
+            )
+            penalty_amount = (
+                matching_fees.aggregate(total=Sum("penalty_amount"))["total"]
+                or Decimal("0.00")
+            )
+            total_amount = fee.original_amount + penalty_amount
+            due_amount = max(total_amount - paid_amount, Decimal("0.00"))
+
+            if min_due and due_amount < Decimal(str(min_due)):
+                continue
+            if max_due and due_amount > Decimal(str(max_due)):
+                continue
+            if due_amount <= 0:
+                continue
+
             data.append({
                 "student_id": fee.student_year.student.id,
                 "student_name": f"{fee.student_year.student.user.first_name} {fee.student_year.student.user.last_name}",
                 "class": fee.student_year.level.level_name,
                 "month": fee.month,
+                "month_name": calendar.month_name[fee.month] if fee.month else "Annual",
                 "fee_type": fee.fee_structure.fee_type,
-                "total_amount": float(fee.original_amount + fee.penalty_amount),
-                "paid_amount": float(fee.paid_amount),
-                "due_amount": float(fee.due_amount),
-                "status": fee.status,
+                "total_amount": float(total_amount),
+                "paid_amount": float(paid_amount),
+                "due_amount": float(due_amount),
+                "status": "partial" if paid_amount > 0 else "pending",
                 "receipt_number": fee.receipt_number,
             })
+
+        if ranking:
+            data.sort(key=lambda item: item["due_amount"], reverse=True)
+            if top:
+                try:
+                    data = data[:int(top)]
+                except ValueError:
+                    pass
 
         return Response({
             "ranking": ranking,
