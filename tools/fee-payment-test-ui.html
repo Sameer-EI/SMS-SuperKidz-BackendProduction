@@ -140,6 +140,14 @@
       <h2>Confirm Response</h2>
       <pre id="confirmOutput">Waiting...</pre>
     </section>
+    <section class="panel">
+      <h2>Confirm Payload Preview</h2>
+      <p class="hint">
+        This preview is built only from <code>submit_fee.pending_online_payments</code>.
+        Cash-paid fees from the original submit payload must not be sent to <code>confirm_payment</code>.
+      </p>
+      <pre id="confirmPayloadOutput">Waiting...</pre>
+    </section>
   </div>
 
   <script>
@@ -149,6 +157,7 @@
     const submitPayload = document.getElementById("submitPayload");
     const submitOutput = document.getElementById("submitOutput");
     const confirmOutput = document.getElementById("confirmOutput");
+    const confirmPayloadOutput = document.getElementById("confirmPayloadOutput");
 
     function getConfig() {
       const baseUrl = document.getElementById("baseUrl").value.replace(/\/$/, "");
@@ -198,22 +207,41 @@
       }));
     }
 
-    async function confirmPayment(razorpayResponse, submitResponse, originalPayload) {
-      const { baseUrl, token } = getConfig();
-      const selectedFees = buildSelectedFees(submitResponse);
-      if (!selectedFees.length) {
-        show(confirmOutput, "No pending online payments returned. Nothing to confirm.");
-        return;
-      }
-
-      const confirmPayload = {
+    function buildConfirmPayload(razorpayResponse, submitResponse, originalPayload) {
+      return {
         student_year_id: originalPayload.student_year_id,
-        selected_fees: selectedFees,
+        selected_fees: buildSelectedFees(submitResponse),
         razorpay_order_id: razorpayResponse.razorpay_order_id,
         razorpay_payment_id: razorpayResponse.razorpay_payment_id,
         razorpay_signature: razorpayResponse.razorpay_signature,
       };
+    }
 
+    function previewConfirmPayload(submitResponse, originalPayload) {
+      const selectedFees = buildSelectedFees(submitResponse);
+      if (!selectedFees.length) {
+        show(confirmPayloadOutput, "No pending online payments returned. confirm_payment should not be called.");
+        return;
+      }
+
+      show(confirmPayloadOutput, {
+        student_year_id: originalPayload.student_year_id,
+        selected_fees: selectedFees,
+        razorpay_order_id: submitResponse.razorpay_order_id,
+        razorpay_payment_id: "pay_xxx_from_razorpay_handler",
+        razorpay_signature: "signature_from_razorpay_handler",
+      });
+    }
+
+    async function confirmPayment(razorpayResponse, submitResponse, originalPayload) {
+      const { baseUrl, token } = getConfig();
+      const confirmPayload = buildConfirmPayload(razorpayResponse, submitResponse, originalPayload);
+      if (!confirmPayload.selected_fees.length) {
+        show(confirmOutput, "No pending online payments returned. Nothing to confirm.");
+        return;
+      }
+
+      show(confirmPayloadOutput, confirmPayload);
       show(confirmOutput, { sending: confirmPayload });
       const result = await postJson(
         `${baseUrl}/d/studentfees/confirm_payment/`,
@@ -237,7 +265,8 @@
 
     async function openRazorpay(submitResponse, originalPayload) {
       const { razorpayKey, studentName, studentContact } = getConfig();
-      if (!razorpayKey) {
+      const checkoutKey = submitResponse.razorpay_key_id || razorpayKey;
+      if (!checkoutKey) {
         show(confirmOutput, "Razorpay Key ID is required to open checkout.");
         return;
       }
@@ -249,7 +278,7 @@
       }
 
       const options = {
-        key: razorpayKey,
+        key: checkoutKey,
         amount: Math.round(Number(submitResponse.online_amount) * 100),
         currency: "INR",
         name: "School Fee Payment",
@@ -280,6 +309,7 @@
     submitButton.addEventListener("click", async () => {
       submitOutput.textContent = "Submitting...";
       confirmOutput.textContent = "Waiting...";
+      confirmPayloadOutput.textContent = "Waiting...";
       const { baseUrl, token } = getConfig();
 
       let payload;
@@ -293,6 +323,7 @@
       try {
         const result = await postJson(`${baseUrl}/d/studentfees/submit_fee/`, payload, token);
         show(submitOutput, result);
+        previewConfirmPayload(result, payload);
         if (result.razorpay_order_id && Number(result.online_amount) > 0) {
           openRazorpay(result, payload);
         } else {
