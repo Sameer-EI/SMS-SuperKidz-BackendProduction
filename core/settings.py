@@ -11,12 +11,14 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
 from logging import config
+from dotenv import load_dotenv
 import os
 
+load_dotenv()
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+# MEDIA_URL = '/media/'
+# MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 
 from pathlib import Path
@@ -29,14 +31,22 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-(kcrb)#75z(_7h4s7qu3^iw-!6#o7t0_plu87x$=zok%rmr=w^"
+SECRET_KEY = os.getenv("SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 # DEBUG = True
 
-DEBUG = True
+DEBUG = os.getenv("DEBUG")== True
 
-ALLOWED_HOSTS = ['smsproject1.pythonanywhere.com','*']
+
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS").split(",")
+CSRF_TRUSTED_ORIGINS = os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
+
+STATIC_URL = "/static/"
+STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
+
+MEDIA_URL = "/media/"
+MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 
 
 CORS_ALLOW_ALL_ORIGINS = True
@@ -110,17 +120,27 @@ WSGI_APPLICATION = "core.wsgi.application"
 # }
 from decouple import config
 
+
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',  # Official Django MySQL backend
-        'NAME': config('DB_NAME'),
-        'USER': config('DB_USER'),
-        'PASSWORD': config('DB_PASSWORD'),
-        'HOST': config('DB_HOST'),
-        'PORT': config('DB_PORT'),
+    "default": {
+        "ENGINE": "django.db.backends.mysql",
+        "NAME": os.getenv("DB_NAME"),
+        "USER": os.getenv("DB_USER"),
+        "PASSWORD": os.getenv("DB_PASSWORD"),
+        "HOST": os.getenv("DB_HOST"),
+        "PORT": os.getenv("DB_PORT"),
+        "OPTIONS": {
+            "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+        },
     }
 }
 
+# DATABASES = {
+#     "default": {
+#         "ENGINE": "django.db.backends.sqlite3",
+#         "NAME": BASE_DIR / "db.sqlite3",
+#     }
+# }
 
 
 
@@ -174,9 +194,9 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.0/howto/static-files/
 
-STATIC_URL = "/static/"
+# STATIC_URL = "/static/"
 
-STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+# STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
@@ -249,10 +269,7 @@ SIMPLE_JWT = {
 #     }
 # }
 
-from dotenv import load_dotenv
-import os
 
-load_dotenv()
 
 # EMAIL_HOST='smtp.gmail.com'
 # EMAIL_PORT=587
@@ -301,9 +318,12 @@ RAZORPAYX_KEY_ID = "rzp_test_RSzjzVZYhCaENk"
 RAZORPAYX_KEY_SECRET = "eiGTSnGfGcQYJNPtSaOOVP5i"
 RAZORPAYX_ACCOUNT_NUMBER = "2323230028138427"
 
+# RAZORPAY_API_KEY = "rzp_test_4h2aRSAPbYw3f8"
+# RAZORPAY_API_KEY_SECRET = "zuSKjh7zPlms6hBUefybslov"
 
 RAZORPAY_KEY_ID = 'rzp_test_SffTnwLZ5UEmhx'
 RAZORPAY_KEY_SECRET = 'qX0TG53GCjAGr3ka3O30fJii'
+
 
 LOGGING = {
     'version': 1,
@@ -319,5 +339,4 @@ LOGGING = {
         },
     },
 }
-
 
