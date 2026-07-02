@@ -5594,6 +5594,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                     "online_amount_paid": Decimal("0.00"),
                     "cheque_amount_paid": Decimal("0.00"),
                     "total_amount_paid": Decimal("0.00"),
+                    "total_penalty": Decimal("0.00"),
                     "school_year": fee.school_year.year_name if fee.school_year else "N/A",
                     "student": {
                         "id": student.id,
@@ -5609,7 +5610,8 @@ class StudentFeeView(viewsets.ModelViewSet):
                         "name": student.father_name or student.mother_name or "N/A",
                         "contact": student.contact_number or "N/A",
                     },
-                    "fees_submitted": {}
+                    "fees_submitted": {},
+                    "_counted_fee_ids": set(),  # internal tracker, stripped before response
                 }
 
             method = (payment.payment_method or "").lower()
@@ -5619,6 +5621,10 @@ class StudentFeeView(viewsets.ModelViewSet):
                 receipt_groups[group_receipt_number]["online_amount_paid"] += payment.amount
             elif method == "cheque":
                 receipt_groups[group_receipt_number]["cheque_amount_paid"] += payment.amount
+
+            if fee.id not in receipt_groups[group_receipt_number]["_counted_fee_ids"]:
+                receipt_groups[group_receipt_number]["total_penalty"] += fee.penalty_amount
+                receipt_groups[group_receipt_number]["_counted_fee_ids"].add(fee.id)
 
             discount_value = AppliedFeeDiscount.objects.filter(
                 student=student_year,
@@ -5668,6 +5674,7 @@ class StudentFeeView(viewsets.ModelViewSet):
             rec["online_amount_paid"] = str(rec["online_amount_paid"])
             rec["cheque_amount_paid"] = str(rec["cheque_amount_paid"])
             rec["total_amount_paid"] = str(rec["total_amount_paid"])
+            rec.pop("_counted_fee_ids", None)
 
         month_order = list(calendar.month_name)
         for rec in receipt_groups.values():
