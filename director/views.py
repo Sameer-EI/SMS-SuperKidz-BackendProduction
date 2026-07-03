@@ -4028,7 +4028,7 @@ class StudentFeeView(viewsets.ModelViewSet):
             student_fee.status = "pending"
 
         student_fee.save(update_fields=["paid_amount", "due_amount", "status"])
-        
+
     def _decimal_amount(self, value):
         return Decimal(str(value or 0)).quantize(
             Decimal("0.01"),
