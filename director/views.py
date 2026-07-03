@@ -4011,22 +4011,24 @@ class StudentFeeView(viewsets.ModelViewSet):
         )
 
     def _refresh_fee_payment_totals(self, student_fee):
-        student_fee.paid_amount = self._successful_fee_paid_amount(student_fee)
-        student_fee.due_amount = max(
-            student_fee.original_amount
-            - student_fee.paid_amount
-            + student_fee.penalty_amount,
-            Decimal("0.00")
-        )
+        total_paid = student_fee.payments.filter(status="success").aggregate(
+            total=Sum("amount")
+        )["total"] or Decimal("0.00")
+
+        student_fee.paid_amount = total_paid
+        student_fee.due_amount = (
+            student_fee.original_amount + student_fee.penalty_amount
+        ) - total_paid
+
         if student_fee.due_amount <= 0:
             student_fee.status = "paid"
-        elif student_fee.paid_amount > 0:
+        elif total_paid > 0:
             student_fee.status = "partial"
         else:
             student_fee.status = "pending"
-        student_fee.save()
-        return student_fee
 
+        student_fee.save(update_fields=["paid_amount", "due_amount", "status"])
+        
     def _decimal_amount(self, value):
         return Decimal(str(value or 0)).quantize(
             Decimal("0.01"),
