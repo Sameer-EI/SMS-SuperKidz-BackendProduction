@@ -1,6 +1,6 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
-__migrations__/
+# __migrations__/
 
 *.py[cod]
 *$py.class
@@ -29,7 +29,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 # 🛑 Custom Ignore: Migration folder (user-defined)
-migrations/
+# migrations/
 
 MANIFEST
 .env
