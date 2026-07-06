@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from . models import SubstituteAssignment, Teacher, TeacherYearLevel , TeacherAttendance ,SubstituteAssignment
+from . models import SubstituteAssignment, Teacher, TeacherYearLevel, SubstituteAssignment
 from authentication . models import User
 from director . models import Role
 from django.db import IntegrityError
@@ -355,7 +355,15 @@ class SubstituteAssignmentSerializer(serializers.ModelSerializer):
         year_level = attrs.get("year_level")
         date = attrs.get("date")
 
-        # agar date missing ho to today set karo
+        # same teacher check
+        if absent_teacher == substitute_teacher:
+            raise serializers.ValidationError({
+                "errors": [
+                    "Invalid assignment: Absent teacher and substitute teacher cannot be the same."
+                ]
+            })
+
+        # default date
         if not date:
             date = timezone.now().date()
             attrs["date"] = date  
@@ -372,49 +380,16 @@ class SubstituteAssignmentSerializer(serializers.ModelSerializer):
             duplicate_qs = duplicate_qs.exclude(id=instance_id)
 
         if duplicate_qs.exists():
-            raise serializers.ValidationError(
-                {"errors": [
-                    f"Duplicate not allowed: "
-                    f"Absent Teacher '{absent_teacher.user.first_name} {absent_teacher.user.last_name}' "
-                    f"already assigned on {period} ({date}) for Year {year_level} "
-                    f"with Substitute '{duplicate_qs.first().substitute_teacher.user.first_name} {duplicate_qs.first().substitute_teacher.user.last_name}'"
-                ]}
-            )
+            dup = duplicate_qs.first()
+            raise serializers.ValidationError({
+                "errors": [
+                    f"Assignment already exists: "
+                    f"{absent_teacher.user.first_name} {absent_teacher.user.last_name} "
+                    f"is already assigned substitute "
+                    f"{dup.substitute_teacher.user.first_name} {dup.substitute_teacher.user.last_name} "
+                    f"for period {period} on {date} ({year_level})."
+                ]
+            })
 
         return attrs
 
-
-# [
-    # {
-    #     "absent_teacher": 1,
-    #     "substitute_teacher": 6,
-    #     "year_level": 15,
-    #     "period": "Period 1",
-    #     "date": "2025-08-18"
-    # },
-#     {
-#         "absent_teacher": 1,
-#         "substitute_teacher": 7,
-#         "year_level": 15,
-#         "period": "Period 2",
-#         "date": "2025-08-18"
-#     },
-    # {
-    #     "absent_teacher": 2,
-    #     "substitute_teacher": 8,
-    #     "year_level": 15,
-    #     "period": "Period 1",
-    #     "date": "2025-08-18"
-    # }
-# ]
-
-
-class TeacherAttendanceSerializer(serializers.ModelSerializer):
-    teacher_name = serializers.SerializerMethodField()
-
-    class Meta:
-        model = TeacherAttendance
-        fields = ["id", "date", "status", "teacher", "teacher_name"]
-
-    def get_teacher_name(self, obj):
-        return f"{obj.teacher.user.first_name} {obj.teacher.user.last_name}"

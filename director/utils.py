@@ -177,107 +177,6 @@ def get_file_response(file_field, file_label="file"):
 
 
 
-#------------------------------------------REPORTCARD Util----------------------------------------------------
-from collections import defaultdict
-from .models import *
-
-def calculate_subject_summary(subjects_data):
-    required_exams = {"sa1", "sa2"}
-    subject_marks = defaultdict(dict)  # subject -> {exam_type: mark}
-
-    # Collect marks
-    for exam in subjects_data:
-        exam_type = exam.get("exam_type", "").lower()
-        if exam_type not in required_exams:
-            continue
-
-        for subject, mark in exam.get("subjects", {}).items():
-            try:
-                subject_marks[subject][exam_type] = float(mark)
-            except (TypeError, ValueError):
-                continue
-
-    # Validate missing exam types per subject
-    missing_data = {
-        subject: list(required_exams - marks.keys())
-        for subject, marks in subject_marks.items()
-        if required_exams - marks.keys()
-    }
-
-    if missing_data:
-        return {
-            "subject_avg": {
-                "error": "Some subjects are missing marks for required exams.",
-                "missing_exam_data": {
-                    subject: [x.upper() for x in exams]
-                    for subject, exams in missing_data.items()
-                }
-            },
-            "total_marks": 0,
-            "max_marks": 0,
-            "percentage": 0,
-            "grade": "F",
-            "supplementary_in": []
-        }
-
-    if not subject_marks:
-        return {
-            "subject_avg": {
-                "error": "SA1&SA2 Missing"
-            },
-            "total_marks": 0,
-            "max_marks": 0,
-            "percentage": 0,
-            "grade": "F",
-            "supplementary_in": []
-        }
-
-    # Calculate per-subject percent
-    subject_avg = {}
-    supplementary_in = []
-    
-    for subject, exams in subject_marks.items():
-        sa1 = exams.get("sa1", 0)
-        sa2 = exams.get("sa2", 0)
-        obtained = sa1 + sa2
-
-        # Scale: max combined SA1+SA2 is 200 → scale to 100
-        percent = round((obtained / 200) * 100, 2)
-        subject_avg[subject] = round(obtained / 2, 2)  # still averaging for display
-
-        if percent < 40:
-            supplementary_in.append(subject)
-
-    # Final totals
-    total_obtained = sum(subject_avg.values())
-    subject_count = len(subject_avg)
-    total_possible = subject_count * 100
-    percentage = round((total_obtained / total_possible) * 100, 2) if total_possible else 0
-
-    # Grade logic
-    if percentage >= 90:
-        grade = "A++"
-    elif percentage >= 80:
-        grade = "A+"
-    elif percentage >= 70:
-        grade = "A"
-    elif percentage >= 60:
-        grade = "B"
-    elif percentage >= 50:
-        grade = "C"
-    elif percentage >= 40:
-        grade = "D"
-    else:
-        grade = "F"
-
-    return {
-        "subject_avg": subject_avg,
-        "total_marks": total_obtained,
-        "max_marks": total_possible,
-        "percentage": percentage,
-        "grade": grade,
-        "supplementary_in": supplementary_in
-    }
 
 
 # ---------------------  Income and Expense 
@@ -359,59 +258,6 @@ def send_whatsapp(message_text, phone_number):
   
 
 
-# --------------------- Report Card attachments with validation
-
-# def reportcard_attachments(instance, filename):
-#     """
-#     Build path for report card uploads and validate file type and size.
-#     """
-
-#     ALLOWED_EXT = {'.pdf', '.jpg', '.jpeg', '.png'}
-#     MAX_SIZE = 5 * 1024 * 1024  # 5 MB
-
-#     # extension check
-#     _, ext = os.path.splitext(filename)
-#     if ext.lower() not in ALLOWED_EXT:
-#         raise ValidationError(f"Unsupported file type '{ext}'. Allowed types: {', '.join(sorted(ALLOWED_EXT))}.")
-
-#     # file size check
-#     uploaded_file = getattr(instance, 'file', None)
-#     if uploaded_file and getattr(uploaded_file, 'size', 0) > MAX_SIZE:
-#         raise ValidationError(f"File size exceeds the allowed limit of {MAX_SIZE // (1024*1024)} MB.")
-
-#     # folder structure: reportcard_attachments/<year>/<level>/<student_name_scholar_no>/<filename>
-#     student = getattr(instance, 'student', None)
-
-#     # defaults
-#     year_part = datetime.now().year
-#     level_part = "unknown_level"
-#     student_part = f"student_{getattr(student, 'id', 'unknown')}"
-
-#     if student:
-#         year_part = getattr(student.year, 'year_name', year_part)
-#         level_part = getattr(student.level, 'level_name', level_part)
-
-#         student_obj = getattr(student, 'student', None)
-#         if student_obj:
-#             user = getattr(student_obj, 'user', None)
-#             scholar_no = getattr(student_obj, 'scholar_number', None)
-#             name_part = f"{user.first_name}_{user.last_name}" if user else None
-#             if scholar_no and name_part:
-#                 student_part = f"{name_part}_{scholar_no}"
-#             elif name_part:
-#                 student_part = name_part
-#             elif scholar_no:
-#                 student_part = f"student_{scholar_no}"
-
-#     folder = os.path.join(
-#         'reportcard_attachments',
-#         clean_name(year_part),
-#         clean_name(level_part),
-#         clean_name(student_part)
-#     )
-
-#     return os.path.join(folder, filename)
-
 
 def reportcard_attachments(instance, filename):
     # Validate file type and size before returning path
@@ -470,3 +316,49 @@ def reportcard_attachments(instance, filename):
     )
 
     return os.path.join(folder, filename)
+
+
+# ---------------------------------- Fee Due Year Utility --------------------------------------------
+from datetime import date
+from decimal import Decimal
+from django.utils import timezone
+
+def get_fee_due_year(school_year, month):
+    # For a July-start academic year: Jul–Dec → start year, Jan–Jun → end year
+    if month >= 7:
+        return int(school_year.start_date.year)
+    return int(school_year.end_date.year)
+
+
+def calculate_penalty(fee_type, school_year, month):
+    if fee_type.lower() != "tuition fee":
+        return Decimal("0.00")
+
+    today = timezone.now().date()
+    today_month = today.month
+    today_year = today.year
+
+    # Determine the correct year for this month based on TODAY's date
+    # If we're currently in months 1-6, fees starting July are for THIS year
+    # If we're currently in months 7-12, fees starting July next year are for NEXT year
+    if today_month <= 6:
+        # Currently Jan-June
+        if month >= 7:
+            due_year = today_year
+        else:
+            due_year = today_year + 1
+    else:
+        # Currently Jul-Dec
+        if month >= 7:
+            due_year = today_year
+        else:
+            due_year = today_year + 1
+    
+    due_date = date(due_year, month, 15)
+
+    # Only apply penalty if the due date has actually passed
+    if today > due_date:
+        return Decimal("25.00")
+
+    return Decimal("0.00")
+

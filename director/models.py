@@ -408,12 +408,12 @@ class FeeStructure(models.Model):
         ('Maintenance','Maintenance'),
         ('Form Fee','Form Fee'),
         ('Others','Others'),
+        ('Annual Charges','Annual Charges'),
         ]
     
     master_fee = models.ForeignKey(MasterFee,on_delete=models.CASCADE,related_name="fee_structures")
     fee_type = models.CharField(max_length=100,choices=FEE_TYPE)#add chioce 
     fee_amount = models.FloatField()
-    # year_level = models.ForeignKey("YearLevel",on_delete=models.CASCADE,related_name="fee_structures")
     year_level = models.ManyToManyField("YearLevel", related_name="fee_structures")  # Multiple classes
 
 
@@ -455,23 +455,10 @@ class StudentFee(models.Model):
     status = models.CharField(max_length=20, choices=[('pending', 'Pending'),('partial', 'Partial'),('paid', 'Paid'),], default='pending')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    receipt_number = models.CharField(max_length=50, unique=True, editable=False, blank=True, auto_created=True)
+    receipt_number = models.CharField(max_length=225, editable=False, blank=True, auto_created=True)
 
     def __str__(self):
         return f"{self.student_year.student.user.first_name} - {self.fee_structure.fee_type} - paid amount {self.paid_amount} - due amount {self.due_amount} - {self.status}  - {self.school_year.year_name}  - month {self.month}"
-
-
-    def save(self, *args, **kwargs):
-        if not self.receipt_number:
-            self.receipt_number = self.generate_unique_receipt_number()
-        super().save(*args, **kwargs)
-
-    def generate_unique_receipt_number(self):
-        while True:
-            code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-            if not StudentFee.objects.filter(receipt_number=code).exists():
-                return code
-
 
     class Meta:
         db_table = "student_fee"
@@ -504,6 +491,7 @@ class FeePayment(models.Model):
     razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
     razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)#
     razorpay_signature = models.CharField(max_length=255, blank=True, null=True)#
+    receipt_number = models.CharField(max_length=225, editable=False, blank=True, auto_created=True)
 
     class Meta:
         db_table = "fee_payment"

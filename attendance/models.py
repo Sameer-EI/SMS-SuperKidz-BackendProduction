@@ -2,6 +2,8 @@ from django.db import models
 from director.models import *
 from student.models import Student
 from teacher.models import *
+from django.db.models import Q
+from django.core.exceptions import ValidationError
 
 
 class Holiday(models.Model):
@@ -14,29 +16,54 @@ class Holiday(models.Model):
             return f"{self.title} ({self.start_date})"
         return f"{self.title} ({self.start_date} to {self.end_date})"
 
-    
-    
-class StudentAttendance(models.Model):
-    STATUS_CHOICES = [
-        ('P', 'Present'),
-        ('A', 'Absent'),
-        ('L', 'Leave'),
-        ('H','Holiday') # remove it in future
-    ]
 
-    student = models.ForeignKey(Student, on_delete=models.CASCADE)
+
+class Attendance(models.Model):
+    STATUS_CHOICES = [('P', 'Present'), ('A', 'Absent'), ('L', 'Leave')]
+
+    student = models.ForeignKey(Student,on_delete=models.CASCADE,null=True,blank=True)
+    teacher = models.ForeignKey(Teacher,on_delete=models.CASCADE,null=True,blank=True)
+    office_staff = models.ForeignKey(OfficeStaff,on_delete=models.CASCADE,null=True,blank=True)
     status = models.CharField(max_length=1, choices=STATUS_CHOICES)
     marked_at = models.DateField()
-    teacher=models.ForeignKey(Teacher,on_delete=models.CASCADE,null=True,blank=True)
-    year_level=models.ForeignKey(YearLevel,on_delete=models.CASCADE)
-
+    year_level = models.ForeignKey(YearLevel, on_delete=models.CASCADE, null=True, blank=True)
 
     def __str__(self):
-        return f"{self.student} -{self.status}"
-    
+        if self.student:
+            role = "student"
+            person = self.student
+        elif self.teacher:
+            role = "teacher"
+            person = self.teacher
+        else:
+            role = "office staff"
+            person = self.office_staff
+
+        return f"{role}: {person} - {self.marked_at} - {self.get_status_display()}"
+
+
     class Meta:
-        unique_together = ('student', 'marked_at')
-        
+        constraints = [
+            models.UniqueConstraint(
+                fields=['student', 'marked_at'],
+                condition=Q(student__isnull=False),
+                name='unique_student_attendance'
+            ),
+            models.UniqueConstraint(
+                fields=['teacher', 'marked_at'],
+                condition=Q(teacher__isnull=False) & Q(student__isnull=True),
+                name='unique_teacher_attendance'
+            ),
+            models.UniqueConstraint(
+                fields=['office_staff', 'marked_at'],
+                condition=Q(office_staff__isnull=False),
+                name='unique_staff_attendance'
+            ),
+        ]
+
+
+    
+       
 class SchoolHoliday(models.Model):
     title = models.CharField(max_length=100)
     date = models.DateField()
@@ -51,15 +78,3 @@ class SchoolEvent(models.Model):
     def __str__(self):
         return f"{self.title} ({self.start_date} to {self.end_date})"
 
-
-class OfficeStaffAttendance(models.Model):
-    office_staff = models.ForeignKey(OfficeStaff, on_delete=models.CASCADE)
-    date = models.DateField()
-    status = models.CharField(max_length=10, choices=[('Present', 'Present'), ('Absent', 'Absent'), ('Leave', 'Leave')])
-
-    class Meta:
-        unique_together = ('office_staff', 'date')
-
-    def __str__(self):
-        return f"{self.office_staff} - {self.date} - {self.status}"
-    

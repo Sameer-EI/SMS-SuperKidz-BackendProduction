@@ -27,165 +27,94 @@ from calendar import monthrange
 #     "A": [104, 105],
 #     "L": [106]
 # }
-class MultipleAttendanceViewSet1(ModelViewSet):
-    queryset = StudentAttendance.objects.all()
+
+class StudentAttendanceView(ModelViewSet):
+    queryset = Attendance.objects.filter(student__isnull=False)
     serializer_class = StudentAttendanceSerializer
 
     def create(self, request, *args, **kwargs):
-        data = request.data
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-        # Validate marked_at
-        try:
-            marked_at_str = data.get("marked_at")
-            marked_at = datetime.strptime(marked_at_str, "%Y-%m-%d").date() if marked_at_str else date.today()
-            if marked_at > date.today():
-                return Response({"error": "You cannot mark attendance for a future date."}, status=status.HTTP_400_BAD_REQUEST)
-        except ValueError:
-            return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+        validated_data = serializer.validated_data
 
-        # ========================= NEW:24/09/25 ==========================
-         # Prevent attendance on Sundays
-        if marked_at.weekday() == 6:
-            return Response({"error": "Attendance cannot be marked on Sunday."}, status=status.HTTP_400_BAD_REQUEST)
+        teacher = Teacher.objects.get(id=validated_data["teacher_id"])
+        year_level_id = validated_data["year_level_id"]
+        marked_at = validated_data.get("marked_at", date.today())
 
-         # Prevent attendance on school holidays
-        if SchoolHoliday.objects.filter(date=marked_at).exists():
-            return Response({"error": "Attendance cannot be marked on a school holiday."}, status=status.HTTP_400_BAD_REQUEST)
-
-         # Prevent attendance on declared holidays
-        if Holiday.objects.filter(start_date__lte=marked_at, end_date__gte=marked_at).exists():
-            return Response({"error": "Attendance cannot be marked on a holiday."}, status=status.HTTP_400_BAD_REQUEST)
-        # ==================================================================
-        
-        # Validate teacher
-        teacher_id = data.get("teacher")
-        if not teacher_id:
-            return Response({"error": "teacher id is required."}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            teacher = Teacher.objects.get(id=teacher_id)
-        except Teacher.DoesNotExist:
-            return Response({"error": "Invalid teacher id."}, status=status.HTTP_404_NOT_FOUND)
-
-        # Validate year level
-        year_level_id = data.get("year_level")
-        if not year_level_id:
-            return Response({"error": "year level id is required."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Validate presence of at least one status
-        allowed_statuses = {'P', 'A', 'L'}
-        all_student_ids = []
-        status_provided = False
-
-        for status_code in allowed_statuses:
-            student_ids = data.get(status_code, [])
-            if student_ids:
-                if not isinstance(student_ids, list):
-                    return Response({
-                        "error": f"Value for status '{status_code}' must be a list of student IDs."
-                    }, status=status.HTTP_400_BAD_REQUEST)
-
-                # Validate all IDs are integers
-                for sid in student_ids:
-                    if not isinstance(sid, int):
-                        return Response({
-                            "error": f"All student IDs under status '{status_code}' must be integers."
-                        }, status=status.HTTP_400_BAD_REQUEST)
-
-                status_provided = True
-                all_student_ids.extend(student_ids)
-
-        if not status_provided:
-            return Response({
-                "error": "At least one attendance status ('P', 'A', or 'L') with student IDs must be provided."
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        # Check if attendance already exists
-        already_marked_ids = StudentAttendance.objects.filter(
-            student_id__in=all_student_ids,
-            marked_at=marked_at
-        ).values_list("student_id", flat=True)
-
-        if already_marked_ids:
-            return Response({
-                "error": "Attendance already marked for this date.",
-                "student_ids": list(already_marked_ids)
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        # Validate student assignments
-        invalid_students = []
-        for sid in all_student_ids:
-            try:
-                student = Student.objects.get(id=sid)
-            except Student.DoesNotExist:
-                invalid_students.append(sid)
-                continue
-
-            if not student.student_year_levels.filter(level_id=year_level_id).exists():
-                invalid_students.append(sid)
-
-        if invalid_students:
-            return Response({
-                "error": "Some students are not assigned to the given year level or do not exist.",
-                "student_ids": invalid_students
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        # Create attendance records
+        allowed_statuses = {"P", "A", "L"}
         created_records = []
-        absent_leave_students = []  # store absent or leave students for notification
+        absent_leave_students = []
 
         for status_code in allowed_statuses:
-            for sid in data.get(status_code, []):
+            for sid in validated_data.get(status_code, []):
+                if not Student.objects.filter(id=sid).exists():
+                    return Response(
+                        {"error": f"Student not found (ID: {sid})"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
                 student = Student.objects.get(id=sid)
-                attendance = StudentAttendance.objects.create(
+
+                attendance = Attendance.objects.create(
                     student=student,
                     status=status_code,
                     marked_at=marked_at,
                     teacher=teacher,
                     year_level_id=year_level_id
                 )
+
                 created_records.append(attendance)
 
-                # Collect absent or leave for notification
                 if status_code in ["A", "L"]:
                     absent_leave_students.append(student)
 
-        # === Send Notifications for Absent / Leave Students ===
+        # WhatsApp Notification
         for student in absent_leave_students:
             student_name = f"{student.user.first_name} {student.user.last_name}"
-            
-            # Get the guardian linked to this student
-            try:
-                student_guardian = StudentGuardian.objects.filter(student=student).first()
-                guardian_user = student_guardian.guardian.user if student_guardian else None
-            except StudentGuardian.DoesNotExist:
-                guardian_user = None
 
             msg = (
                 f"Dear Parent,\n\n"
-                f"{student_name} was marked as Absent on {marked_at.strftime('%d-%m-%Y')}.\n"
+                f"{student_name} was marked as Absent "
+                f"on {marked_at.strftime('%d-%m-%Y')}.\n"
                 f"Kindly ensure regular attendance.\n\n"
                 f"Regards,\nSchool Management"
             )
 
-            # Send WhatsApp Message
             send_whatsapp_message(msg)
 
-            # Send Email if guardian email exists
-            if guardian_user and getattr(guardian_user, "email", None):
-                send_email_notification(
-                    to_email=guardian_user.email,
-                    subject=f"Attendance Alert: {student_name} Absent on {marked_at.strftime('%d-%m-%Y')}",
-                    message=msg
-                )
-        serializer = self.get_serializer(created_records, many=True)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(
+            StudentAttendanceSerializer(created_records, many=True).data,
+            status=status.HTTP_201_CREATED
+        )
+    
+    def update(self, request, pk=None):
+        instance = self.get_object()  # gets by pk
+
+        serializer = self.get_serializer(
+            instance,
+            data=request.data,
+            partial=True  # allows PATCH behavior
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    def destroy(self, request, pk=None):
+        instance = self.get_object()
+        instance.delete()
+        return Response(
+            {"message": "Attendance deleted successfully"},
+            status=status.HTTP_204_NO_CONTENT
+        )
+
+
 
 class AttendanceReportViewSet(ReadOnlyModelViewSet):
     serializer_class = StudentAttendanceSerializer
 
     def get_queryset(self):
-        queryset = StudentAttendance.objects.select_related('student', 'year_level')
+        queryset = Attendance.objects.select_related('student', 'year_level')
 
         class_name = self.request.query_params.get('class')
         month = self.request.query_params.get('month')
@@ -218,7 +147,7 @@ class AttendanceReportViewSet(ReadOnlyModelViewSet):
                     marked_at__year=year
                 )
             except ValueError:
-                return StudentAttendance.objects.none()
+                return Attendance.objects.none()
 
         return queryset.order_by('student', 'marked_at')
 
@@ -255,28 +184,51 @@ class DirectorAttendanceDashboard(ViewSet):
 
         # Step 2: Get attendance summary
         total_students = Student.objects.count()
-        present_today = StudentAttendance.objects.filter(marked_at=marked_date, status='P').count()
+        present_today = Attendance.objects.filter(marked_at=marked_date, status='P').count()
         overall_percentage = (present_today / total_students * 100) if total_students else 0
+
+        today = date.today()
+
+        current_year = SchoolYear.objects.filter(
+            start_date__lte=today,
+            end_date__gte=today
+        ).first()
 
         # Step 3: Class-wise breakdown
         class_wise_data = []
         all_classes = YearLevel.objects.all()
 
         for cls in all_classes:
-            attendances = StudentAttendance.objects.filter(marked_at=marked_date, year_level=cls)
-            total = attendances.count()
-            present = attendances.filter(status='P').count()
-            percentage = (present / total * 100) if total else 0
+            # Total students in this class (for current school year ideally)
+            total_students_in_class = Student.objects.filter(
+                student_year_levels__level=cls,
+                student_year_levels__year=current_year
+            ).distinct().count()
+
+            # Present students in this class
+            present_students = Attendance.objects.filter(
+                marked_at=marked_date,
+                status='P',
+                student__student_year_levels__level=cls,
+                student__student_year_levels__year=current_year
+            ).distinct().count()
+
+            percentage = (
+                present_students / total_students_in_class * 100
+                if total_students_in_class else 0
+            )
 
             class_wise_data.append({
                 "class_name": cls.level_name,
-                "present": present,
-                "total": total,
+                "present": present_students,
+                "total": total_students_in_class,
                 "percentage": f"{percentage:.1f}%"
             })
 
+
         return Response({
             "date": marked_date.strftime("%Y-%m-%d"),
+            "session":f"{current_year.start_date.year}-{current_year.end_date.year}",
             "overall_attendance": {
                 "present": present_today,
                 "total": total_students,
@@ -284,6 +236,7 @@ class DirectorAttendanceDashboard(ViewSet):
             },
             "class_wise_attendance": class_wise_data
         })
+
 
 class TeacherAttendanceDashboard(ViewSet):
     def list(self, request):
@@ -302,7 +255,7 @@ class TeacherAttendanceDashboard(ViewSet):
         result = []
 
         for syl in student_levels:
-            attendance_qs = StudentAttendance.objects.filter(student=syl.student)
+            attendance_qs = Attendance.objects.filter(student=syl.student)
 
             # Monthly summary (filtered)
             monthly = attendance_qs.filter(marked_at__year=year, marked_at__month=month)
@@ -345,26 +298,69 @@ class TeacherAttendanceDashboard(ViewSet):
 
 
 class StudentOwnAttendanceViewSet(ViewSet):
+    def list(self, request):
+        if not request.user or not request.user.is_authenticated:
+            return Response(
+                {"detail": "Login required. Or use /student-dashboard/<student_id>/."},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        # assumes Student has a OneToOne to User named "user"
+        student = get_object_or_404(Student, user=request.user)
+        return self.retrieve(request, pk=student.id)
+    
     def retrieve(self, request, pk=None):
         today = date.today()
+
+        date_str = request.query_params.get("date")
         month = int(request.query_params.get("month", today.month))
         year = int(request.query_params.get("year", today.year))
 
-        # Get student by ID
+        # ---- date parsing ----
+        try:
+            selected_date = (
+                datetime.strptime(date_str, "%Y-%m-%d").date()
+                if date_str else None
+            )
+        except ValueError:
+            return Response(
+                {"error": "Invalid date format. Use YYYY-MM-DD."},
+                status=400
+            )
+
+        # ---- student ----
         student = get_object_or_404(Student, id=pk)
+        attendance_qs = Attendance.objects.filter(student=student)
 
-        # Get all attendance records
-        attendance_qs = StudentAttendance.objects.filter(student=student)
-
-        # Get latest year_level from attendance
-        latest_attendance = attendance_qs.order_by('-marked_at').first()
+        # ---- latest class ----
+        latest_attendance = attendance_qs.order_by("-marked_at").first()
         year_level_name = (
             latest_attendance.year_level.level_name
             if latest_attendance and latest_attendance.year_level
             else "N/A"
         )
 
-        # Monthly summary
+        # ==================================================
+        # DATE-WISE VIEW (if date is passed)
+        # ==================================================
+        if selected_date:
+            day_qs = attendance_qs.filter(marked_at=selected_date)
+
+            return Response({
+                "student_name": f"{student.user.first_name} {student.user.last_name}",
+                "year_level": year_level_name,
+                "filter_date": selected_date.strftime("%Y-%m-%d"),
+                "attendance": {
+                    "present": day_qs.filter(status="P").count(),
+                    "absent": day_qs.filter(status="A").count(),
+                    "leave": day_qs.filter(status="L").count(),
+                    "total": day_qs.count(),
+                }
+            })
+
+        # ==================================================
+        # MONTHLY SUMMARY
+        # ==================================================
         monthly = attendance_qs.filter(marked_at__year=year, marked_at__month=month)
         m_present = monthly.filter(status='P').count()
         m_absent = monthly.filter(status='A').count()
@@ -372,7 +368,9 @@ class StudentOwnAttendanceViewSet(ViewSet):
         m_total = monthly.count()
         m_percentage = (m_present / m_total * 100) if m_total else 0.0
 
-        # Yearly summary
+        # ==================================================
+        # YEARLY SUMMARY
+        # ==================================================
         yearly = attendance_qs.filter(marked_at__year=year)
         y_present = yearly.filter(status='P').count()
         y_absent = yearly.filter(status='A').count()
@@ -432,7 +430,7 @@ class GuardianChildrenAttendanceViewSet(ViewSet):
                 continue
 
             # Monthly
-            monthly_qs = StudentAttendance.objects.filter(
+            monthly_qs = Attendance.objects.filter(
                 student=student,
                 marked_at__year=year,
                 marked_at__month=month
@@ -444,7 +442,7 @@ class GuardianChildrenAttendanceViewSet(ViewSet):
             m_percent = round((m_present / m_total) * 100, 1) if m_total else 0.0
 
             # Yearly
-            yearly_qs = StudentAttendance.objects.filter(
+            yearly_qs = Attendance.objects.filter(
                 student=student,
                 marked_at__year=year
             )
@@ -660,134 +658,143 @@ class HolidayViewSet(ModelViewSet):
     queryset = Holiday.objects.all().order_by("-start_date")
     serializer_class = HolidaySerializer
 
-'''
-office staff attendance payload formats:
-
-single:
-  {"Office_staff": 5,
-  "date": "2025-11-12",
-  "status": "Present"}
-
-multiple:
-
-  [
-  {"office_staff_id": 1, "status": "Present", "date": "2025-11-12"},
-  {"office_staff_id": 2, "status": "Absent", "date": "2025-11-12"}
-  ]
 
 
-'''
 
 class OfficeStaffAttendanceView(ModelViewSet):
-    queryset = OfficeStaffAttendance.objects.all().order_by("-date")
+    queryset = Attendance.objects.filter(
+        office_staff__isnull=False,
+        student__isnull=True,
+        teacher__isnull=True
+    )
+
     serializer_class = OfficeStaffAttendanceSerializer
 
     def create(self, request, *args, **kwargs):
-        data = request.data
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-        # Handle both single and multiple records
-        if isinstance(data, dict):
-            records = [data]
-        elif isinstance(data, list):
-            records = data
-        else:
-            return Response(
-                {"error": "Invalid input format. Must be dict or list."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        validated_data = serializer.validated_data
 
-        results = []
-        errors = []
+        marked_at = validated_data["marked_at"]
+        present_ids = validated_data.get("P", [])
+        absent_ids = validated_data.get("A", [])
+        leave_ids = validated_data.get("L", [])
 
-        for record in records:
-            office_staff_id = record.get("office_staff_id")
-            status_input = record.get("status")
-            date_str = record.get("date", str(date.today()))
+        created_records = []
 
-            # Missing required fields
-            if not office_staff_id or not status_input:
-                errors.append({"error": "office_staff_id and status are required", "data": record})
-                continue
+        for status_code, staff_ids in {
+            "P": present_ids,
+            "A": absent_ids,
+            "L": leave_ids,
+        }.items():
 
-            # Validate date format
-            try:
-                attendance_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-            except ValueError:
-                errors.append({"error": f"Invalid date format: {date_str}"})
-                continue
+            for sid in staff_ids:
+                attendance = Attendance.objects.create(
+                    office_staff_id=sid,
+                    status=status_code,
+                    marked_at=marked_at
+                )
 
-            staff = OfficeStaff.objects.get(id=office_staff_id)
-            staff_name = staff.user.get_full_name()
-
-            # Future date check
-            if attendance_date > date.today():
-                errors.append({"error": f"Cannot mark attendance for a future date for {staff_name} on {attendance_date}.", "office_staff_id": office_staff_id})
-                continue
-
-            # Sunday check
-            if attendance_date.weekday() == 6:
-                errors.append({"error": f"Cannot mark attendance on Sunday for {staff_name} on {attendance_date}.", "office_staff_id": office_staff_id})
-                continue
-
-            # Holiday checks
-            if SchoolHoliday.objects.filter(date=attendance_date).exists():
-                errors.append({"error": f"Cannot mark attendance on a school holiday for {staff_name} on {attendance_date}.", "office_staff_id": office_staff_id})
-                continue
-
-            if Holiday.objects.filter(start_date__lte=attendance_date, end_date__gte=attendance_date).exists():
-                errors.append({"error": f"Cannot mark attendance on a holiday for {staff_name} on {attendance_date}.", "office_staff_id": office_staff_id})
-                continue
-
-            # Only within the last 7 days
-            seven_days_ago = date.today() - timedelta(days=7)
-            if attendance_date < seven_days_ago:
-                errors.append({
-                    "error": f"You can only mark attendance for the last 7 days for {staff_name}.",
-                    "office_staff_id": office_staff_id
-                })
-                continue
-
-            # Staff existence check
-            try:
-                staff = OfficeStaff.objects.get(id=office_staff_id)
-            except OfficeStaff.DoesNotExist:
-                errors.append({"error": f"Office staff not found (ID: {office_staff_id})"})
-                continue
-
-            # Duplicate attendance check
-            if OfficeStaffAttendance.objects.filter(office_staff=staff, date=attendance_date).exists():
-                errors.append({
-                    "message": f"Attendance already marked for {staff_name} on {attendance_date}.",
-                    "office_staff_id": office_staff_id,
-                    "date": str(attendance_date)
-                })
-                continue
-
-            # Create record
-            OfficeStaffAttendance.objects.create(
-                office_staff=staff,
-                date=attendance_date,
-                status=status_input
-            )
-
-            results.append({
-                "message": f"Attendance marked successfully for {staff_name}",
-                "office_staff_id": office_staff_id,
-                "status": status_input,
-                "date": str(attendance_date)
-            })
-
-        # Final response
-        response_data = {
-            "success_count": len(results),
-            "error_count": len(errors),
-            "details": {
-                "marked": results,
-                "skipped": errors
-            }
-        }
+                created_records.append(attendance)
 
         return Response(
-            response_data,
-            status=status.HTTP_200_OK if results else status.HTTP_400_BAD_REQUEST
+            {
+                "message": "Office staff attendance marked successfully.",
+                "count": len(created_records)
+            },
+            status=status.HTTP_201_CREATED
         )
+
+    def update(self, request, pk=None):
+        instance = self.get_object()  # gets by pk
+
+        serializer = self.get_serializer(
+            instance,
+            data=request.data,
+            partial=True  # allows PATCH behavior
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    def destroy(self, request, pk=None):
+        instance = self.get_object()
+        instance.delete()
+        return Response(
+            {"message": "Attendance deleted successfully"},
+            status=status.HTTP_204_NO_CONTENT
+        )
+
+
+
+
+class TeacherAttendanceView(ModelViewSet):
+    queryset = Attendance.objects.filter(
+        teacher__isnull=False,
+        student__isnull=True,
+        office_staff__isnull=True
+    )
+    serializer_class = TeacherAttendanceSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        validated_data = serializer.validated_data
+
+        marked_at = validated_data["marked_at"]
+        present_ids = validated_data.get("P", [])
+        absent_ids = validated_data.get("A", [])
+        leave_ids = validated_data.get("L", [])
+
+        created_records = []
+
+        for status_code, teacher_ids in {
+            "P": present_ids,
+            "A": absent_ids,
+            "L": leave_ids,
+        }.items():
+
+            for tid in teacher_ids:
+                attendance = Attendance.objects.create(
+                    teacher_id=tid,
+                    status=status_code,
+                    marked_at=marked_at
+                )
+
+                created_records.append(attendance)
+
+        return Response(
+            {
+                "message": "Teacher attendance marked successfully.",
+                "count": len(created_records)
+            },
+            status=status.HTTP_201_CREATED
+        )
+    
+    def update(self, request, pk=None):
+        instance = self.get_object()  # gets by pk
+
+        serializer = self.get_serializer(
+            instance,
+            data=request.data,
+            partial=True  # allows PATCH behavior
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    def destroy(self, request, pk=None):
+        instance = self.get_object()
+        instance.delete()
+        return Response(
+            {"message": "Attendance deleted successfully"},
+            status=status.HTTP_204_NO_CONTENT
+        )
+
+
+
+
