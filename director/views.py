@@ -3971,6 +3971,10 @@ class FeeStructureViewSet(viewsets.ModelViewSet):
         year_level_id = self.request.query_params.get("year_level_id")
         if year_level_id:
             queryset = queryset.filter(year_level__id=year_level_id)
+        
+        school_year_id = self.request.query_params.get("school_year_id")
+        if school_year_id:
+            queryset = queryset.filter(school_year__id=school_year_id)
         return queryset
 
 
