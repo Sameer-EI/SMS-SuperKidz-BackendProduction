@@ -344,7 +344,8 @@ class StudentYearLevelSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StudentYearLevel
-        fields = ['id', 'student', 'level', 'year','student_id', 'student_name','student_email','scholar_number', 'level_name', 'year_name']
+        fields = ['id', 'student', 'level', 'year','student_id', 'student_name','student_email',
+                  'scholar_number', 'level_name', 'year_name', 'section']
         extra_kwargs = {
             'student': {'write_only': True},
             'level': {'write_only': True},

@@ -375,11 +375,19 @@ class MasterFee(models.Model):
         return f"{self.payment_structure}"
 
 
+SECTION_CHOICES = [
+    ('A', 'A'),
+    ('B', 'B'),
+    ('C', 'C'),
+    ('D', 'D'),
+]
+
 class YearLevel(models.Model):
     level_name = models.CharField(max_length=250)
     level_order = models.IntegerField()
     fee = models.ForeignKey(MasterFee, on_delete=models.PROTECT,related_name="year_levels",
                             null=True, blank=True)
+    max_section = models.CharField(max_length=1, choices=SECTION_CHOICES, default='C')
 
     def __str__(self):
         return f"{self.level_name}"
@@ -409,8 +417,6 @@ FEE_TYPE_CHOICES = [
     ("Annual Charges", "Annual Charges"),
     ("Others", "Others"),
 ]
-
-
 class FeeStructure(models.Model):
     school_year = models.ForeignKey(SchoolYear, on_delete=models.PROTECT, related_name="fee_structures")
     master_fee = models.ForeignKey(MasterFee, on_delete=models.CASCADE, related_name="fee_structures")
