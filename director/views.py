@@ -43,6 +43,7 @@ from datetime import datetime, timedelta
 from django.utils.timezone import now
 from django.db.models.functions import Cast
 from teacher.models import Teacher, TeacherYearLevel
+from student.pagination import CreatePagination
 
 
 
@@ -4247,21 +4248,6 @@ class StudentFeeView(viewsets.ModelViewSet):
         today = timezone.now().date()
 
         annual_fee_types = {"admission fee", "form fee", "caution fee", "annual charges"}
-        tuition_cycles = {
-            "Jul-Sep + May": {"months": [7, 8, 9, 5], "due_month": 7},
-            "Oct-Dec + Jun": {"months": [10, 11, 12, 6], "due_month": 10},
-            "Jan-Apr": {"months": [1, 2, 3, 4], "due_month": 1},
-        }
-
-        def tuition_cycle_for_month(month_number):
-            for cycle_name, cycle in tuition_cycles.items():
-                if month_number in cycle["months"]:
-                    return cycle_name, cycle
-            return None, None
-
-        def cycle_due_date(school_year, cycle):
-            due_month = cycle["due_month"]
-            return date(get_fee_due_year(school_year, due_month), due_month, 15)
 
         queryset = StudentFee.objects.filter(due_amount__gt=0).select_related(
             "student_year__student__user",
@@ -4269,7 +4255,7 @@ class StudentFeeView(viewsets.ModelViewSet):
             "fee_structure",
             "fee_structure__master_fee",
             "school_year",
-        )
+        ).order_by("-id")
 
         if student_year_id:
             queryset = queryset.filter(student_year_id=student_year_id)
@@ -4278,8 +4264,15 @@ class StudentFeeView(viewsets.ModelViewSet):
         if month:
             queryset = queryset.filter(Q(month=int(month)) | Q(due_date__month=int(month)))
 
+        # Pre-fetch Discounts
+        all_syl_ids = [fee.student_year_id for fee in queryset]
+        all_discounts = AppliedFeeDiscount.objects.filter(student_id__in=all_syl_ids)
+        discounts_by_syl_fee = defaultdict(Decimal)
+        for d in all_discounts:
+            key = (d.student_id, d.fee_type_id)
+            discounts_by_syl_fee[key] += d.discount_amount
+
         response_data = []
-        tuition_groups = {}
         for fee in queryset:
             student_year = fee.student_year
             student = getattr(student_year, 'student', None)
@@ -4297,56 +4290,36 @@ class StudentFeeView(viewsets.ModelViewSet):
             else:
                 student_name = "N/A"
 
+            status_str = "Partially Paid" if fee.paid_amount > 0 else "Pending"
+
             if payment_structure == "yearly" and fee_type_key in annual_fee_types:
-                response_data.append({
-                    "fee_id": fee.id,
-                    "fee_type": fee_type,
-                    "original_amount": str(fee.original_amount),
-                    "paid_amount": str(fee.paid_amount),
-                    "due_amount": str(fee.due_amount),
-                    "status": "Overdue",
-                    "due_date": fee.due_date.strftime("%Y-%m-%d") if fee.due_date else None,
-                    "student_name": student_name,
-                    "scholar_number": getattr(student, 'scholar_number', 'N/A'),
-                    "class_name": getattr(year_level, 'level_name', 'N/A'),
-                    "month": "Annual"
-                })
-                continue
+                month_str = "Annual"
+            else:
+                if not fee.month:
+                    continue
+                month_str = calendar.month_name[fee.month]
 
-            if fee_type_key != "tuition fee" or not fee.month:
-                continue
+            discount = discounts_by_syl_fee.get((fee.student_year_id, fee.fee_structure_id), Decimal("0.00"))
 
-            cycle_name, cycle = tuition_cycle_for_month(fee.month)
-            if not cycle_name or today <= cycle_due_date(fee.school_year, cycle):
-                continue
-
-            group_key = (student_year.id, fee.school_year_id, cycle_name)
-            if group_key not in tuition_groups:
-                tuition_groups[group_key] = {
-                    "fee_id": fee.id,
-                    "fee_type": "Tuition Fee",
-                    "original_amount": Decimal("0.00"),
-                    "paid_amount": Decimal("0.00"),
-                    "due_amount": Decimal("0.00"),
-                    "status": "Overdue",
-                    "due_date": cycle_due_date(fee.school_year, cycle).strftime("%Y-%m-%d"),
-                    "student_name": student_name,
-                    "scholar_number": getattr(student, 'scholar_number', 'N/A'),
-                    "class_name": getattr(year_level, 'level_name', 'N/A'),
-                    "month": cycle_name
-                }
-
-            tuition_groups[group_key]["original_amount"] += fee.original_amount
-            tuition_groups[group_key]["paid_amount"] += fee.paid_amount
-            tuition_groups[group_key]["due_amount"] += fee.due_amount
-
-        for group in tuition_groups.values():
             response_data.append({
-                **group,
-                "original_amount": str(group["original_amount"]),
-                "paid_amount": str(group["paid_amount"]),
-                "due_amount": str(group["due_amount"]),
+                "fee_id": fee.id,
+                "fee_type": fee_type,
+                "original_amount": str(fee.original_amount),
+                "paid_amount": str(fee.paid_amount),
+                "due_amount": str(fee.due_amount),
+                "status": status_str,
+                "due_date": fee.due_date.strftime("%Y-%m-%d") if fee.due_date else None,
+                "student_name": student_name,
+                "scholar_number": getattr(student, 'scholar_number', 'N/A'),
+                "class_name": getattr(year_level, 'level_name', 'N/A'),
+                "month": month_str,
+                "applied_discount": str(discount)
             })
+
+        paginator = CreatePagination()
+        page = paginator.paginate_queryset(response_data, request, view=self)
+        if page is not None:
+            return paginator.get_paginated_response(page)
 
         return Response(response_data, status=drf_status.HTTP_200_OK)
 
