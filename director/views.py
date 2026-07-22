@@ -4243,29 +4243,41 @@ class StudentFeeView(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], url_path="overdue_fees")
     def overdue_fees(self, request):
         student_year_id = request.query_params.get("student_year_id")
-        month = request.query_params.get("month")  # optional filter
+        month_filter = request.query_params.get("month")  # optional filter
         school_year_id = request.query_params.get("school_year_id")
-        today = timezone.now().date()
 
         annual_fee_types = {"admission fee", "form fee", "caution fee", "annual charges"}
 
-        queryset = StudentFee.objects.filter(due_amount__gt=0).select_related(
-            "student_year__student__user",
-            "student_year__level",
-            "fee_structure",
-            "fee_structure__master_fee",
-            "school_year",
-        ).order_by("-id")
+        CYCLES = {
+            "Jul-Sep + May": [5, 7, 8, 9],
+            "Oct-Dec + Jun": [6, 10, 11, 12],
+            "Jan-Apr": [1, 2, 3, 4],
+        }
 
+        syl_queryset = StudentYearLevel.objects.select_related("student__user", "level").all()
         if student_year_id:
-            queryset = queryset.filter(student_year_id=student_year_id)
+            syl_queryset = syl_queryset.filter(id=student_year_id)
         if school_year_id:
-            queryset = queryset.filter(school_year_id=school_year_id)
-        if month:
-            queryset = queryset.filter(Q(month=int(month)) | Q(due_date__month=int(month)))
+            syl_queryset = syl_queryset.filter(year_id=school_year_id)
 
-        # Pre-fetch Discounts
-        all_syl_ids = [fee.student_year_id for fee in queryset]
+        all_syls = list(syl_queryset)
+        all_syl_ids = [syl.id for syl in all_syls]
+
+        level_ids = set(syl.level_id for syl in all_syls if syl.level_id)
+        fee_structures = FeeStructure.objects.filter(year_level_id__in=level_ids).select_related("master_fee")
+        fees_by_level = defaultdict(list)
+        for fs in fee_structures:
+            fees_by_level[fs.year_level_id].append(fs)
+
+        student_fees = StudentFee.objects.filter(student_year_id__in=all_syl_ids)
+        if school_year_id:
+            student_fees = student_fees.filter(school_year_id=school_year_id)
+        
+        paid_fees_dict = {}
+        for sf in student_fees:
+            key = (sf.student_year_id, sf.fee_structure_id, sf.month)
+            paid_fees_dict[key] = sf
+
         all_discounts = AppliedFeeDiscount.objects.filter(student_id__in=all_syl_ids)
         discounts_by_syl_fee = defaultdict(Decimal)
         for d in all_discounts:
@@ -4273,48 +4285,94 @@ class StudentFeeView(viewsets.ModelViewSet):
             discounts_by_syl_fee[key] += d.discount_amount
 
         response_data = []
-        for fee in queryset:
-            student_year = fee.student_year
-            student = getattr(student_year, 'student', None)
-            year_level = getattr(student_year, 'level', None)
-            fee_type = getattr(fee.fee_structure, 'fee_type', 'N/A')
-            fee_type_key = fee_type.lower()
-            payment_structure = (
-                fee.fee_structure.master_fee.payment_structure
-                if fee.fee_structure and fee.fee_structure.master_fee
-                else "monthly"
-            )
 
+        for syl in all_syls:
+            student = syl.student
+            year_level = syl.level
             if student and student.user:
                 student_name = f"{student.user.first_name} {student.user.last_name}"
             else:
                 student_name = "N/A"
 
-            status_str = "Partially Paid" if fee.paid_amount > 0 else "Pending"
+            syl_fees = fees_by_level.get(syl.level_id, [])
 
-            if payment_structure == "yearly" and fee_type_key in annual_fee_types:
-                month_str = "Annual"
-            else:
-                if not fee.month:
-                    continue
-                month_str = calendar.month_name[fee.month]
+            for fee in syl_fees:
+                fee_type_key = fee.fee_type.lower() if fee.fee_type else ""
+                payment_structure = fee.master_fee.payment_structure if fee.master_fee else "monthly"
+                
+                discount = discounts_by_syl_fee.get((syl.id, fee.id), Decimal("0.00"))
+                base_amount = Decimal(fee.fee_amount) - discount
+                base_amount = max(base_amount, Decimal("0.00"))
 
-            discount = discounts_by_syl_fee.get((fee.student_year_id, fee.fee_structure_id), Decimal("0.00"))
+                if payment_structure == "yearly" and fee_type_key in annual_fee_types:
+                    sf = paid_fees_dict.get((syl.id, fee.id, None))
+                    
+                    total_paid = sf.paid_amount if sf else Decimal("0.00")
+                    penalty = sf.penalty_amount if sf else Decimal("0.00")
+                    due_date = sf.due_date if sf else None
+                    fee_id = sf.id if sf else None
 
-            response_data.append({
-                "fee_id": fee.id,
-                "fee_type": fee_type,
-                "original_amount": str(fee.original_amount),
-                "paid_amount": str(fee.paid_amount),
-                "due_amount": str(fee.due_amount),
-                "status": status_str,
-                "due_date": fee.due_date.strftime("%Y-%m-%d") if fee.due_date else None,
-                "student_name": student_name,
-                "scholar_number": getattr(student, 'scholar_number', 'N/A'),
-                "class_name": getattr(year_level, 'level_name', 'N/A'),
-                "month": month_str,
-                "applied_discount": str(discount)
-            })
+                    real_due = max(base_amount - total_paid + penalty, Decimal("0.00"))
+
+                    if real_due <= 0:
+                        continue 
+
+                    status_str = "Partially Paid" if total_paid > 0 else "Pending"
+
+                    response_data.append({
+                        "fee_id": fee_id, 
+                        "fee_type": fee.fee_type,
+                        "original_amount": str(base_amount),
+                        "paid_amount": str(total_paid),
+                        "due_amount": str(real_due),
+                        "status": status_str,
+                        "due_date": due_date.strftime("%Y-%m-%d") if due_date else None,
+                        "student_name": student_name,
+                        "scholar_number": getattr(student, 'scholar_number', 'N/A'),
+                        "class_name": getattr(year_level, 'level_name', 'N/A'),
+                        "month": "Annual",
+                        "applied_discount": str(discount)
+                    })
+
+                else:
+                    if fee_type_key != "tuition fee":
+                        continue
+
+                    months_to_process = []
+                    for months in CYCLES.values():
+                        months_to_process.extend(months)
+                    
+                    for month_num in months_to_process:
+                        if month_filter and str(month_num) != month_filter:
+                            continue
+
+                        sf = paid_fees_dict.get((syl.id, fee.id, month_num))
+                        total_paid = sf.paid_amount if sf else Decimal("0.00")
+                        penalty = sf.penalty_amount if sf else Decimal("0.00")
+                        due_date = sf.due_date if sf else None
+                        fee_id = sf.id if sf else None
+
+                        real_due = max(base_amount - total_paid + penalty, Decimal("0.00"))
+
+                        if real_due <= 0:
+                            continue
+
+                        status_str = "Partially Paid" if total_paid > 0 else "Pending"
+
+                        response_data.append({
+                            "fee_id": fee_id,
+                            "fee_type": fee.fee_type,
+                            "original_amount": str(base_amount),
+                            "paid_amount": str(total_paid),
+                            "due_amount": str(real_due),
+                            "status": status_str,
+                            "due_date": due_date.strftime("%Y-%m-%d") if due_date else None,
+                            "student_name": student_name,
+                            "scholar_number": getattr(student, 'scholar_number', 'N/A'),
+                            "class_name": getattr(year_level, 'level_name', 'N/A'),
+                            "month": calendar.month_name[month_num],
+                            "applied_discount": str(discount)
+                        })
 
         # paginator = CreatePagination()
         # page = paginator.paginate_queryset(response_data, request, view=self)
