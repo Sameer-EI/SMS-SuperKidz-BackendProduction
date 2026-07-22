@@ -4316,10 +4316,10 @@ class StudentFeeView(viewsets.ModelViewSet):
                 "applied_discount": str(discount)
             })
 
-        paginator = CreatePagination()
-        page = paginator.paginate_queryset(response_data, request, view=self)
-        if page is not None:
-            return paginator.get_paginated_response(page)
+        # paginator = CreatePagination()
+        # page = paginator.paginate_queryset(response_data, request, view=self)
+        # if page is not None:
+        #     return paginator.get_paginated_response(page)
 
         return Response(response_data, status=drf_status.HTTP_200_OK)
 
