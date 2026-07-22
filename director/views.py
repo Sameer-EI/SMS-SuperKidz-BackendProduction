@@ -4264,10 +4264,12 @@ class StudentFeeView(viewsets.ModelViewSet):
         all_syl_ids = [syl.id for syl in all_syls]
 
         level_ids = set(syl.level_id for syl in all_syls if syl.level_id)
-        fee_structures = FeeStructure.objects.filter(year_level_id__in=level_ids).select_related("master_fee")
+        fee_structures = FeeStructure.objects.filter(year_level__in=level_ids).select_related("master_fee").prefetch_related("year_level")
         fees_by_level = defaultdict(list)
         for fs in fee_structures:
-            fees_by_level[fs.year_level_id].append(fs)
+            for yl in fs.year_level.all():
+                if yl.id in level_ids:
+                    fees_by_level[yl.id].append(fs)
 
         student_fees = StudentFee.objects.filter(student_year_id__in=all_syl_ids)
         if school_year_id:
