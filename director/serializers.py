@@ -2588,9 +2588,26 @@ class MasterFeeSerializer(serializers.ModelSerializer):
 
 
 class FeeStructureSerializer(serializers.ModelSerializer):
+    student_fee_count = serializers.IntegerField(read_only=True)
+    can_delete = serializers.SerializerMethodField()
+
     class Meta:
         model = FeeStructure
-        fields = "__all__"
+        fields = [
+            'id',
+            'school_year',
+            'master_fee',
+            'fee_type',
+            'fee_amount',
+            'year_level',
+            "student_fee_count",
+            "can_delete",
+        ]
+
+    def get_can_delete(self, obj):
+        if hasattr(obj, 'student_fee_count'):
+            return obj.student_fee_count == 0
+        return obj.student_fees.count() == 0
 
 
 class AppliedFeeDiscountSerializer(serializers.ModelSerializer):

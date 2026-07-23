@@ -3965,19 +3965,29 @@ class MasterFeeViewSet(viewsets.ModelViewSet):
 class FeeStructureViewSet(viewsets.ModelViewSet):
     queryset = FeeStructure.objects.all()
     serializer_class = FeeStructureSerializer
-    permission_classes = [IsAuthenticated]
+    # permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        # queryset = super().get_queryset()
+        queryset = FeeStructure.objects.annotate(
+            student_fee_count=Count("student_fees")
+        )
         year_level_id = self.request.query_params.get("year_level_id")
         if year_level_id:
             queryset = queryset.filter(year_level__id=year_level_id)
-        
+
         school_year_id = self.request.query_params.get("school_year_id")
         if school_year_id:
             queryset = queryset.filter(school_year__id=school_year_id)
+        
         return queryset
 
+    def perform_destroy(self, instance):
+        if instance.student_fees.exists():
+            raise ValidationError(
+                {"detail": "This fee structure has been used in student fees and cannot be deleted."}
+            )
+        instance.delete()
 
 
 class FeePaymentView(viewsets.ModelViewSet):
