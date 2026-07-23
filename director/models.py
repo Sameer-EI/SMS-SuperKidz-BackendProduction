@@ -375,11 +375,19 @@ class MasterFee(models.Model):
         return f"{self.payment_structure}"
 
 
+SECTION_CHOICES = [
+    ('A', 'A'),
+    ('B', 'B'),
+    ('C', 'C'),
+    ('D', 'D'),
+]
+
 class YearLevel(models.Model):
     level_name = models.CharField(max_length=250)
     level_order = models.IntegerField()
     fee = models.ForeignKey(MasterFee, on_delete=models.PROTECT,related_name="year_levels",
                             null=True, blank=True)
+    max_section = models.CharField(max_length=1, choices=SECTION_CHOICES, default='C')
 
     def __str__(self):
         return f"{self.level_name}"
@@ -399,32 +407,35 @@ class FeeRecordManager(models.Manager):
         return super().get_queryset()
     
 
+FEE_TYPE_CHOICES = [
+    ("Admission Fee", "Admission Fee"),
+    ("Exam Fee", "Exam Fee"),
+    ("Tuition Fee", "Tuition Fee"),
+    ("Caution Fee", "Caution Fee"),
+    ("Maintenance", "Maintenance"),
+    ("Form Fee", "Form Fee"),
+    ("Annual Charges", "Annual Charges"),
+    ("Others", "Others"),
+]
 class FeeStructure(models.Model):
-    FEE_TYPE = [
-        ('Admission Fee', 'Admission Fee'),
-        ('Exam Fee', 'Exam Fee'),
-        ('Tuition Fee', 'Tuition Fee'),
-        ('Caution Fee','Caution Fee'),
-        ('Maintenance','Maintenance'),
-        ('Form Fee','Form Fee'),
-        ('Others','Others'),
-        ('Annual Charges','Annual Charges'),
-        ]
-    
-    master_fee = models.ForeignKey(MasterFee,on_delete=models.CASCADE,related_name="fee_structures")
-    fee_type = models.CharField(max_length=100,choices=FEE_TYPE)#add chioce 
-    fee_amount = models.FloatField()
-    year_level = models.ManyToManyField("YearLevel", related_name="fee_structures")  # Multiple classes
-
+    school_year = models.ForeignKey(SchoolYear, on_delete=models.PROTECT, related_name="fee_structures", default=2)
+    master_fee = models.ForeignKey(MasterFee, on_delete=models.CASCADE, related_name="fee_structures")
+    fee_type = models.CharField(max_length=100, choices=FEE_TYPE_CHOICES)
+    fee_amount = models.DecimalField(max_digits=10,decimal_places=2)
+    year_level = models.ManyToManyField("YearLevel", related_name="fee_structures")
 
     class Meta:
         db_table = "fee_structure"
 
     def __str__(self):
-        year_levels = ", ".join([yl.level_name for yl in self.year_level.all()])
-        return f"{year_levels} - {self.fee_type} - {self.fee_amount}"
-
-
+        year_levels = ", ".join(
+            self.year_level.values_list("level_name", flat=True)
+        )
+        return (
+            f"{self.school_year.year_name} | "
+            f"{year_levels} | "
+            f"{self.fee_type} | ₹{self.fee_amount}"
+        )
 
 class AppliedFeeDiscount(models.Model):
     # student_fee = models.ForeignKey(StudentFee, on_delete=models.CASCADE, related_name="discounts")#
