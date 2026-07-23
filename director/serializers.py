@@ -632,6 +632,7 @@ class AdmissionSerializer(serializers.ModelSerializer):
         address_data = validated_data.pop('address_input', None)
         banking_data = validated_data.pop('banking_detail_input', None)
         guardian_type = validated_data.pop('guardian_type_input', None)
+        section = validated_data.pop('section_input', None)
 
         # --- Update direct fields (allow None) ---
         for field in ['is_rte', 'rte_number', 'year_level', 'school_year',
@@ -755,6 +756,20 @@ class AdmissionSerializer(serializers.ModelSerializer):
                 guardian=instance.guardian,
                 defaults={"guardian_type": guardian_type}
             )
+
+        # --- Section update ---
+        if section is not None or 'year_level' in validated_data or 'school_year' in validated_data:
+            defaults = {}
+            if section is not None:
+                defaults['section'] = section
+            
+            if instance.year_level and instance.school_year:
+                StudentYearLevel.objects.update_or_create(
+                    student=instance.student,
+                    level=instance.year_level,
+                    year=instance.school_year,
+                    defaults=defaults
+                )
 
         instance.save()
         return instance
