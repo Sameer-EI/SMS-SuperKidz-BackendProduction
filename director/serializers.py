@@ -758,19 +758,24 @@ class AdmissionSerializer(serializers.ModelSerializer):
             )
 
         # --- Section update ---
-        if section is not None or 'year_level' in validated_data or 'school_year' in validated_data:
-            defaults = {}
-            if section is not None:
-                defaults['section'] = section
-            
-            if instance.year_level and instance.school_year:
-                StudentYearLevel.objects.update_or_create(
-                    student=instance.student,
-                    level=instance.year_level,
-                    year=instance.school_year,
-                    defaults=defaults
-                )
+        old_year_level = StudentYearLevel.objects.filter(
+            student=instance.student,
+            year=instance.school_year
+        ).first()
 
+        if old_year_level:
+            old_year_level.level = instance.year_level
+            if section is not None:
+                old_year_level.section = section
+            old_year_level.save()
+        else:
+            StudentYearLevel.objects.create(
+                student=instance.student,
+                level=instance.year_level,
+                year=instance.school_year,
+                section=section
+            )
+            
         instance.save()
         return instance
 
