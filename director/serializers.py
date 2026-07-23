@@ -758,24 +758,17 @@ class AdmissionSerializer(serializers.ModelSerializer):
             )
 
         # --- Section update ---
-        old_year_level = StudentYearLevel.objects.filter(
-            student=instance.student,
-            year=instance.school_year
-        ).first()
+        old_record = StudentYearLevel.objects.filter(
+            student=instance.student
+        ).order_by("-id").first()
 
-        if old_year_level:
-            old_year_level.level = instance.year_level
+        if old_record:
+            old_record.level = instance.year_level
+            old_record.year = instance.school_year
             if section is not None:
-                old_year_level.section = section
-            old_year_level.save()
-        else:
-            StudentYearLevel.objects.create(
-                student=instance.student,
-                level=instance.year_level,
-                year=instance.school_year,
-                section=section
-            )
-            
+                old_record.section = section
+            old_record.save()
+
         instance.save()
         return instance
 
