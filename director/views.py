@@ -3965,7 +3965,7 @@ class MasterFeeViewSet(viewsets.ModelViewSet):
 class FeeStructureViewSet(viewsets.ModelViewSet):
     queryset = FeeStructure.objects.all()
     serializer_class = FeeStructureSerializer
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         # queryset = super().get_queryset()

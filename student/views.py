@@ -156,12 +156,12 @@ class StudentView(ModelViewSet):
     ]
 
     ordering_fields = [
-    "user__first_name",          
-    "height",
-    "weight",
-    "date_of_birth",
-    "scholar_number",
-]
+        "user__first_name",          
+        "height",
+        "weight",
+        "date_of_birth",
+        "scholar_number",
+        ]
     
     def get_permissions(self):
         """Public access for list/retrieve; JWT required for others."""
@@ -296,11 +296,7 @@ class StudentView(ModelViewSet):
                 guardian = Guardian.objects.filter(studentguardian__student=student).first()
                 return getattr(guardian, 'annual_income', "N/A") if guardian else "N/A"
 
-            def get_school_year(admission):
-                if not admission or not admission.student:
-                    return "N/A"
-                student_year = StudentYearLevel.objects.filter(student=admission.student).first()
-                return getattr(getattr(student_year, 'year', None), 'year_name', "N/A")
+            student_year = StudentYearLevel.objects.filter(student=admission.student).first()
 
             data.append({
                 "student_id": student.id,
@@ -315,7 +311,8 @@ class StudentView(ModelViewSet):
                 "mother_name": student.mother_name or "N/A",
                 "guardian_name": guardian_name,
                 "full_address": full_address,
-                "class": getattr(getattr(admission, 'year_level', None), 'level_name', "N/A"),
+                "class": getattr(getattr(student_year, 'level', None), 'level_name', "N/A"),
+                "section": getattr(student_year, 'section', None),
                 "adhaar number": get_adhaar_no(student) or "N/A",
                 "scholar number": student.scholar_number or "N/A",
                 "enrollment_no": getattr(admission, "enrollment_no", "N/A"),
@@ -326,7 +323,7 @@ class StudentView(ModelViewSet):
                 "is_active": student.is_active,
                 "is_rte": getattr(admission, 'is_rte', "N/A"),
                 "rte number": getattr(admission, 'rte_number', "N/A"),
-                "school year": get_school_year(admission) or "N/A",
+                "school year": getattr(getattr(student_year, 'year', None), 'year_name', "N/A"),
                 "category": getattr(student, "category", "N/A"),
             })
 
