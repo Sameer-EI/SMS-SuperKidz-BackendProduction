@@ -280,11 +280,11 @@ def Director_Dashboard_Summary(request):
     teacher_total = summary["teachers"]
 
     # Gender count
-    student_male = Student.objects.filter(gender__iexact="Male").count()
-    student_female = Student.objects.filter(gender__iexact="Female").count()
+    student_male = Student.objects.all_including_inactive().filter(gender__iexact="Male").count()
+    student_female = Student.objects.all_including_inactive().filter(gender__iexact="Female").count()
 
-    teacher_male = Teacher.objects.filter(gender__iexact="Male").count()
-    teacher_female = Teacher.objects.filter(gender__iexact="Female").count()
+    teacher_male = Teacher.objects.all_including_inactive().filter(gender__iexact="Male").count()
+    teacher_female = Teacher.objects.all_including_inactive().filter(gender__iexact="Female").count()
 
     def get_percentage(count, total):
         return round((count / total) * 100, 2) if total else 0
@@ -5085,6 +5085,10 @@ class StudentFeeView(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], url_path="fee_preview")
     def preview(self, request):
         student_year_id = request.query_params.get("student_year_id")
+        school_year_id = (
+            request.query_params.get("school_year_id")
+            or request.query_params.get("school_year")
+        )
 
         if not student_year_id:
             return Response(
@@ -5093,16 +5097,40 @@ class StudentFeeView(viewsets.ModelViewSet):
             )
 
         try:
-            student_year_level = StudentYearLevel.objects.get(id=student_year_id)
+            student_year_level = StudentYearLevel.objects.select_related(
+                "level",
+                "year"
+            ).get(id=student_year_id)
         except StudentYearLevel.DoesNotExist:
             return Response(
                 {"detail": "StudentYearLevel not found"},
                 status=drf_status.HTTP_404_NOT_FOUND
             )
 
+        if school_year_id:
+            try:
+                selected_school_year = SchoolYear.objects.get(id=school_year_id)
+            except SchoolYear.DoesNotExist:
+                return Response(
+                    {"detail": "SchoolYear not found"},
+                    status=drf_status.HTTP_404_NOT_FOUND
+                )
+        else:
+            selected_school_year = student_year_level.year
+
         year_level = student_year_level.level
-        year_level_fees = FeeStructure.objects.filter(year_level=year_level)
-        paid_fees = StudentFee.objects.filter(student_year=student_year_level)
+        year_level_fees = (
+            FeeStructure.objects.filter(
+                year_level=year_level,
+                school_year=selected_school_year
+            )
+            .select_related("master_fee", "school_year")
+            .distinct()
+        )
+        paid_fees = StudentFee.objects.filter(
+            student_year=student_year_level,
+            school_year=selected_school_year
+        )
 
         CYCLES = {
             "Jul-Sep + May": [5, 7, 8, 9],
@@ -5115,7 +5143,7 @@ class StudentFeeView(viewsets.ModelViewSet):
             "Oct-Dec + Jun": "Oct-Dec {start_year} + Jun {end_year}",
             "Jan-Apr": "Jan-Apr {end_year}",
         }
-        start_year, end_year = self._school_year_bounds(student_year_level.year)
+        start_year, end_year = self._school_year_bounds(selected_school_year)
 
         result = {
             "annual_fees": [],
@@ -5241,11 +5269,11 @@ class StudentFeeView(viewsets.ModelViewSet):
                         "month": month_number,
                         "month_name": calendar.month_name[month_number],
                         "month_year": self._fee_month_year(
-                            student_year_level.year,
+                            selected_school_year,
                             month_number
                         ),
                         "month_label": self._fee_month_label(
-                            student_year_level.year,
+                            selected_school_year,
                             month_number
                         ),
                         "original_amount": str(base_amount),
