@@ -398,8 +398,8 @@ class StudentYearLevelView(viewsets.ModelViewSet):
     serializer_class = StudentYearLevelSerializer
 
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
-    filterset_fields = ['level__id']  #  GET /student-year-levels/?level__id=2
-    search_fields = ['level__level_name']  #  GET /student-year-levels/?search=Nursery
+    filterset_fields = ['level__id','year__year_name']  #  GET /student-year-levels/?level__id=2
+    search_fields = ['level__level_name','year__year_name']  #  GET /student-year-levels/?search=Nursery
     
     # combine search endpoint GET /student-year-levels/?level__id=2&search=Nursery
 
