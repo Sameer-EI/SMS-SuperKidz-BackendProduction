@@ -4,8 +4,6 @@ from authentication.models import User
 from decimal import Decimal
 
 
-# Create your models here.
-
 # adding is active in the model and default is true for active students
 class StudentManager(models.Manager):
     def get_queryset(self):
@@ -117,18 +115,19 @@ class StudentGuardian(models.Model):
 
 
 class StudentYearLevel(models.Model):
-    # student = models.ForeignKey(Student, on_delete=models.DO_NOTHING)
-    student = models.ForeignKey(
-        Student,
-        on_delete=models.CASCADE,
-        related_name='student_year_levels'  # Add this
-    )
+    SECTION_CHOICES = [
+        ('A', 'A'),
+        ('B', 'B'),
+        ('C', 'C'),
+        ('D', 'D'),
+    ]
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='student_year_levels')
     level = models.ForeignKey("director.YearLevel", on_delete=models.DO_NOTHING)
     year = models.ForeignKey("director.SchoolYear", on_delete=models.DO_NOTHING)
+    section = models.CharField(max_length=1, choices=SECTION_CHOICES, null=True, blank=True)
 
     def __str__(self):
-
-        return f"{self.student} - {self.level} "
+        return f"{self.student} - {self.level} {self.section or ''}".strip()
 
     class Meta:
         verbose_name = "StudentYearLevel"

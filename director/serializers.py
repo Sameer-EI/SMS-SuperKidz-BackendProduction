@@ -381,6 +381,10 @@ class AdmissionSerializer(serializers.ModelSerializer):
         queryset=SchoolYear.objects.all(),
         required=True
     )
+    section_input = serializers.ChoiceField(
+        choices=SECTION_CHOICES, required=False, allow_null=True, write_only=True
+    )
+    section = serializers.SerializerMethodField(read_only=True)
 
     # These are write-only inputs for creating/updating admission
     student = StudentSerializer(write_only=True, required=False)
@@ -397,7 +401,7 @@ class AdmissionSerializer(serializers.ModelSerializer):
             'student', 'guardian',  # write-only input nested data
             'address_input', 'banking_detail_input',
             'guardian_type', 'guardian_type_input',
-            'year_level', 'school_year',
+            'year_level', 'school_year', 'section', 'section_input',
             'admission_date', 'previous_school_name', 'previous_standard_studied',
             'tc_letter', 'emergency_contact_no', 'entire_road_distance_from_home_to_school',
             'obtain_marks', 'total_marks', 'previous_percentage','enrollment_no','is_rte', 'rte_number'
@@ -411,6 +415,22 @@ class AdmissionSerializer(serializers.ModelSerializer):
             'banking_detail',
             'enrollment_no'
         ]
+
+    def validate(self, attrs):
+        level = attrs.get('year_level') or getattr(self.instance, 'year_level', None)
+        section = attrs.get('section_input')
+
+        if level and section and section > level.max_section:
+            raise serializers.ValidationError({
+                'section_input': f"{level.level_name} only allows sections up to {level.max_section}."
+            })
+        return attrs
+
+    def get_section(self, obj):
+        syl = StudentYearLevel.objects.filter(
+            student=obj.student, level=obj.year_level, year=obj.school_year
+        ).first()
+        return syl.section if syl else None
 
     def get_student_input(self, obj):
         if obj.student:
@@ -447,6 +467,7 @@ class AdmissionSerializer(serializers.ModelSerializer):
         guardian_type = validated_data.pop('guardian_type_input', None)
         year_level = validated_data.pop('year_level', None)
         school_year = validated_data.pop('school_year', None)
+        section = validated_data.pop('section_input', None)
 
         # --- Student processing ---
         classes_data = student_data.pop('classes', [])
@@ -572,7 +593,8 @@ class AdmissionSerializer(serializers.ModelSerializer):
 
         if year_level and school_year:
             StudentYearLevel.objects.update_or_create(
-                student=student, level=year_level, year=school_year
+                student=student, level=year_level, year=school_year,
+                defaults={'section': section}
             )
 
         # --- Send email notification to the guardian ---
@@ -610,6 +632,7 @@ class AdmissionSerializer(serializers.ModelSerializer):
         address_data = validated_data.pop('address_input', None)
         banking_data = validated_data.pop('banking_detail_input', None)
         guardian_type = validated_data.pop('guardian_type_input', None)
+        section = validated_data.pop('section_input', None)
 
         # --- Update direct fields (allow None) ---
         for field in ['is_rte', 'rte_number', 'year_level', 'school_year',
@@ -733,6 +756,18 @@ class AdmissionSerializer(serializers.ModelSerializer):
                 guardian=instance.guardian,
                 defaults={"guardian_type": guardian_type}
             )
+
+        # --- Section update ---
+        old_record = StudentYearLevel.objects.filter(
+            student=instance.student
+        ).order_by("-id").first()
+
+        if old_record:
+            old_record.level = instance.year_level
+            old_record.year = instance.school_year
+            if section is not None:
+                old_record.section = section
+            old_record.save()
 
         instance.save()
         return instance
@@ -2566,9 +2601,26 @@ class MasterFeeSerializer(serializers.ModelSerializer):
 
 
 class FeeStructureSerializer(serializers.ModelSerializer):
+    student_fee_count = serializers.IntegerField(read_only=True)
+    can_delete = serializers.SerializerMethodField()
+
     class Meta:
         model = FeeStructure
-        fields = "__all__"
+        fields = [
+            'id',
+            'school_year',
+            'master_fee',
+            'fee_type',
+            'fee_amount',
+            'year_level',
+            "student_fee_count",
+            "can_delete",
+        ]
+
+    def get_can_delete(self, obj):
+        if hasattr(obj, 'student_fee_count'):
+            return obj.student_fee_count == 0
+        return obj.student_fees.count() == 0
 
 
 class AppliedFeeDiscountSerializer(serializers.ModelSerializer):
@@ -2829,4 +2881,3 @@ class StudentFeeSerializer(serializers.ModelSerializer):
             return student_fee
 
         return super().create(validated_data)
-
