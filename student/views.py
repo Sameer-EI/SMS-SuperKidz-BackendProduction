@@ -296,7 +296,7 @@ class StudentView(ModelViewSet):
                 guardian = Guardian.objects.filter(studentguardian__student=student).first()
                 return getattr(guardian, 'annual_income', "N/A") if guardian else "N/A"
 
-            student_year = StudentYearLevel.objects.filter(student=admission.student).first()
+            student_year = StudentYearLevel.objects.filter(student=student).first()
 
             data.append({
                 "student_id": student.id,
