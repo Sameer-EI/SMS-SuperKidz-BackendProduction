@@ -1,9 +1,12 @@
 from argparse import Action
+from django.db import transaction
+from django.db.models import ObjectDoesNotExist
 from django.shortcuts import get_object_or_404
 from rest_framework.decorators import api_view
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.response import Response
 
+from authentication.models import UserStatusLog
 from director.models import *
 from director.models import Address, Admission, BankingDetail, Role, YearLevel
 from director.serializers import BankingDetailsSerializer
@@ -420,4 +423,374 @@ class StudentGuardianView(viewsets.ModelViewSet):
 
         return Student.objects.filter(id__in=student_ids)   
     
+class StudentActiveViewSet(viewsets.ModelViewSet):
+    queryset = Student.objects.all()
+    serializer_class = StudentSerializer
+
+    @action(detail=False, methods=['patch'], url_path='bulk-deactivate')
+    def bulk_deactivate(self, request):
+        try:
+            student_ids = request.data.get("student_ids", [])
+            reason = request.data.get("reason", "")
+
+            if not student_ids:
+                return Response(
+                    {"error": "student_ids is required."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            with transaction.atomic():
+
+                students = Student.objects.all_including_inactive().filter(id__in=student_ids)
+
+                if not students.exists():
+                    return Response(
+                        {"error": "No valid students found."},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+
+                deactivated_students = []
+
+                for instance in students:
+
+                    if not instance.is_active:
+                        continue
+
+                    user = instance.user
+
+                    # 1. Deactivate User
+                    if user:
+                        user.is_active = False
+                        user.deactivation_reason = reason
+                        user.deactivation_date = timezone.now()
+                        user.reactivation_date = None
+                        user.save()
+
+                    # 2. Deactivate Student
+                    instance.is_active = False
+                    instance.save()
+
+                    # 5. Deactivate Admissions
+                    Admission.objects.all_including_inactive().filter(student=instance).update(is_active=False)
+
+                    # 6. Deactivate Documents
+                    Document.objects.all_including_inactive().filter(student=instance).update(is_active=False)
+
+                    # 7. Deactivate Address
+                    if user:
+                        Address.objects.all_including_inactive().filter(user=user).update(is_active=False)
+
+                    # 8. Deactivate BankingDetail
+                    if user:
+                        BankingDetail.objects.all_including_inactive().filter(user=user).update(is_active=False)
+
+                    # 9. Log it
+                    if user:
+                        UserStatusLog.objects.create(
+                            user=user,
+                            status='TERMINATED',
+                            reason=reason
+                        )
+
+                    deactivated_students.append(instance.id)
+
+                return Response({
+                    "message": "Students successfully deactivated.",
+                    "student_ids": deactivated_students
+                }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+    @action(detail=False, methods=['get'], url_path='inactive-students')
+    def inactive_students(self, request):
+        try:
+            from django.db.models import Q
+
+            students = Student.objects.all_including_inactive().select_related(
+                "user"
+            ).filter(is_active=False)
+
+            tc_student_ids = set(
+                Document.objects.all_including_inactive().filter(
+                    Q(document_types__name__icontains='transfer') |
+                    Q(document_types__name__iexact='tc'),
+                    student__in=students
+                ).values_list('student_id', flat=True)
+            )
+
+            data = [
+                {
+                    "id": student.id,
+                    "name": str(student),
+                    "is_active": student.is_active,
+                    "reason": student.user.deactivation_reason if student.user else None,
+                    "deactivation_date": student.user.deactivation_date if student.user else None,
+                    "has_tc": student.id in tc_student_ids
+                }
+                for student in students
+            ]
+
+            return Response({
+                "count": students.count(),
+                "results": data
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+    @action(detail=False, methods=['patch'], url_path='bulk-reactivate')
+    def bulk_reactivate(self, request):
+        try:
+            student_ids = request.data.get("student_ids", [])
+            reason = request.data.get("reason", "")
+            year_id = request.data.get("year_id")
+            level_id = request.data.get("level_id")
+
+            if not student_ids:
+                return Response(
+                    {"error": "student_ids is required."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            with transaction.atomic():
+
+                students = Student.objects.all_including_inactive().filter(id__in=student_ids)
+
+                if not students.exists():
+                    return Response(
+                        {"error": "No valid students found."},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+
+                level = None
+                year = None
+
+                if year_id and level_id:
+                    try:
+                        level = YearLevel.objects.get(id=level_id)
+                        year = SchoolYear.objects.get(id=year_id)
+                    except ObjectDoesNotExist:
+                        return Response(
+                            {"error": "Invalid year or level ID."},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+
+                reactivated_students = []
+
+                for instance in students:
+
+                    if instance.is_active:
+                        continue
+
+                    user = instance.user
+
+                    # 1. Reactivate User
+                    if user:
+                        user.is_active = True
+                        user.deactivation_reason = None
+                        user.reactivation_date = timezone.now()
+                        user.save()
+
+                    # 2. Reactivate Student
+                    instance.is_active = True
+                    instance.save()
+
+                    # 3. Reactivate Admissions
+                    Admission.objects.all_including_inactive().filter(student=instance).update(is_active=True)
+
+                    # 4. Reactivate Documents
+                    Document.objects.all_including_inactive().filter(student=instance).update(is_active=True)
+
+                    # 5. Reactivate Address
+                    if user:
+                        Address.objects.all_including_inactive().filter(user=user).update(is_active=True)
+
+                    # 6. Reactivate BankingDetail
+                    if user:
+                        BankingDetail.objects.all_including_inactive().filter(user=user).update(is_active=True)
+
+                    # 8. Reactivate StudentYearLevel
+                    if year and level:
+                        StudentYearLevel.objects.get_or_create(
+                            student=instance,
+                            level=level,
+                            year=year
+                        )
+
+                    # 9. Log it
+                    if user:
+                        UserStatusLog.objects.create(
+                            user=user,
+                            status='REACTIVATED',
+                            reason=reason
+                        )
+
+                    reactivated_students.append(instance.id)
+
+                return Response({
+                    "message": "Students successfully reactivated.",
+                    "student_ids": reactivated_students
+                }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+class StudentPromotionViewSet(viewsets.ViewSet):
+    @action(detail=False, methods=['post'], url_path='promote')
+    def promote(self, request):
+        """
+        Payload: {
+            "student_ids": [1, 2, 3],
+            "level_id": 5,
+            "year_id": 2
+        }
+        level_id  = target YearLevel to move students to (promote or demote)
+        year_id   = target SchoolYear (session) to assign
+        """
+
+        student_ids = request.data.get('student_ids', [])
+        level_id = request.data.get('level_id')
+        year_id = request.data.get('year_id')
+
+        if not student_ids:
+            return Response(
+                {"error": "Please provide student_ids."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not level_id or not year_id:
+            return Response(
+                {"error": "Please provide both level_id and year_id."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validate target level and year exist
+        try:
+            target_level = YearLevel.objects.get(id=level_id)
+        except YearLevel.DoesNotExist:
+            return Response(
+                {"error": f"YearLevel with id {level_id} not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            target_year = SchoolYear.objects.get(id=year_id)
+        except SchoolYear.DoesNotExist:
+            return Response(
+                {"error": f"SchoolYear with id {year_id} not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        results = []
+
+        with transaction.atomic():
+            for s_id in student_ids:
+
+                result = {"student_id": s_id}
+
+                # Optional: add student name
+                student = Student.objects.filter(id=s_id).first()
+                if student:
+                    result["student_name"] = str(student)
+                else:
+                    result.update({
+                        "status": "failed",
+                        "reason": "Student not found"
+                    })
+                    results.append(result)
+                    continue
+
+                # 1. Get latest enrollment (SYL)
+                current_enrollment = StudentYearLevel.objects.filter(
+                    student_id=s_id
+                ).order_by('-year__start_date').first()
+
+                if not current_enrollment:
+                    result.update({
+                        "status": "failed",
+                        "reason": "No enrollment found"
+                    })
+                    results.append(result)
+                    continue
+
+                # 2. Check if student already has an enrollment in the target year
+                existing_enrollment = StudentYearLevel.objects.filter(
+                    student_id=s_id,
+                    year=target_year
+                ).first()
+
+                if existing_enrollment:
+                    # Already in the exact same level and year — skip
+                    if existing_enrollment.level_id == target_level.id:
+                        result.update({
+                            "status": "failed",
+                            "reason": f"Student is already in {target_level.level_name} for session {target_year.year_name}"
+                        })
+                        results.append(result)
+                        continue
+
+                    # Update the existing enrollment's level (class change within same session)
+                    old_level_name = existing_enrollment.level.level_name
+                    existing_enrollment.level = target_level
+                    existing_enrollment.save()
+
+                    result.update({
+                        "status": "success",
+                        "reason": "Class updated in existing session",
+                        "from_level": old_level_name,
+                        "from_year": target_year.year_name,
+                        "to_level": target_level.level_name,
+                        "to_year": target_year.year_name,
+                        "new_year_id": target_year.id,
+                        "new_level_id": target_level.id
+                    })
+                    results.append(result)
+                    continue
+
+                # 3. Create new enrollment with the chosen level and year
+                StudentYearLevel.objects.create(
+                    student_id=s_id,
+                    year=target_year,
+                    level=target_level,
+                    # house=current_enrollment.house
+                )
+
+                result.update({
+                    "status": "success",
+                    "reason": "Moved successfully",
+                    "from_level": current_enrollment.level.level_name,
+                    "from_year": current_enrollment.year.year_name,
+                    "to_level": target_level.level_name,
+                    "to_year": target_year.year_name,
+                    "new_year_id": target_year.id,
+                    "new_level_id": target_level.id
+                })
+
+                results.append(result)
+
+        # Summary
+        success_count = sum(1 for r in results if r["status"] == "success")
+        fail_count = len(results) - success_count
+
+        return Response({
+            "message": "Promotion process completed.",
+            "results": results,
+            "summary": {
+                "total": len(results),
+                "promoted": success_count,
+                "failed": fail_count
+            }
+        }, status=status.HTTP_200_OK)
     
