@@ -247,7 +247,7 @@ class TeacherAttendanceDashboard(ViewSet):
 
         class_name = request.query_params.get("class_name")
 
-        student_levels = StudentYearLevel.objects.all()
+        student_levels = StudentYearLevel.objects.filter(student__is_active=True)
 
         if class_name:
             student_levels = student_levels.filter(level__level_name__iexact=class_name)
@@ -255,6 +255,8 @@ class TeacherAttendanceDashboard(ViewSet):
         result = []
 
         for syl in student_levels:
+            if not syl.student:
+                continue
             attendance_qs = Attendance.objects.filter(student=syl.student)
 
             # Monthly summary (filtered)
@@ -273,9 +275,12 @@ class TeacherAttendanceDashboard(ViewSet):
             y_total = yearly.count()
             y_percentage = (y_present / y_total * 100) if y_total else 0.0
 
+            student_name = f"{syl.student.user.first_name} {syl.student.user.last_name}" if syl.student.user else "N/A"
+            class_name_val = syl.level.level_name if syl.level else "N/A"
+
             result.append({
-                "student_name": f"{syl.student.user.first_name} {syl.student.user.last_name}",
-                "class_name": syl.level.level_name,
+                "student_name": student_name,
+                "class_name": class_name_val,
                 "filter_month": month,
                 "filter_year": year,
                 "monthly_percentage": round(m_percentage, 1),
@@ -418,8 +423,8 @@ class GuardianChildrenAttendanceViewSet(ViewSet):
         month = int(request.query_params.get("month", today.month))
         year = int(request.query_params.get("year", today.year))
 
-        student_links = StudentGuardian.objects.filter(guardian=guardian)
-        children = [link.student for link in student_links]
+        student_links = StudentGuardian.objects.filter(guardian=guardian, student__is_active=True)
+        children = [link.student for link in student_links if link.student]
 
         response_data = []
 
@@ -452,9 +457,10 @@ class GuardianChildrenAttendanceViewSet(ViewSet):
             y_leave = yearly_qs.filter(status='L').count()
             y_percent = round((y_present / y_total) * 100, 1) if y_total else 0.0
 
+            student_name = f"{student.user.first_name} {student.user.last_name}" if student.user else "N/A"
             response_data.append({
-                'student_name': f"{student.user.first_name} {student.user.last_name}",
-                'class_name': year_level.level.level_name,
+                'student_name': student_name,
+                'class_name': year_level.level.level_name if year_level and year_level.level else "N/A",
                 'monthly_summary': {
                     "month": month,
                     "present": m_present,

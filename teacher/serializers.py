@@ -238,26 +238,26 @@ class TeacherSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         representation = super().to_representation(instance)
         # Banking detail
-        banking = getattr(instance.user, "bankingdetail", None)
+        banking = getattr(instance.user, "bankingdetail", None) if instance.user else None
         representation["banking_data"] = (
             BankingDetailsSerializer(banking).data if banking else None
         )
 
         # Address
-        last_address = instance.user.address_set.last()
+        last_address = instance.user.address_set.last() if instance.user else None
         representation["address_data"] = (
             AddressSerializer(last_address).data if last_address else None
         )
 
         representation.update(
             {
-                "first_name": instance.user.first_name,
-                "middle_name": instance.user.middle_name,
-                "last_name": instance.user.last_name,
-                "email": instance.user.email,
+                "first_name": instance.user.first_name if instance.user else "",
+                "middle_name": instance.user.middle_name if instance.user else "",
+                "last_name": instance.user.last_name if instance.user else "",
+                "email": instance.user.email if instance.user else "",
                 "user_profile": (
                     instance.user.user_profile.url
-                    if instance.user.user_profile
+                    if instance.user and instance.user.user_profile
                     else None
                 ),
                 "phone_no": instance.phone_no,
