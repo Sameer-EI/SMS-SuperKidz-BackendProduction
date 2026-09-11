@@ -35,7 +35,7 @@ class IsDirector(BasePermission):
 
 
 class TeacherView(viewsets.ModelViewSet):
-    queryset = Teacher.objects.all()
+    queryset = Teacher.objects.filter(is_active=True)
     serializer_class = TeacherSerializer
 
 
@@ -167,6 +167,9 @@ class TeacherView(viewsets.ModelViewSet):
                 )
                 continue
 
+            if ClassPeriod.objects.filter(year_level=yearlevel, term=term, start_time_id=period.id).exists():
+                return Response({"error": f"{yearlevel.level_name} already has a class assigned for {period.name}."}
+                                ,status=400)
 
             to_create.append(ClassPeriod(
                 teacher=teacher,
@@ -211,7 +214,7 @@ class TeacherView(viewsets.ModelViewSet):
     def get_all_teacher_assignments(self, request):
         from django.db.models import Prefetch
     
-        teachers = Teacher.objects.prefetch_related(
+        teachers = Teacher.objects.filter(is_active=True).prefetch_related(
             'year_levels',
             Prefetch(
                 'assigned_periods',
@@ -262,9 +265,10 @@ class TeacherView(viewsets.ModelViewSet):
                 index += 1
     
             # Step 3: Build teacher assignment response
+            teacher_name = teacher.user.get_full_name() if teacher.user else str(teacher)
             response_data.append({
                 'teacher_id': teacher.id,
-                'teacher_name': teacher.user.get_full_name() if teacher.user else str(teacher),
+                'teacher_name': teacher_name,
                 'total_assigned_periods': teacher.assigned_periods.count(),
                 'max_periods_allowed': 6,
                 'assignments': list(yearlevel_map.values())
@@ -310,7 +314,7 @@ from director.permission import RoleBasedPermissionteacheryearlevel
 
 class TeacherYearLevelView(viewsets.ModelViewSet):
     serializer_class = TeacherYearLevelSerializer
-    queryset = TeacherYearLevel.objects.all()
+    queryset = TeacherYearLevel.objects.filter(teacher__is_active=True)
     permission_classes = [ RoleBasedPermissionteacheryearlevel]
 
     def get_queryset(self):
@@ -342,7 +346,7 @@ class AllTeachersWithYearLevelsAPIView(APIView):
             return Response({"error": "Invalid status filter"}, status=status.HTTP_400_BAD_REQUEST)
 
         teacher_id = request.GET.get('teacher_id')
-        teachers = Teacher.objects.select_related('user').all()
+        teachers = Teacher.objects.filter(is_active=True).select_related('user')
 
         if teacher_id:
             teachers = teachers.filter(id=teacher_id)
@@ -386,9 +390,9 @@ class AllTeachersWithYearLevelsAPIView(APIView):
 
             result.append({
                 'id': teacher.id,
-                'first_name': teacher.user.first_name,
-                'last_name': teacher.user.last_name,
-                'email': teacher.user.email,
+                'first_name': teacher.user.first_name if teacher.user else "",
+                'last_name': teacher.user.last_name if teacher.user else "",
+                'email': teacher.user.email if teacher.user else "",
                 'phone_no': teacher.phone_no,
                 'year_levels': year_level_data,
                 'attendance': {'date': str(target_date), 'status': attendance_status},
@@ -455,7 +459,8 @@ class AbsentTeacherFreeReplacementAPIView(APIView):
         # ---- fetch inactive teachers having periods ----
         inactive_teachers_qs = Teacher.objects.filter(
             id__in=inactive_ids,
-            assigned_periods__isnull=False
+            assigned_periods__isnull=False,
+            is_active=True
         ).distinct().select_related("user")
 
         if teacher_id:
@@ -501,13 +506,13 @@ class AbsentTeacherFreeReplacementAPIView(APIView):
                 other_class_free_ids = candidate_ids - same_class_free_ids
 
                 same_class_teachers_qs = (
-                    Teacher.objects.filter(id__in=same_class_free_ids)
+                    Teacher.objects.filter(id__in=same_class_free_ids, is_active=True)
                     .select_related("user")
                     .order_by("user__first_name", "user__last_name")
                 )
 
                 other_teachers_qs = (
-                    Teacher.objects.filter(id__in=other_class_free_ids)
+                    Teacher.objects.filter(id__in=other_class_free_ids, is_active=True)
                     .select_related("user")
                     .order_by("user__first_name", "user__last_name")
                 )
@@ -515,9 +520,9 @@ class AbsentTeacherFreeReplacementAPIView(APIView):
                 same_class_free_teachers = [
                     {
                         "id": t.id,
-                        "first_name": t.user.first_name,
-                        "last_name": t.user.last_name,
-                        "email": t.user.email,
+                        "first_name": t.user.first_name if t.user else "",
+                        "last_name": t.user.last_name if t.user else "",
+                        "email": t.user.email if t.user else "",
                     }
                     for t in same_class_teachers_qs
                 ]
@@ -525,9 +530,9 @@ class AbsentTeacherFreeReplacementAPIView(APIView):
                 other_class_free_teachers = [
                     {
                         "id": t.id,
-                        "first_name": t.user.first_name,
-                        "last_name": t.user.last_name,
-                        "email": t.user.email,
+                        "first_name": t.user.first_name if t.user else "",
+                        "last_name": t.user.last_name if t.user else "",
+                        "email": t.user.email if t.user else "",
                     }
                     for t in other_teachers_qs
                 ]
@@ -553,8 +558,8 @@ class AbsentTeacherFreeReplacementAPIView(APIView):
                     sub_teacher = sub_assignment.substitute_teacher
                     substitute_teacher_data = {
                         "id": sub_teacher.id,
-                        "name": f"{sub_teacher.user.first_name} {sub_teacher.user.last_name}".strip(),
-                        "email": sub_teacher.user.email,
+                        "name": f"{sub_teacher.user.first_name} {sub_teacher.user.last_name}".strip() if sub_teacher.user else "",
+                        "email": sub_teacher.user.email if sub_teacher.user else "",
                     }
 
 
@@ -568,11 +573,12 @@ class AbsentTeacherFreeReplacementAPIView(APIView):
                     "all_free_teachers": all_free_teachers,
                 })
 
+            teacher_name = f"{teacher.user.first_name} {teacher.user.last_name}".strip() if teacher.user else str(teacher)
             result.append({
                 "absent_teacher": {
                     "id": teacher.id,
-                    "name": f"{teacher.user.first_name} {teacher.user.last_name}".strip(),
-                    "email": teacher.user.email,
+                    "name": teacher_name,
+                    "email": teacher.user.email if teacher.user else "",
                     "status": teacher_status,
                     "substitute_teacher": substitute_teacher_data,
                 },

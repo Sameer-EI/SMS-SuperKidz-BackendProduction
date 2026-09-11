@@ -1,9 +1,15 @@
 from argparse import Action
+from django.db import transaction
+from django.db.models import ObjectDoesNotExist
+from django.db import transaction
+from django.db.models import ObjectDoesNotExist
 from django.shortcuts import get_object_or_404
 from rest_framework.decorators import api_view
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.response import Response
 
+from authentication.models import UserStatusLog
+from authentication.models import UserStatusLog
 from director.models import *
 from director.models import Address, Admission, BankingDetail, Role, YearLevel
 from director.serializers import BankingDetailsSerializer
@@ -136,8 +142,7 @@ def GuardianTypeView(request, pk=None):
 from django_filters.rest_framework import DjangoFilterBackend  
 # from .filters import StudentFilter
 class StudentView(ModelViewSet):
-    queryset = Student.objects.all()
-    # queryset = Student.objects.filter(is_active=True)
+    queryset = Student.objects.filter(is_active=True)
     serializer_class = StudentSerializer
     
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -194,7 +199,7 @@ class StudentView(ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='by-year-level-id/(?P<year_level_id>[^/.]+)')
     def by_year_level_id(self, request, year_level_id=None):    
-        student_year_levels = StudentYearLevel.objects.filter(level_id=year_level_id)
+        student_year_levels = StudentYearLevel.objects.filter(level_id=year_level_id, student__is_active=True)
         
         if not student_year_levels.exists():
             return Response({"message": "No students found for the specified year level"}, status=status.HTTP_404_NOT_FOUND)
@@ -203,23 +208,25 @@ class StudentView(ModelViewSet):
 
         for sy in student_year_levels:
             student = sy.student
+            if not student:
+                continue
             user = student.user
-            address_obj = Address.objects.filter(user=user).first()
+            address_obj = Address.objects.filter(user=user).first() if user else None
 
             full_address = (
                 f"{address_obj.house_no}, {address_obj.address_line}, {address_obj.city.name}, "
                 f"{address_obj.state.name}, {address_obj.country.name}, Area Code: {address_obj.area_code}"
-                if address_obj else "N/A"
+                if address_obj and address_obj.city and address_obj.state and address_obj.country else "N/A"
             )
 
             students_data.append({
-                "student_name": f"{user.first_name} {user.last_name}",
+                "student_name": f"{user.first_name} {user.last_name}" if user else "N/A",
                 "age": self.calculate_age(student.date_of_birth) if student.date_of_birth else "N/A",
-                "gender": student.gender,
-                "mobile_number": getattr(user, 'phone', "N/A"),
+                "gender": student.gender or "N/A",
+                "mobile_number": getattr(user, 'phone', "N/A") if user else "N/A",
                 "address": full_address,
-                "year_level": sy.level.level_name,
-                "school_year": sy.year.year_name
+                "year_level": sy.level.level_name if sy.level else "N/A",
+                "school_year": sy.year.year_name if sy.year else "N/A"
             })
 
         return Response(students_data, status=status.HTTP_200_OK)
@@ -252,17 +259,17 @@ class StudentView(ModelViewSet):
 
         # If specific student id is given
         if student_id:
-            student = Student.objects.filter(id=student_id).first()
+            student = Student.objects.filter(id=student_id, is_active=True).first()
             if not student:
                 return Response({"error": "Student not found"}, status=status.HTTP_404_NOT_FOUND)
             students = [student]
         else:
-            students = Student.objects.all()
+            students = Student.objects.filter(is_active=True)
 
         data = []
         for student in students:
             user = getattr(student, 'user', None)
-            address_obj = Address.objects.filter(user=user).first()
+            address_obj = Address.objects.filter(user=user, is_active=True).first() if user else None
 
             full_address = (
                 f"{address_obj.house_no or ''}, "
@@ -274,7 +281,7 @@ class StudentView(ModelViewSet):
                 if address_obj else "N/A"
             )
 
-            admission = Admission.objects.filter(student=student).first()
+            admission = Admission.objects.filter(student=student, is_active=True).first()
             guardian_name = (
                 admission.guardian.user.get_full_name()
                 if admission and getattr(admission, 'guardian', None) and getattr(admission.guardian, 'user', None)
@@ -283,17 +290,17 @@ class StudentView(ModelViewSet):
 
             # inner helper funcs
             def get_banking_detail(student):
-                banking = BankingDetail.objects.filter(user=user).first()
+                banking = BankingDetail.objects.filter(user=user, is_active=True).first() if user else None
                 return BankingDetailsSerializer(banking).data if banking else None
 
             def get_adhaar_no(student):
                 doc = Document.objects.filter(
-                    student=student, document_types__name__iexact="aadhaar"
+                    student=student, is_active=True, document_types__name__iexact="aadhaar"
                 ).first()
                 return getattr(doc, 'identities', "N/A") if doc else "N/A"
 
             def annual_income(student):
-                guardian = Guardian.objects.filter(studentguardian__student=student).first()
+                guardian = Guardian.objects.filter(studentguardian__student=student, is_active=True).first()
                 return getattr(guardian, 'annual_income', "N/A") if guardian else "N/A"
 
             student_year = StudentYearLevel.objects.filter(student=student).first()
@@ -334,7 +341,7 @@ class StudentView(ModelViewSet):
 
 
 class GuardianProfileView(viewsets.ModelViewSet):
-    queryset = Guardian.objects.all()
+    queryset = Guardian.objects.filter(is_active=True)
     serializer_class = GuardianSerializer
     filter_backends = [SearchFilter]
     search_fields = ['user__email','user__first_name','user__guardian_relation__phone_no']
@@ -376,7 +383,7 @@ class GuardianProfileView(viewsets.ModelViewSet):
       
 
         try:
-            guardian = Guardian.objects.get(user=user)
+            guardian = Guardian.objects.get(user=user, is_active=True)
         except Guardian.DoesNotExist:
             return Response({"error": "Guardian profile not found for this user."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -394,7 +401,7 @@ class GuardianProfileView(viewsets.ModelViewSet):
 from django_filters.rest_framework import DjangoFilterBackend
 
 class StudentYearLevelView(viewsets.ModelViewSet):
-    queryset = StudentYearLevel.objects.all()
+    queryset = StudentYearLevel.objects.filter(student__is_active=True)
     serializer_class = StudentYearLevelSerializer
 
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
@@ -412,12 +419,383 @@ class StudentGuardianView(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        guardian = get_object_or_404(Guardian, user=user)  # safer than direct access
+        guardian = get_object_or_404(Guardian, user=user, is_active=True)  # safer than direct access
 
         student_ids = StudentGuardian.objects.filter(
-            guardian=guardian
+            guardian=guardian,
+            student__is_active=True
         ).values_list('student_id', flat=True)
 
-        return Student.objects.filter(id__in=student_ids)   
+        return Student.objects.filter(id__in=student_ids, is_active=True)   
     
+class StudentActiveViewSet(viewsets.ModelViewSet):
+    queryset = Student.objects.filter(is_active=True)
+    serializer_class = StudentSerializer
+
+    @action(detail=False, methods=['patch'], url_path='bulk-deactivate')
+    def bulk_deactivate(self, request):
+        try:
+            student_ids = request.data.get("student_ids", [])
+            reason = request.data.get("reason", "")
+
+            if not student_ids:
+                return Response(
+                    {"error": "student_ids is required."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            with transaction.atomic():
+
+                students = Student.objects.all_including_inactive().filter(id__in=student_ids)
+
+                if not students.exists():
+                    return Response(
+                        {"error": "No valid students found."},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+
+                deactivated_students = []
+
+                for instance in students:
+
+                    if not instance.is_active:
+                        continue
+
+                    user = instance.user
+
+                    # 1. Deactivate User
+                    if user:
+                        user.is_active = False
+                        user.deactivation_reason = reason
+                        user.deactivation_date = timezone.now()
+                        user.reactivation_date = None
+                        user.save()
+
+                    # 2. Deactivate Student
+                    instance.is_active = False
+                    instance.save()
+
+                    # 5. Deactivate Admissions
+                    Admission.objects.all_including_inactive().filter(student=instance).update(is_active=False)
+
+                    # 6. Deactivate Documents
+                    Document.objects.all_including_inactive().filter(student=instance).update(is_active=False)
+
+                    # 7. Deactivate Address
+                    if user:
+                        Address.objects.all_including_inactive().filter(user=user).update(is_active=False)
+
+                    # 8. Deactivate BankingDetail
+                    if user:
+                        BankingDetail.objects.all_including_inactive().filter(user=user).update(is_active=False)
+
+                    # 9. Log it
+                    if user:
+                        UserStatusLog.objects.create(
+                            user=user,
+                            status='TERMINATED',
+                            reason=reason
+                        )
+
+                    deactivated_students.append(instance.id)
+
+                return Response({
+                    "message": "Students successfully deactivated.",
+                    "student_ids": deactivated_students
+                }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+    @action(detail=False, methods=['get'], url_path='inactive-students')
+    def inactive_students(self, request):
+        try:
+            from django.db.models import Q
+
+            students = Student.objects.all_including_inactive().select_related(
+                "user"
+            ).filter(is_active=False)
+
+            tc_student_ids = set(
+                Document.objects.all_including_inactive().filter(
+                    Q(document_types__name__icontains='transfer') |
+                    Q(document_types__name__iexact='tc'),
+                    student__in=students
+                ).values_list('student_id', flat=True)
+            )
+
+            data = [
+                {
+                    "id": student.id,
+                    "name": str(student),
+                    "is_active": student.is_active,
+                    "reason": student.user.deactivation_reason if student.user else None,
+                    "deactivation_date": student.user.deactivation_date if student.user else None,
+                    "has_tc": student.id in tc_student_ids
+                }
+                for student in students
+            ]
+
+            return Response({
+                "count": students.count(),
+                "results": data
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+    @action(detail=False, methods=['patch'], url_path='bulk-reactivate')
+    def bulk_reactivate(self, request):
+        try:
+            student_ids = request.data.get("student_ids", [])
+            reason = request.data.get("reason", "")
+            year_id = request.data.get("year_id")
+            level_id = request.data.get("level_id")
+
+            if not student_ids:
+                return Response(
+                    {"error": "student_ids is required."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            with transaction.atomic():
+
+                students = Student.objects.all_including_inactive().filter(id__in=student_ids)
+
+                if not students.exists():
+                    return Response(
+                        {"error": "No valid students found."},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+
+                level = None
+                year = None
+
+                if year_id and level_id:
+                    try:
+                        level = YearLevel.objects.get(id=level_id)
+                        year = SchoolYear.objects.get(id=year_id)
+                    except ObjectDoesNotExist:
+                        return Response(
+                            {"error": "Invalid year or level ID."},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+
+                reactivated_students = []
+
+                for instance in students:
+
+                    if instance.is_active:
+                        continue
+
+                    user = instance.user
+
+                    # 1. Reactivate User
+                    if user:
+                        user.is_active = True
+                        user.deactivation_reason = None
+                        user.reactivation_date = timezone.now()
+                        user.save()
+
+                    # 2. Reactivate Student
+                    instance.is_active = True
+                    instance.save()
+
+                    # 3. Reactivate Admissions
+                    Admission.objects.all_including_inactive().filter(student=instance).update(is_active=True)
+
+                    # 4. Reactivate Documents
+                    Document.objects.all_including_inactive().filter(student=instance).update(is_active=True)
+
+                    # 5. Reactivate Address
+                    if user:
+                        Address.objects.all_including_inactive().filter(user=user).update(is_active=True)
+
+                    # 6. Reactivate BankingDetail
+                    if user:
+                        BankingDetail.objects.all_including_inactive().filter(user=user).update(is_active=True)
+
+                    # 8. Reactivate StudentYearLevel
+                    if year and level:
+                        StudentYearLevel.objects.get_or_create(
+                            student=instance,
+                            level=level,
+                            year=year
+                        )
+
+                    # 9. Log it
+                    if user:
+                        UserStatusLog.objects.create(
+                            user=user,
+                            status='REACTIVATED',
+                            reason=reason
+                        )
+
+                    reactivated_students.append(instance.id)
+
+                return Response({
+                    "message": "Students successfully reactivated.",
+                    "student_ids": reactivated_students
+                }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+class StudentPromotionViewSet(viewsets.ViewSet):
+    @action(detail=False, methods=['post'], url_path='promote')
+    def promote(self, request):
+        """
+        Payload: {
+            "student_ids": [1, 2, 3],
+            "level_id": 5,
+            "year_id": 2
+        }
+        level_id  = target YearLevel to move students to (promote or demote)
+        year_id   = target SchoolYear (session) to assign
+        """
+
+        student_ids = request.data.get('student_ids', [])
+        level_id = request.data.get('level_id')
+        year_id = request.data.get('year_id')
+
+        if not student_ids:
+            return Response(
+                {"error": "Please provide student_ids."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not level_id or not year_id:
+            return Response(
+                {"error": "Please provide both level_id and year_id."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validate target level and year exist
+        try:
+            target_level = YearLevel.objects.get(id=level_id)
+        except YearLevel.DoesNotExist:
+            return Response(
+                {"error": f"YearLevel with id {level_id} not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            target_year = SchoolYear.objects.get(id=year_id)
+        except SchoolYear.DoesNotExist:
+            return Response(
+                {"error": f"SchoolYear with id {year_id} not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        results = []
+
+        with transaction.atomic():
+            for s_id in student_ids:
+
+                result = {"student_id": s_id}
+
+                # Optional: add student name
+                student = Student.objects.filter(id=s_id).first()
+                if student:
+                    result["student_name"] = str(student)
+                else:
+                    result.update({
+                        "status": "failed",
+                        "reason": "Student not found"
+                    })
+                    results.append(result)
+                    continue
+
+                # 1. Get latest enrollment (SYL)
+                current_enrollment = StudentYearLevel.objects.filter(
+                    student_id=s_id
+                ).order_by('-year__start_date').first()
+
+                if not current_enrollment:
+                    result.update({
+                        "status": "failed",
+                        "reason": "No enrollment found"
+                    })
+                    results.append(result)
+                    continue
+
+                # 2. Check if student already has an enrollment in the target year
+                existing_enrollment = StudentYearLevel.objects.filter(
+                    student_id=s_id,
+                    year=target_year
+                ).first()
+
+                if existing_enrollment:
+                    # Already in the exact same level and year — skip
+                    if existing_enrollment.level_id == target_level.id:
+                        result.update({
+                            "status": "failed",
+                            "reason": f"Student is already in {target_level.level_name} for session {target_year.year_name}"
+                        })
+                        results.append(result)
+                        continue
+
+                    # Update the existing enrollment's level (class change within same session)
+                    old_level_name = existing_enrollment.level.level_name
+                    existing_enrollment.level = target_level
+                    existing_enrollment.save()
+
+                    result.update({
+                        "status": "success",
+                        "reason": "Class updated in existing session",
+                        "from_level": old_level_name,
+                        "from_year": target_year.year_name,
+                        "to_level": target_level.level_name,
+                        "to_year": target_year.year_name,
+                        "new_year_id": target_year.id,
+                        "new_level_id": target_level.id
+                    })
+                    results.append(result)
+                    continue
+
+                # 3. Create new enrollment with the chosen level and year
+                StudentYearLevel.objects.create(
+                    student_id=s_id,
+                    year=target_year,
+                    level=target_level,
+                    # house=current_enrollment.house
+                )
+
+                result.update({
+                    "status": "success",
+                    "reason": "Moved successfully",
+                    "from_level": current_enrollment.level.level_name,
+                    "from_year": current_enrollment.year.year_name,
+                    "to_level": target_level.level_name,
+                    "to_year": target_year.year_name,
+                    "new_year_id": target_year.id,
+                    "new_level_id": target_level.id
+                })
+
+                results.append(result)
+
+        # Summary
+        success_count = sum(1 for r in results if r["status"] == "success")
+        fail_count = len(results) - success_count
+
+        return Response({
+            "message": "Promotion process completed.",
+            "results": results,
+            "summary": {
+                "total": len(results),
+                "promoted": success_count,
+                "failed": fail_count
+            }
+        }, status=status.HTTP_200_OK)
     
