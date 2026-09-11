@@ -1,6 +1,6 @@
 
 import django_filters as df
-from director.models import Student    
+from .models import Student    
 
 class StudentFilter(df.FilterSet):
     gender         = df.CharFilter(lookup_expr="iexact")

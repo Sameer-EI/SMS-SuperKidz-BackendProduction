@@ -44,6 +44,7 @@ from django.utils.timezone import now
 from django.db.models.functions import Cast
 from teacher.models import Teacher, TeacherYearLevel
 from student.pagination import CreatePagination
+from student.pagination import CreatePagination
 
 
 
@@ -84,23 +85,24 @@ def document_fetch_dashboard(request):
     data = []
 
     def format_entry(instance, type_label, has_doc, class_label):
+        name = f"{instance.user.first_name} {instance.user.last_name}" if instance.user else "N/A"
         return {
             "user_type": type_label,
-            "name": f"{instance.user.first_name} {instance.user.last_name}",
+            "name": name,
             "has_uploaded_document": has_doc,
             "class": class_label
         }
 
     def get_class(instance, label):
         if label == "student":
-            return StudentYearLevel.objects.filter(student=instance).select_related("level").first()
+            return StudentYearLevel.objects.filter(student=instance, student__is_active=True).select_related("level").first()
         elif label == "teacher":
-            return TeacherYearLevel.objects.filter(teacher=instance).select_related("year_level").first()
+            return TeacherYearLevel.objects.filter(teacher=instance, teacher__is_active=True).select_related("year_level").first()
         elif label == "guardian":
-            student_guardian = StudentGuardian.objects.filter(guardian=instance).select_related("student").first()
-            if student_guardian:
+            student_guardian = StudentGuardian.objects.filter(guardian=instance, student__is_active=True).select_related("student").first()
+            if student_guardian and student_guardian.student:
                 student = student_guardian.student
-                return StudentYearLevel.objects.filter(student=student).select_related("level").first()
+                return StudentYearLevel.objects.filter(student=student, student__is_active=True).select_related("level").first()
             return None
         elif label == "office_staff":
             return None
@@ -133,16 +135,16 @@ def document_fetch_dashboard(request):
 
     # Main filtering logic
     if user_type == "student" or user_type is None:
-        process_queryset(Student.objects.all(), "student", "student")
+        process_queryset(Student.objects.filter(is_active=True), "student", "student")
 
     if user_type == "teacher" or user_type is None:
-        process_queryset(Teacher.objects.all(), "teacher", "teacher")
+        process_queryset(Teacher.objects.filter(is_active=True), "teacher", "teacher")
 
     if user_type == "guardian" or user_type is None:
-        process_queryset(Guardian.objects.all(), "guardian", "guardian")
+        process_queryset(Guardian.objects.filter(is_active=True), "guardian", "guardian")
 
     if user_type == "office_staff" or user_type is None:
-        process_queryset(OfficeStaff.objects.all(), "office_staff", "office_staff")
+        process_queryset(OfficeStaff.objects.filter(is_active=True), "office_staff", "office_staff")
 
     if user_type not in ["student", "teacher", "guardian", "office_staff", None]:
         return Response({"error": "Invalid user_type"}, status=status.HTTP_400_BAD_REQUEST)
@@ -150,16 +152,9 @@ def document_fetch_dashboard(request):
     return Response(data)
 
 
-
-
 # user_type=student|teacher|guardian|office_staff
-
 # uploaded=true|false
-
 # class=Nursery|KG|Class 1|
-
-
-
 
 
 #  ____________________________________________________________ class period view  ____________________________________________________________
@@ -192,59 +187,10 @@ def assigned_periods(request):
         "total_periods": class_periods.count(),
         "assigned_periods": assigned_periods
     })
-# from django.db.models import Q
-# from rest_framework.decorators import api_view
-# from rest_framework.response import Response
-# from rest_framework import status
 
-# @api_view(['GET'])
-# def assigned_periods(request):
-#     year_level_id = request.query_params.get("year_level_id")
 
-#     if not year_level_id:
-#         return Response({"error": "year_level_id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-#     try:
-#         year_level = YearLevel.objects.get(id=year_level_id)
-#     except YearLevel.DoesNotExist:
-#         return Response({"error": "YearLevel not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     class_periods = ClassPeriod.objects.filter(year_level=year_level)
-#     assigned_periods = []
-
-#     for period in class_periods:
-#         # Check if the teacher is already assigned to another class at the same time
-#         teacher_conflicts = ClassPeriod.objects.filter(
-#             Q(teacher=period.teacher) &
-#             Q(start_time=period.start_time) &
-#             Q(end_time=period.end_time) &
-#             ~Q(year_level=year_level)  # Exclude current class
-#         )
-
-#         if teacher_conflicts.exists():
-#             conflict = teacher_conflicts.first()
-#             return Response({
-#                 "error": f"Teacher {period.teacher} is already teaching {conflict.subject} in {conflict.year_level.level_name} at this time."
-#             }, status=status.HTTP_400_BAD_REQUEST)
-
-#         assigned_periods.append({
-#             "subject": str(period.subject),
-#             "teacher": str(period.teacher),
-#             "start_time": period.start_time.start_period_time.strftime('%I:%M %p'),
-#             "end_time": period.end_time.end_period_time.strftime('%I:%M %p'),
-#             "classroom": str(period.classroom),
-#             "term": period.term,
-#             "name": period.name
-#         })
-
-#     return Response({
-#         "class": year_level.level_name,
-#         "total_periods": class_periods.count(),
-#         "assigned_periods": assigned_periods
-#     })
 #   ---------------------------------------------  Director Dashboard view   ----------------------------------------------------------
-
-
 
 @api_view(["GET"])
 def Director_Dashboard_Summary(request):
@@ -258,13 +204,6 @@ def Director_Dashboard_Summary(request):
         .first()
     )
 
-    # if current_school_year:
-    #     new_admissions_count = Admission.objects.filter(
-    #         admission_date__gte=current_school_year.start_date,
-    #         admission_date__lte=current_school_year.end_date
-    #     ).count()
-    # else:
-    #     new_admissions_count = 0
     if current_school_year:
         new_admissions_count = Admission.objects.filter(school_year=current_school_year).count()
     else:
@@ -272,19 +211,19 @@ def Director_Dashboard_Summary(request):
 
     summary = {
         "new_admissions": new_admissions_count,
-        "students": Student.objects.count(),
-        "teachers": Teacher.objects.count()
+        "students": Student.objects.filter(is_active=True).count(),
+        "teachers": Teacher.objects.filter(is_active=True).count()
     }
 
     student_total = summary["students"]
     teacher_total = summary["teachers"]
 
     # Gender count
-    student_male = Student.objects.all_including_inactive().filter(gender__iexact="Male").count()
-    student_female = Student.objects.all_including_inactive().filter(gender__iexact="Female").count()
+    student_male = Student.objects.filter(is_active=True, gender__iexact="Male").count()
+    student_female = Student.objects.filter( is_active=True, gender__iexact="Female").count()
 
-    teacher_male = Teacher.objects.all_including_inactive().filter(gender__iexact="Male").count()
-    teacher_female = Teacher.objects.all_including_inactive().filter(gender__iexact="Female").count()
+    teacher_male = Teacher.objects.filter(is_active=True, gender__iexact="Male").count()
+    teacher_female = Teacher.objects.filter(is_active=True, gender__iexact="Female").count()
 
     def get_percentage(count, total):
         return round((count / total) * 100, 2) if total else 0
@@ -312,17 +251,37 @@ def Director_Dashboard_Summary(request):
         }
     }
 
-    # Class-wise strength
-    class_data = StudentYearLevel.objects.values("level__level_name").annotate(total=Count("student"))
-    class_strength = {entry["level__level_name"]: entry["total"] for entry in class_data}
+    # Class-wise strength - ACTIVE students only
+    class_data = (
+        StudentYearLevel.objects
+        .filter(student__is_active=True)
+        .values("level__level_name")
+        .annotate(total=Count("student", distinct=True))
+    )
 
-    # Academic Year-wise strength
+    class_strength = {
+        entry["level__level_name"]: entry["total"]
+        for entry in class_data
+    }
+
+    # Academic Year-wise strength - ACTIVE students only
     school_years = SchoolYear.objects.order_by("start_date")
     students_per_year = OrderedDict()
 
     for year in school_years:
         year_range = f"{year.start_date.year}-{year.end_date.year}"
-        count = StudentYearLevel.objects.filter(year=year).count()
+
+        count = (
+            StudentYearLevel.objects
+            .filter(
+                year=year,
+                student__is_active=True
+            )
+            .values("student")
+            .distinct()
+            .count()
+        )
+
         students_per_year[year_range] = count
 
     return Response({
@@ -341,8 +300,8 @@ def Director_Dashboard_Summary(request):
 @api_view(["GET"])
 def teacher_dashboard(request, id):
     try:
-        teacher = Teacher.objects.get(user_id=id)
-        teacher_name = f"{teacher.user.first_name} {teacher.user.last_name}"
+        teacher = Teacher.objects.get(user_id=id, is_active=True)
+        teacher_name = f"{teacher.user.first_name} {teacher.user.last_name}" if teacher.user else "N/A"
 
        
         assigned_levels = TeacherYearLevel.objects.filter(teacher=teacher).select_related("year_level")
@@ -353,7 +312,7 @@ def teacher_dashboard(request, id):
             level = assigned.year_level
             level_name = level.level_name
 
-            total_students = StudentYearLevel.objects.filter(level=level).count()
+            total_students = StudentYearLevel.objects.filter(level=level, student__is_active=True).count()
 
             class_period = ClassPeriod.objects.filter(
                 teacher=teacher,
@@ -385,30 +344,36 @@ def guardian_dashboard(request, id=None):
         return Response({"error": "Guardian ID is required"}, status=400)
 
     try:
-        guardian = Guardian.objects.get(user_id=id)  # Corrected line
+        guardian = Guardian.objects.get(user_id=id, is_active=True)
     except Guardian.DoesNotExist:
         return Response({"error": "Guardian not found"}, status=404)
 
-    student_links = StudentGuardian.objects.filter(guardian=guardian)
+    student_links = StudentGuardian.objects.filter(guardian=guardian, student__is_active=True)
     children_data = []
 
     for link in student_links:
         student = link.student
+        if not student:
+            continue
 
         # Latest class info (YearLevel + SchoolYear)
         year_level_info = StudentYearLevel.objects.filter(student=student).last()
+        student_name = f"{student.user.first_name} {student.user.last_name}" if student.user else "N/A"
 
         children_data.append({
-            "student_name": f"{student.user.first_name} {student.user.last_name}",
+            "student_name": student_name,
             "class": f"{year_level_info.level.level_name} ({year_level_info.year.year_name})"
-            if year_level_info else "Not Assigned"
+            if year_level_info and year_level_info.level and year_level_info.year else "Not Assigned"
         })
 
+    guardian_name = f"{guardian.user.first_name} {guardian.user.last_name}" if guardian.user else "N/A"
     return Response({
-        "guardian": f"{guardian.user.first_name} {guardian.user.last_name}",
+        "guardian": guardian_name,
         "total_children": student_links.count(),
         "children": children_data
     })
+
+
 #  ----------------------------------------------------------------- Student Dashboard View --------------------------------------------------
 
 @api_view(["GET"])
@@ -417,7 +382,7 @@ def student_dashboard(request, id=None):
         return Response({"error": "Student ID is required"}, status=400)
 
     try:
-        student = Student.objects.get(user_id=id)
+        student = Student.objects.get(user_id=id, is_active=True)
     except Student.DoesNotExist:
         return Response({"error": "Student not found"}, status=404)
 
@@ -432,29 +397,31 @@ def student_dashboard(request, id=None):
         year_level_info = StudentYearLevel.objects.filter(student=student).last()
 
     # Guardian details
-    guardian_links = StudentGuardian.objects.filter(student=student)
+    guardian_links = StudentGuardian.objects.filter(student=student, guardian__is_active=True)
     guardians_data = []
 
     for link in guardian_links:
         guardian = link.guardian
-        guardians_data.append({
-            "guardian_name": f"{guardian.user.first_name} {guardian.user.last_name}"
-        })
+        if guardian and guardian.user:
+            guardians_data.append({
+                "guardian_name": f"{guardian.user.first_name} {guardian.user.last_name}"
+            })
 
     # Child info output
     children_data = []
+    student_name = f"{student.user.first_name} {student.user.last_name}" if student.user else "N/A"
 
-    if year_level_info:
+    if year_level_info and year_level_info.level and year_level_info.year:
         children_data.append({
-            "student_id": student.id,  # Added student ID here
-            "student_name": f"{student.user.first_name} {student.user.last_name}",
+            "student_id": student.id,
+            "student_name": student_name,
             "class": f"{year_level_info.level.level_name} ({year_level_info.year.year_name})",
             "year_level_id": year_level_info.level.id
         })
     else:
         children_data.append({
-            "student_id": student.id,  # Added student ID here
-            "student_name": f"{student.user.first_name} {student.user.last_name}",
+            "student_id": student.id,
+            "student_name": student_name,
             "class": "Not Assigned",
             "year_level_id": None
         })
@@ -465,10 +432,11 @@ def student_dashboard(request, id=None):
         "children": children_data
     })
 
+
 # --------------------------------------------------------- office Staff Dashboard View  ----------------------------------------------------------
 @api_view(["GET"])
 def office_staff_dashboard(request):
-    staff = OfficeStaff.objects.first()
+    staff = OfficeStaff.objects.filter(is_active=True).first()
     if not staff or not staff.user:
         return Response({"error": "No office staff found"}, status=404)
 
@@ -492,18 +460,13 @@ def office_staff_dashboard(request):
     for year in school_years:
         year_range = f"{year.start_date.year}-{year.end_date.year}"
 
-        # Admissions in that academic year
-        # admissions_count = Admission.objects.filter(
-        #     admission_date__gte=year.start_date,
-        #     admission_date__lte=year.end_date
-        # ).count()
         # New logic (based on ForeignKey)
-        admissions_count = Admission.objects.filter(school_year=year).count()
+        admissions_count = Admission.objects.filter(school_year=year, is_active=True).count()
 
         admissions_trend[year_range] = admissions_count
 
         # Students enrolled in that academic year
-        students_count = StudentYearLevel.objects.filter(year=year).count()
+        students_count = StudentYearLevel.objects.filter(year=year, student__is_active=True).count()
         students_per_year[year_range] = students_count
 
     # Current year admissions
@@ -521,7 +484,6 @@ def office_staff_dashboard(request):
         "total_admissions": total_admissions,
         "students_per_year": students_per_year
     })
-
 
 
 
@@ -609,7 +571,7 @@ def director_fee_summary(request):
             pass
 
     # ---------- SCHOOL LEVEL SUMMARY ----------
-    total_students = Student.objects.count()
+    total_students = Student.objects.filter(is_active=True).count()
 
     school_agg = fee_qs.aggregate(
         total_fee=Coalesce(
@@ -682,11 +644,8 @@ def director_fee_summary(request):
     })
 
 
+
 # -------------------------------------------------  Guardian income distribution view  ----------------------------------------------------------
-
-
-
-
 
 @api_view(["GET"])
 def guardian_income_distribution(request):
@@ -703,7 +662,7 @@ def guardian_income_distribution(request):
 
     data = (
         Guardian.objects
-        .filter(annual_income__lt=max_income)
+        .filter(is_active=True, annual_income__lt=max_income)
         .annotate(income_bucket=income_bucket_expr)
         .values('income_bucket')
         .annotate(count=Count('id'))
@@ -727,8 +686,8 @@ def guardian_income_distribution(request):
 
 @api_view(["GET"])
 def livelihood_distribution(request):
-    govt_count = Guardian.objects.filter(means_of_livelihood='Govt').count()
-    non_govt_count = Guardian.objects.filter(means_of_livelihood='Non-Govt').count()
+    govt_count = Guardian.objects.filter(is_active=True, means_of_livelihood='Govt').count()
+    non_govt_count = Guardian.objects.filter(is_active=True, means_of_livelihood='Non-Govt').count()
 
     return Response([
         {"category": "Government", "count": govt_count},
@@ -744,8 +703,8 @@ def livelihood_distribution(request):
 
 @api_view(["GET"])
 def student_category(request):
-    category_counts = Student.objects.values('category').annotate(total=Count('id'))
-    total_students = Student.objects.count()
+    category_counts = Student.objects.filter(is_active=True).values('category').annotate(total=Count('id'))
+    total_students = Student.objects.filter(is_active=True).count()
 
     # Map category codes to their display names
     category_display_map = dict(Student._meta.get_field('category').choices or [])
@@ -779,18 +738,20 @@ def guardian_income_distribution(request):
         "Above 10 Lakhs": (1000001, None),
     }
 
-    total_guardians = Guardian.objects.exclude(annual_income__isnull=True).count()
+    total_guardians = Guardian.objects.filter(is_active=True).exclude(annual_income__isnull=True).count()
 
     results = []
 
     for label, (min_income, max_income) in brackets.items():
         if max_income is not None:
             count = Guardian.objects.filter(
+                is_active=True,
                 annual_income__gte=min_income,
                 annual_income__lte=max_income
             ).count()
         else:
             count = Guardian.objects.filter(
+                is_active=True,
                 annual_income__gte=min_income
             ).count()
 
@@ -1441,14 +1402,6 @@ def RoleView(request, pk=None):
         except Role.DoesNotExist:
             return Response({"message": "Role not Found"}, status=status.HTTP_404_NOT_FOUND)
 
-
-
-
-
-# ==============Country================
-class CountryView(viewsets.ModelViewSet):
-    queryset = Country.objects.all()
-    serializer_class = CountrySerializer
     
 # ==============Subject================
 class subjectView(viewsets.ModelViewSet):
@@ -1460,52 +1413,6 @@ class subjectView(viewsets.ModelViewSet):
         if year_id:
             qs = qs.filter(year_levels__id=year_id)
         return qs
-
-
-# ===============State===================
-class StateView(viewsets.ModelViewSet):
-    queryset = State.objects.all()
-    serializer_class = StateSerializer
-
-
-# ================City===============
-class CityView(viewsets.ModelViewSet):
-    queryset = City.objects.all()
-    serializer_class = CitySerializer
-
-
-# ===========Address==========
-
-
-
-# ===========Period============
-
-
-class PeriodView(viewsets.ModelViewSet):
-    queryset = Period.objects.all()
-    serializer_class = PeriodSerializer
-
-
-class DirectorView(viewsets.ModelViewSet):
-    queryset = Director.objects.all()
-    serializer_class = DirectorProfileSerializer
-
-    def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
-        user_instance = instance.user
-        if user_instance.role.exclude(name="director").exists():
-            try:
-                role = Role.objects.get(name="director")
-                user_instance.role.remove(role)
-            except Role.DoesNotExist:
-                pass
-            self.perform_destroy(instance)
-        else:
-            instance.delete()
-            user_instance.delete()
-        return Response(
-            {"success": "Successfully deleted"}, status=status.HTTP_204_NO_CONTENT
-        )
 
 
 # ==============Country================
@@ -1532,7 +1439,7 @@ class CityView(viewsets.ModelViewSet):
 # Added as of 28April25
 
 class AddressView(viewsets.ModelViewSet):
-    queryset = Address.objects.all()
+    queryset = Address.objects.filter(is_active=True)
     serializer_class = AddressSerializer
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
@@ -1544,46 +1451,10 @@ class AddressView(viewsets.ModelViewSet):
 class PeriodView(viewsets.ModelViewSet):
     queryset = Period.objects.all()
     serializer_class = PeriodSerializer
-    
-    
-# class ClassPeriodView(viewsets.ModelViewSet):
-#     queryset = ClassPeriod.objects.all()
-#     serializer_class = ClassPeriodSerializer    
 
 
 class DirectorView(viewsets.ModelViewSet):
-    queryset = Director.objects.all()
-    serializer_class = DirectorProfileSerializer
-
-    def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
-        user_instance = instance.user
-        if user_instance.role.exclude(name="director").exists():
-            try:
-                role = Role.objects.get(name="director")
-                user_instance.role.remove(role)
-            except Role.DoesNotExist:
-                pass
-            self.perform_destroy(instance)
-        else:
-            instance.delete()
-            user_instance.delete()
-        return Response(
-            {"success": "Successfully deleted"}, status=status.HTTP_204_NO_CONTENT
-        )
-
-
-class BankingDetailView(viewsets.ModelViewSet):
-    queryset = BankingDetail.objects.all()
-    serializer_class = BankingDetailsSerializer
-
-class BankNameView(viewsets.ModelViewSet):
-    queryset = BankName.objects.all()
-    serializer_class = BankNameSerializer
-
-
-class DirectorView(viewsets.ModelViewSet):
-    queryset = Director.objects.all()
+    queryset = Director.objects.filter(is_active=True)
     serializer_class = DirectorProfileSerializer
     
     def get_permissions(self):
@@ -1631,10 +1502,13 @@ class DirectorView(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK)    
 
 
-class BankingDetails(viewsets.ModelViewSet):
-    queryset = BankingDetail.objects.all()
+class BankingDetailView(viewsets.ModelViewSet):
+    queryset = BankingDetail.objects.filter(is_active=True)
     serializer_class = BankingDetailsSerializer
 
+class BankNameView(viewsets.ModelViewSet):
+    queryset = BankName.objects.all()
+    serializer_class = BankNameSerializer
 
 class TermView(viewsets.ModelViewSet):
     queryset =Term.objects.all()
@@ -1644,7 +1518,7 @@ class TermView(viewsets.ModelViewSet):
 from django_filters.rest_framework import DjangoFilterBackend  
 # from .filters import AdmissionFilter
 class AdmissionView(viewsets.ModelViewSet):
-    queryset = Admission.objects.all()
+    queryset = Admission.objects.filter(is_active=True)
     serializer_class = AdmissionSerializer
 
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -1683,7 +1557,7 @@ class AdmissionView(viewsets.ModelViewSet):
     # ***************OfficeStaffView**************
     
 class OfficeStaffView(viewsets.ModelViewSet):
-    queryset=OfficeStaff.objects.all()
+    queryset=OfficeStaff.objects.filter(is_active=True)
     serializer_class = OfficeStaffSerializer  
     
     
@@ -1724,154 +1598,8 @@ class FileView(viewsets.ModelViewSet):
     queryset = File.objects.all()
     serializer_class = FileSerializer 
 
-
-
-# from rest_framework import viewsets, status
-# from rest_framework.response import Response
-# from django.db import transaction
-# from .models import Document, File
-# from .serializers import DocumentSerializer
-
-# class DocumentView(viewsets.ModelViewSet):
-#     queryset = Document.objects.prefetch_related('files', 'document_types')
-#     serializer_class = DocumentSerializer
-
-#     @transaction.atomic
-#     def create(self, request, *args, **kwargs):
-#         # Validate files
-#         files = request.FILES.getlist('files')
-#         if not files:
-#             return Response({"error": "Files required"}, status=status.HTTP_400_BAD_REQUEST)
-
-#         # Get and validate document types
-#         doc_types = request.data.getlist('document_types', []) or [request.data.get('document_types')]
-#         doc_types = [dt for dt in doc_types if dt and str(dt).isdigit()]  # Filter valid numeric types
-#         if not doc_types:
-#             return Response({"error": "Valid document types required"}, status=status.HTTP_400_BAD_REQUEST)
-
-#         # Prepare data with null handling for empty strings
-#         data = {
-#             'document_types': doc_types,
-#             'identities': request.data.get('identities'),
-#             **{f: int(request.data[f]) if request.data.get(f) and str(request.data[f]).isdigit() else None 
-#                for f in ['student', 'teacher', 'guardian', 'office_staff']}
-#         }
-
-#         # Find existing document
-#         existing = self._find_existing_document(data)
-        
-#         # Create or update document
-#         if existing:
-#             serializer = self.get_serializer(existing, data=data, partial=True)
-#             existing.files.all().delete()
-#             action = 'replaced'
-#         else:
-#             serializer = self.get_serializer(data=data)
-#             action = 'created'
-
-#         serializer.is_valid(raise_exception=True)
-#         doc = serializer.save()
-
-#         # Save all uploaded files
-#         for file in files:
-#             File.objects.create(document=doc, file=file)
-
-#         return Response({
-#             'status': action,
-#             'document': self.get_serializer(doc, context={'request': request}).data
-#         }, status=status.HTTP_201_CREATED)
-
-#     def _find_existing_document(self, data):
-#         """Helper method to find existing document matching criteria"""
-#         filter_params = {
-#             'identities': data.get('identities'),
-#             **{f: data.get(f) for f in ['student', 'teacher', 'guardian', 'office_staff'] 
-#                if data.get(f) is not None}
-#         }
-        
-#         for doc in Document.objects.filter(**filter_params).prefetch_related('document_types'):
-#             if set(doc.document_types.values_list('id', flat=True)) == set(map(int, data['document_types'])):
-#                 return doc
-#         return None
-
-
-
-from django.db import transaction
-
-
-# class DocumentView(viewsets.ModelViewSet):
-#     queryset = Document.objects.prefetch_related('files', 'document_types')
-#     serializer_class = DocumentSerializer
-
-#     @transaction.atomic
-#     def create(self, request, *args, **kwargs):
-#         # Validate files
-#         files = request.FILES.getlist('files')
-#         if not files:
-#             return Response({"error": "Files required"}, status=status.HTTP_400_BAD_REQUEST)
-
-#         # Get and validate document types
-#         doc_types = request.data.getlist('document_types', []) or [request.data.get('document_types')]
-#         doc_types = [dt for dt in doc_types if dt and str(dt).isdigit()]
-#         if not doc_types:
-#             return Response({"error": "Valid document types required"}, status=status.HTTP_400_BAD_REQUEST)
-
-#         # Handle identities - accept both single value and array
-#         identities = request.data.getlist('identities', []) or [request.data.get('identities')]
-#         identities = [i for i in identities if i]  # Remove empty values
-#         identities_str = ", ".join(identities) if identities else None
-
-#         # Prepare data with null handling
-#         data = {
-#             'document_types': doc_types,
-#             'identities': identities_str,  # Store all identities as comma-separated string
-#             **{f: int(request.data[f]) if request.data.get(f) and str(request.data[f]).isdigit() else None 
-#                for f in ['student', 'teacher', 'guardian', 'office_staff']}
-#         }
-
-#         # Find existing document
-#         existing = self._find_existing_document(data)
-        
-#         # Create or update document
-#         if existing:
-#             # Delete old files first, so new ones replace them
-#             existing.files.all().delete()
-#             serializer = self.get_serializer(existing, data=data, partial=True)
-#             action = 'replaced'
-#         else:
-#             serializer = self.get_serializer(data=data)
-#             action = 'created'
-
-#         serializer.is_valid(raise_exception=True)
-#         doc = serializer.save()
-
-#         # Save all uploaded files
-#         for file in files:
-#             File.objects.create(document=doc, file=file)
-
-#         return Response({
-#             'status': action,
-#             'document': self.get_serializer(doc, context={'request': request}).data
-#         }, status=status.HTTP_201_CREATED)
-
-#     def _find_existing_document(self, data):
-#         """Helper method to find existing document matching criteria"""
-#         filter_params = {
-#             **{f: data.get(f) for f in ['student', 'teacher', 'guardian', 'office_staff'] 
-#                if data.get(f) is not None}
-#         }
-        
-#         # If identities exist in data, include them in filter
-#         if data.get('identities'):
-#             filter_params['identities'] = data['identities']
-        
-#         for doc in Document.objects.filter(**filter_params).prefetch_related('document_types'):
-#             if set(doc.document_types.values_list('id', flat=True)) == set(map(int, data['document_types'])):
-#                 return doc
-#         return None
-
 class DocumentView(viewsets.ModelViewSet):
-    queryset = Document.objects.prefetch_related('files', 'document_types')
+    queryset = Document.objects.filter(is_active=True).prefetch_related('files', 'document_types')
     serializer_class = DocumentSerializer
 
     @transaction.atomic
@@ -3363,7 +3091,7 @@ class EmployeeView(viewsets.ModelViewSet):
             return Response(serializer.data)
 
         if role:
-            role_lower = role.lower()
+            role_lower = role.lower().replace("_", " ").strip()
             if role_lower == "teacher":
                 all_teachers = User.objects.filter(role__name__iexact="teacher")
                 employees_users = Employee.objects.values_list('user', flat=True)
@@ -3407,7 +3135,7 @@ class EmployeeView(viewsets.ModelViewSet):
         except User.DoesNotExist:
             return Response({"error": "Invalid employee id."}, status=400)
 
-        roles = [r.name.lower() for r in user.role.all()]
+        roles = [r.name.lower().replace("_", " ").strip() for r in user.role.all()]
         if not any(r in ["teacher", "office staff"] for r in roles):
             return Response(
                 {"error": "Only Teacher or Office Staff can be assigned as employee."},
@@ -4985,103 +4713,6 @@ class StudentFeeView(viewsets.ModelViewSet):
 
         return Response(response_data)
 
-
-    # @action(  detail=False, methods=["get"], url_path="fee_preview")
-    # def preview(self, request):
-    #     student_year_id = request.query_params.get("student_year_id")
-
-    #     if not student_year_id:
-    #         return Response({"detail": "student_year_id is required"}, status=drf_status.HTTP_400_BAD_REQUEST)
-
-    #     try:
-    #         student_year_level = StudentYearLevel.objects.get(id=student_year_id)
-    #     except StudentYearLevel.DoesNotExist:
-    #         return Response({"detail": "StudentYearLevel not found"}, status=drf_status.HTTP_404_NOT_FOUND)
-
-    #     year_level = student_year_level.level
-    #     year_level_fees = FeeStructure.objects.filter(year_level=year_level)
-    #     paid_fees = StudentFee.objects.filter(student_year=student_year_level)
-        
-    #     result = []
-        
-    #     ACADEMIC_MONTHS = [
-    #         7, 8, 9, 10, 11, 12,  # Jul–Dec
-    #         1, 2, 3, 4, 5, 6      # Jan–Jun
-    #     ]
-
-    #     for month_number in ACADEMIC_MONTHS:
-    #         month_name = calendar.month_name[month_number]
-    #         month_data = {"month": month_name, "fees": []}
-
-    #         for fee in year_level_fees:
-    #             payment_structure = fee.master_fee.payment_structure if fee.master_fee else "monthly"
-    #             if payment_structure == "yearly" and month_number != 7:
-    #                 continue
-    #             if payment_structure == "quarterly" and month_number not in (7, 10, 1, 4):
-    #                 continue
-
-    #             discount_total = AppliedFeeDiscount.objects.filter(
-    #                 student=student_year_level,
-    #                 fee_type=fee
-    #             ).aggregate(total_discount=Sum('discount_amount'))['total_discount'] or Decimal('0.00')
-
-    #             base_amount = Decimal(fee.fee_amount) - Decimal(discount_total)
-    #             # print(base_amount)
-    #             base_amount = max(base_amount, Decimal('0.00'))  
-    #             if fee.fee_type.lower() == "admission fee":
-    #                 if month_name != "July":
-    #                     continue
-    #                 total_paid = paid_fees.filter(fee_structure=fee).aggregate(
-    #                     Sum('paid_amount')
-    #                 )['paid_amount__sum'] or Decimal('0.00')
-    #             else:
-    #                 total_paid = paid_fees.filter(
-    #                     fee_structure=fee,
-    #                     month=month_number
-    #                 ).aggregate(Sum('paid_amount'))['paid_amount__sum'] or Decimal('0.00')
-
-
-    #             # Get student fee record for this month+fee_type
-    #             sf = paid_fees.filter(
-    #                 fee_structure=fee,
-    #                 month=month_number
-    #             ).first()
-
-    #             if sf:
-    #                 total_paid = sf.paid_amount
-    #                 penalty = sf.penalty_amount
-    #             else:
-    #                 total_paid = Decimal("0.00")
-    #                 penalty = Decimal("0.00")
-
-
-    #             # --- REAL DUE CALCULATION ---
-    #             real_due = max(base_amount - total_paid + penalty, Decimal("0.00"))
-
-    #             # --- REAL STATUS ---
-    #             if real_due == 0 and total_paid > 0:
-    #                 status_str = "Paid"
-    #             elif total_paid > 0:
-    #                 status_str = "Partially Paid"
-    #             else:
-    #                 status_str = "Pending"
-
-
-    #             month_data["fees"].append({
-    #                 "fee_id": fee.id,
-    #                 "fee_type": fee.fee_type,
-    #                 "original_amount": str(base_amount),
-    #                 "paid_amount": str(total_paid),
-    #                 "status": status_str,
-    #                 "applied_discount": str(discount_total),
-    #                 "penalty": str(penalty),
-    #                 "due_amount": str(real_due),
-    #             })
-
-    #         if month_data["fees"]:
-    #             result.append(month_data)
-
-    #     return Response(result)
     @action(detail=False, methods=["get"], url_path="fee_preview")
     def preview(self, request):
         student_year_id = request.query_params.get("student_year_id")

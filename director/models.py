@@ -418,7 +418,7 @@ FEE_TYPE_CHOICES = [
     ("Others", "Others"),
 ]
 class FeeStructure(models.Model):
-    school_year = models.ForeignKey(SchoolYear, on_delete=models.PROTECT, related_name="fee_structures", default=2)
+    school_year = models.ForeignKey(SchoolYear, on_delete=models.PROTECT, related_name="fee_structures")
     master_fee = models.ForeignKey(MasterFee, on_delete=models.CASCADE, related_name="fee_structures")
     fee_type = models.CharField(max_length=100, choices=FEE_TYPE_CHOICES)
     fee_amount = models.DecimalField(max_digits=10,decimal_places=2)

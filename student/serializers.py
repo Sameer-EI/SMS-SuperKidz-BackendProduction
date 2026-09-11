@@ -96,11 +96,11 @@ class StudentSerializer(serializers.ModelSerializer):
         rep = super().to_representation(instance)
         user = instance.user
         rep.update({
-            'first_name': user.first_name,
-            'middle_name': user.middle_name,
-            'last_name': user.last_name,
-            'email': user.email,
-            'user_profile': user.user_profile.url if user.user_profile else None,
+            'first_name': user.first_name if user else "",
+            'middle_name': user.middle_name if user else "",
+            'last_name': user.last_name if user else "",
+            'email': user.email if user else "",
+            'user_profile': user.user_profile.url if user and user.user_profile else None,
         })
         return rep
 
@@ -126,7 +126,7 @@ class StudentSerializer(serializers.ModelSerializer):
             else:
                 raise serializers.ValidationError({"classes": "Invalid class ID format."})
 
-        if User.objects.filter(email=user_data['email']).exists():
+        if User.objects.all_including_inactive().filter(email=user_data['email']).exists():
             raise serializers.ValidationError("User with this email already exists.")
 
         user = User.objects.create_user(
@@ -142,7 +142,7 @@ class StudentSerializer(serializers.ModelSerializer):
         user.save()
 
         # ===== Generate scholar_number here =====
-        last_student = Student.objects.order_by('-id').first()
+        last_student = Student.objects.all_including_inactive().order_by('-id').first()
         
         if last_student and last_student.scholar_number and last_student.scholar_number.isdigit():
             next_number = int(last_student.scholar_number) + 1
@@ -261,7 +261,7 @@ class GuardianSerializer(serializers.ModelSerializer):
         occupation = validated_data.pop('occupation', None)
         designation = validated_data.pop('designation', None)
 
-        if user_data.get("email") and User.objects.filter(email=user_data["email"]).exists():
+        if user_data.get("email") and User.objects.all_including_inactive().filter(email=user_data["email"]).exists():
             raise serializers.ValidationError("User with this email already exists.")
 
         role, _ = Role.objects.get_or_create(name='guardian')
@@ -283,25 +283,26 @@ class GuardianSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         user = instance.user
-        user.first_name = validated_data.get('first_name', user.first_name)
-        user.middle_name = validated_data.get('middle_name', user.middle_name)
-        user.last_name = validated_data.get('last_name', user.last_name)
-        password = validated_data.get('password', None)
-        if password:
-            user.set_password(password)
-        user.email = validated_data.get('email', user.email)
+        if user:
+            user.first_name = validated_data.get('first_name', user.first_name)
+            user.middle_name = validated_data.get('middle_name', user.middle_name)
+            user.last_name = validated_data.get('last_name', user.last_name)
+            password = validated_data.get('password', None)
+            if password:
+                user.set_password(password)
+            user.email = validated_data.get('email', user.email)
 
-        # Handle profile image
-        if 'user_profile' in validated_data:
-            user_profile = validated_data.get('user_profile')
-            if not user_profile:
-                if user.user_profile:
-                    user.user_profile.delete(save=False)
-                user.user_profile = None
-            else:
-                user.user_profile = user_profile
+            # Handle profile image
+            if 'user_profile' in validated_data:
+                user_profile = validated_data.get('user_profile')
+                if not user_profile:
+                    if user.user_profile:
+                        user.user_profile.delete(save=False)
+                    user.user_profile = None
+                else:
+                    user.user_profile = user_profile
 
-        user.save()
+            user.save()
 
         instance.phone_no = validated_data.get('phone_no', instance.phone_no)
         instance.annual_income = validated_data.get('annual_income', instance.annual_income)
@@ -317,11 +318,11 @@ class GuardianSerializer(serializers.ModelSerializer):
         rep = super().to_representation(instance)
         user = instance.user
         rep.update({
-            "first_name": user.first_name,
-            "middle_name": user.middle_name,
-            "last_name": user.last_name,
-            "email": user.email,
-            "user_profile": user.user_profile.url if user.user_profile else None,
+            "first_name": user.first_name if user else "",
+            "middle_name": user.middle_name if user else "",
+            "last_name": user.last_name if user else "",
+            "email": user.email if user else "",
+            "user_profile": user.user_profile.url if user and user.user_profile else None,
         })
         return rep
 

@@ -1,11 +1,14 @@
 from argparse import Action
 from django.db import transaction
 from django.db.models import ObjectDoesNotExist
+from django.db import transaction
+from django.db.models import ObjectDoesNotExist
 from django.shortcuts import get_object_or_404
 from rest_framework.decorators import api_view
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.response import Response
 
+from authentication.models import UserStatusLog
 from authentication.models import UserStatusLog
 from director.models import *
 from director.models import Address, Admission, BankingDetail, Role, YearLevel
@@ -139,8 +142,7 @@ def GuardianTypeView(request, pk=None):
 from django_filters.rest_framework import DjangoFilterBackend  
 # from .filters import StudentFilter
 class StudentView(ModelViewSet):
-    queryset = Student.objects.all()
-    # queryset = Student.objects.filter(is_active=True)
+    queryset = Student.objects.filter(is_active=True)
     serializer_class = StudentSerializer
     
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -197,7 +199,7 @@ class StudentView(ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='by-year-level-id/(?P<year_level_id>[^/.]+)')
     def by_year_level_id(self, request, year_level_id=None):    
-        student_year_levels = StudentYearLevel.objects.filter(level_id=year_level_id)
+        student_year_levels = StudentYearLevel.objects.filter(level_id=year_level_id, student__is_active=True)
         
         if not student_year_levels.exists():
             return Response({"message": "No students found for the specified year level"}, status=status.HTTP_404_NOT_FOUND)
@@ -206,23 +208,25 @@ class StudentView(ModelViewSet):
 
         for sy in student_year_levels:
             student = sy.student
+            if not student:
+                continue
             user = student.user
-            address_obj = Address.objects.filter(user=user).first()
+            address_obj = Address.objects.filter(user=user).first() if user else None
 
             full_address = (
                 f"{address_obj.house_no}, {address_obj.address_line}, {address_obj.city.name}, "
                 f"{address_obj.state.name}, {address_obj.country.name}, Area Code: {address_obj.area_code}"
-                if address_obj else "N/A"
+                if address_obj and address_obj.city and address_obj.state and address_obj.country else "N/A"
             )
 
             students_data.append({
-                "student_name": f"{user.first_name} {user.last_name}",
+                "student_name": f"{user.first_name} {user.last_name}" if user else "N/A",
                 "age": self.calculate_age(student.date_of_birth) if student.date_of_birth else "N/A",
-                "gender": student.gender,
-                "mobile_number": getattr(user, 'phone', "N/A"),
+                "gender": student.gender or "N/A",
+                "mobile_number": getattr(user, 'phone', "N/A") if user else "N/A",
                 "address": full_address,
-                "year_level": sy.level.level_name,
-                "school_year": sy.year.year_name
+                "year_level": sy.level.level_name if sy.level else "N/A",
+                "school_year": sy.year.year_name if sy.year else "N/A"
             })
 
         return Response(students_data, status=status.HTTP_200_OK)
@@ -255,17 +259,17 @@ class StudentView(ModelViewSet):
 
         # If specific student id is given
         if student_id:
-            student = Student.objects.filter(id=student_id).first()
+            student = Student.objects.filter(id=student_id, is_active=True).first()
             if not student:
                 return Response({"error": "Student not found"}, status=status.HTTP_404_NOT_FOUND)
             students = [student]
         else:
-            students = Student.objects.all()
+            students = Student.objects.filter(is_active=True)
 
         data = []
         for student in students:
             user = getattr(student, 'user', None)
-            address_obj = Address.objects.filter(user=user).first()
+            address_obj = Address.objects.filter(user=user, is_active=True).first() if user else None
 
             full_address = (
                 f"{address_obj.house_no or ''}, "
@@ -277,7 +281,7 @@ class StudentView(ModelViewSet):
                 if address_obj else "N/A"
             )
 
-            admission = Admission.objects.filter(student=student).first()
+            admission = Admission.objects.filter(student=student, is_active=True).first()
             guardian_name = (
                 admission.guardian.user.get_full_name()
                 if admission and getattr(admission, 'guardian', None) and getattr(admission.guardian, 'user', None)
@@ -286,17 +290,17 @@ class StudentView(ModelViewSet):
 
             # inner helper funcs
             def get_banking_detail(student):
-                banking = BankingDetail.objects.filter(user=user).first()
+                banking = BankingDetail.objects.filter(user=user, is_active=True).first() if user else None
                 return BankingDetailsSerializer(banking).data if banking else None
 
             def get_adhaar_no(student):
                 doc = Document.objects.filter(
-                    student=student, document_types__name__iexact="aadhaar"
+                    student=student, is_active=True, document_types__name__iexact="aadhaar"
                 ).first()
                 return getattr(doc, 'identities', "N/A") if doc else "N/A"
 
             def annual_income(student):
-                guardian = Guardian.objects.filter(studentguardian__student=student).first()
+                guardian = Guardian.objects.filter(studentguardian__student=student, is_active=True).first()
                 return getattr(guardian, 'annual_income', "N/A") if guardian else "N/A"
 
             student_year = StudentYearLevel.objects.filter(student=student).first()
@@ -337,7 +341,7 @@ class StudentView(ModelViewSet):
 
 
 class GuardianProfileView(viewsets.ModelViewSet):
-    queryset = Guardian.objects.all()
+    queryset = Guardian.objects.filter(is_active=True)
     serializer_class = GuardianSerializer
     filter_backends = [SearchFilter]
     search_fields = ['user__email','user__first_name','user__guardian_relation__phone_no']
@@ -379,7 +383,7 @@ class GuardianProfileView(viewsets.ModelViewSet):
       
 
         try:
-            guardian = Guardian.objects.get(user=user)
+            guardian = Guardian.objects.get(user=user, is_active=True)
         except Guardian.DoesNotExist:
             return Response({"error": "Guardian profile not found for this user."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -397,7 +401,7 @@ class GuardianProfileView(viewsets.ModelViewSet):
 from django_filters.rest_framework import DjangoFilterBackend
 
 class StudentYearLevelView(viewsets.ModelViewSet):
-    queryset = StudentYearLevel.objects.all()
+    queryset = StudentYearLevel.objects.filter(student__is_active=True)
     serializer_class = StudentYearLevelSerializer
 
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
@@ -415,16 +419,17 @@ class StudentGuardianView(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        guardian = get_object_or_404(Guardian, user=user)  # safer than direct access
+        guardian = get_object_or_404(Guardian, user=user, is_active=True)  # safer than direct access
 
         student_ids = StudentGuardian.objects.filter(
-            guardian=guardian
+            guardian=guardian,
+            student__is_active=True
         ).values_list('student_id', flat=True)
 
-        return Student.objects.filter(id__in=student_ids)   
+        return Student.objects.filter(id__in=student_ids, is_active=True)   
     
 class StudentActiveViewSet(viewsets.ModelViewSet):
-    queryset = Student.objects.all()
+    queryset = Student.objects.filter(is_active=True)
     serializer_class = StudentSerializer
 
     @action(detail=False, methods=['patch'], url_path='bulk-deactivate')

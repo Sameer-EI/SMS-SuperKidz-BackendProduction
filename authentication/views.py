@@ -1,6 +1,8 @@
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
+
+from student.pagination import CreatePagination
 from .models import User , UserStatusLog
 from .serializers import *
 from rest_framework import status
@@ -33,28 +35,6 @@ class UserView(APIView):
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-# @api_view(["POST"])       #  commented as of 29Aug25 at 12:50 PM
-# @permission_classes([IsAuthenticated])
-# def ChangePasswordView(request):
-#     current_password = request.data.get("current_password")
-#     Change_Password = request.data.get("change_password")
-#     email = request.data.get("email")
-
-#     serialized = ChangePasswordSerializer(data=request.data)
-
-#     if serialized.is_valid():
-
-#         user = authenticate(email=email, password=current_password)
-
-#         if user is not None:
-
-#             user.set_password(Change_Password)
-#             user.save()
-#             return Response({"Message": " Changed password Successfully"})
-
-#         return Response({"Message ": " Invalid Password"})
-#     return Response(serialized.errors, status=400)
-
 
 @api_view(["POST"])     #  Added as of 29Aug25 at 12:50 PM
 @permission_classes([IsAuthenticated])
@@ -78,137 +58,6 @@ def ChangePasswordView(request):
     
     return Response(serialized.errors, status=400)
 
-
-
-
-
-
-# from rest_framework.decorators import api_view
-# from rest_framework.response import Response
-# from rest_framework import status
-# from django.contrib.auth import authenticate
-# from rest_framework_simplejwt.tokens import RefreshToken
-# from .serializers import LoginSerializers  # adjust import if needed
-# from rest_framework.permissions import IsAdminUser 
-
-
-# @api_view(["POST"])
-# def LoginView(request):
-#     if request.method == "POST":
-#         email = request.data.get("email")
-#         password = request.data.get("password")
-
-#         serializer = LoginSerializers(data=request.data, context={'request': request})
-
-#         if serializer.is_valid():
-#             # Check if user exists and is inactive
-#             try:
-#                 user = User.objects.all_including_inactive().get(email=email)
-#                 if not user.is_active:
-#                     return Response(
-#                         {"Message": "Your account is inactive"},
-#                         status=status.HTTP_400_BAD_REQUEST
-#                     )
-#             except User.DoesNotExist:
-#                 return Response(
-#                     {"Message": "User no longer exists"},
-#                     status=status.HTTP_400_BAD_REQUEST
-#                 )
-            
-#             # authenticating only the active users
-#             user = authenticate(email=email, password=password)
-#             if user is None:
-#                 return Response(
-#                     {"Message": "Invalid Credentials"},
-#                     status=status.HTTP_400_BAD_REQUEST,
-#                 )
-            
-#             #******** This wont work cuz authenticate treat the user.is_active =False as None *********
-#             # if not user.is_active:
-#             #     return Response({"Message": "Your account is inactive"}, status=status.HTTP_400_BAD_REQUEST)
-                
-#             refresh = RefreshToken.for_user(user)
-#             access = str(refresh.access_token)
-#             refresh_token = str(refresh)
-
-#             user_roles = user.role.all()
-#             role_names = [role.name for role in user_roles]
-
-#             # Build full name
-#             full_name = f"{user.first_name} {user.middle_name or ''} {user.last_name}".strip()
-
-#             # Build user_profile URL
-#             profile_url = None
-#             if user.user_profile:
-#                 request = request  # from outer scope
-#                 profile_url = request.build_absolute_uri(user.user_profile.url)
-
-
-#             # Assuming only one role per user
-#             role_name = role_names[0] if role_names else None
-
-#             role_id = None
-#             role_key = None
-
-#             if role_name == "teacher":
-#                 try:
-#                     teacher = Teacher.objects.get(user=user)
-#                     role_id = teacher.id
-#                     role_key = "teacher_id"
-#                 except Teacher.DoesNotExist:
-#                     pass
-
-#             elif role_name == "student":
-#                 try:
-#                     student = Student.objects.get(user=user)
-#                     role_id = student.id
-#                     role_key = "student_id"
-#                 except Student.DoesNotExist:
-#                     pass
-
-#             elif role_name == "guardian":
-#                 try:
-#                     guardian = Guardian.objects.get(user=user)
-#                     role_id = guardian.id
-#                     role_key = "guardian_id"
-#                 except Guardian.DoesNotExist:
-#                     pass
-
-#             elif role_name == "director":
-#                 try:
-#                     director = Director.objects.get(user=user)
-#                     role_id = director.id
-#                     role_key = "director_id"
-#                 except Director.DoesNotExist:
-#                     pass
-#             elif role_name=='office staff':
-#                 try:
-#                   staf=OfficeStaff.objects.get(user=user)
-#                   role_id=staf.id
-#                   role_key="staff_id"
-#                 except OfficeStaff.DoesNotExist:
-#                     pass
-#             # elif role_name=='Deactivated User':
-#             #     return Response({"message": "Your account has been deactivated"})
-
-
-#             response_data = {
-#                     "Message": "User logged in successfully",
-#                     "Access Token": access,
-#                     "Refresh Token": refresh_token,
-#                     "User ID": user.id,
-#                     "Roles": role_names,
-#                     "name": full_name,
-#                     "user_profile": profile_url or None,
-#                 }
-
-#             if role_key:
-#                 response_data[role_key] = role_id
-
-#             return Response(response_data, status=status.HTTP_200_OK)
-
-#         else:
-#             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(["POST"])
@@ -272,7 +121,7 @@ def LoginView(request):
 
             if role_name == "teacher":
                 try:
-                    teacher = Teacher.objects.get(user=user)
+                    teacher = Teacher.objects.get(user=user, is_active=True)
                     role_id = teacher.id
                     role_key = "teacher_id"
                 except Teacher.DoesNotExist:
@@ -280,13 +129,13 @@ def LoginView(request):
 
             elif role_name == "student":
                 try:
-                    student = Student.objects.get(user=user)
+                    student = Student.objects.get(user=user, is_active=True)
                     role_id = student.id
                     role_key = "student_id"
 
                     student_year_level = student.student_year_levels.order_by('-year_id').first()
 
-                    if student_year_level:
+                    if student_year_level and student_year_level.level:
                         year_level_data = {
                             "id": student_year_level.level.id,
                             "name": student_year_level.level.level_name
@@ -297,7 +146,7 @@ def LoginView(request):
 
             elif role_name == "guardian":
                 try:
-                    guardian = Guardian.objects.get(user=user)
+                    guardian = Guardian.objects.get(user=user, is_active=True)
                     role_id = guardian.id
                     role_key = "guardian_id"
                 except Guardian.DoesNotExist:
@@ -305,14 +154,14 @@ def LoginView(request):
 
             elif role_name == "director":
                 try:
-                    director = Director.objects.get(user=user)
+                    director = Director.objects.get(user=user, is_active=True)
                     role_id = director.id
                     role_key = "director_id"
                 except Director.DoesNotExist:
                     pass
             elif role_name=='office staff':
                 try:
-                  staf=OfficeStaff.objects.get(user=user)
+                  staf=OfficeStaff.objects.get(user=user, is_active=True)
                   role_id=staf.id
                   role_key="staff_id"
                 except OfficeStaff.DoesNotExist:
@@ -445,89 +294,12 @@ class ErrorLogViewSet(viewsets.ReadOnlyModelViewSet):
 class UserStatusLogView(viewsets.ModelViewSet):
     queryset = UserStatusLog.objects.all()
     serializer_class = UserStatusLogSerializer
-    
-    
-# ------- Added as of 03Sep25 at 11:59 PM ------- #
-# *********** LoggedInUsersView ******** #
-
-# from django.contrib.sessions.models import Session
-# from django.utils import timezone
-# from rest_framework import viewsets, status
-# from rest_framework.decorators import action
-# from rest_framework.response import Response
-# from django.contrib.auth import get_user_model
-
-# from authentication.permissions import LoggedInUsersPermissions
-
-# User = get_user_model()
-
-# class LoggedInUsersView(viewsets.ViewSet):
-#     permission_classes = [LoggedInUsersPermissions]
-    
-#     @action(detail=False, methods=['get'], url_path='')
-#     def active_users(self, request):
-#         """
-#         Custom action to get all logged-in users
-#         """
-#         # Get all active sessions
-#         sessions = Session.objects.filter(expire_date__gte=timezone.now())
-        
-#         logged_in_users = []
-#         user_ids = set()
-        
-#         for session in sessions:
-#             session_data = session.get_decoded()
-            
-#             # Check if user is authenticated in this session
-#             if '_auth_user_id' in session_data:
-#                 user_id = session_data['_auth_user_id']
-                
-#                 # Avoid duplicates
-#                 if user_id not in user_ids:
-#                     user_ids.add(user_id)
-                    
-#                     try:
-#                         user = User.objects.get(id=user_id, is_active=True)
-                        
-#                         # Get user roles
-#                         roles = [role.name for role in user.role.all()]
-                        
-#                         # Build full name
-#                         full_name = f"{user.first_name} {user.middle_name or ''} {user.last_name}".strip()
-                        
-#                         # Build profile URL
-#                         profile_url = None
-#                         if user.user_profile:
-#                             profile_url = request.build_absolute_uri(user.user_profile.url)
-                        
-#                         logged_in_users.append({
-#                             'id': user.id,
-#                             'email': user.email,
-#                             'first_name': user.first_name,
-#                             'middle_name': user.middle_name,
-#                             'last_name': user.last_name,
-#                             'full_name': full_name,
-#                             'roles': roles,
-#                             'last_login': user.last_login,
-#                             'user_profile': profile_url,
-#                         })
-#                     except User.DoesNotExist:
-#                         pass
-        
-#         return Response({
-#             'count': len(logged_in_users),
-#             'users': logged_in_users
-#         }, status=status.HTTP_200_OK)
-
-
+    pagination_class = CreatePagination
 
 
 # with permissions working fine
 from django.contrib.sessions.models import Session
 from django.utils import timezone
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
 from django.contrib.auth import get_user_model
 
 from authentication.permissions import LoggedInUsersPermissions
@@ -594,12 +366,6 @@ class LoggedInUsersAPIView(APIView):
         
         
 # without permissions
-# from django.contrib.sessions.models import Session
-# from django.utils import timezone
-# from rest_framework.views import APIView
-# from rest_framework.response import Response
-# from rest_framework import status
-# from django.contrib.auth import get_user_model
 
 # User = get_user_model()
 
@@ -612,6 +378,68 @@ class LoggedInUsersAPIView(APIView):
 #     def get(self, request):
 #         """
 #         Get all logged-in users
+#         """
+#         # Get all active sessions
+#         sessions = Session.objects.filter(expire_date__gte=timezone.now())
+        
+#         logged_in_users = []
+#         user_ids = set()
+        
+#         for session in sessions:
+#             session_data = session.get_decoded()
+            
+#             # Check if user is authenticated in this session
+#             if '_auth_user_id' in session_data:
+#                 user_id = session_data['_auth_user_id']
+                
+#                 # Avoid duplicates
+#                 if user_id not in user_ids:
+#                     user_ids.add(user_id)
+                    
+#                     try:
+#                         user = User.objects.get(id=user_id, is_active=True)
+                        
+#                         # Get user roles
+#                         roles = [role.name for role in user.role.all()]
+                        
+#                         # Build full name
+#                         full_name = f"{user.first_name} {user.middle_name or ''} {user.last_name}".strip()
+                        
+#                         # Build profile URL
+#                         profile_url = None
+#                         if user.user_profile:
+#                             profile_url = request.build_absolute_uri(user.user_profile.url)
+                        
+#                         logged_in_users.append({
+#                             'id': user.id,
+#                             'email': user.email,
+#                             'first_name': user.first_name,
+#                             'middle_name': user.middle_name,
+#                             'last_name': user.last_name,
+#                             'full_name': full_name,
+#                             'roles': roles,
+#                             'last_login': user.last_login,
+#                             'user_profile': profile_url,
+#                         })
+#                     except User.DoesNotExist:
+#                         pass
+        
+#         return Response({
+#             'count': len(logged_in_users),
+#             'users': logged_in_users
+#         }, status=status.HTTP_200_OK)
+
+
+# ------- Added as of 03Sep25 at 11:59 PM ------- #
+# *********** LoggedInUsersView ******** #
+
+# class LoggedInUsersView(viewsets.ViewSet):
+#     permission_classes = [LoggedInUsersPermissions]
+    
+#     @action(detail=False, methods=['get'], url_path='')
+#     def active_users(self, request):
+#         """
+#         Custom action to get all logged-in users
 #         """
 #         # Get all active sessions
 #         sessions = Session.objects.filter(expire_date__gte=timezone.now())
