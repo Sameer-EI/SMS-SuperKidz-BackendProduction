@@ -2538,7 +2538,7 @@ class ExamScheduleView(viewsets.ModelViewSet):
             ).filter(class_name_id__in=assigned_class_ids)
 
         elif "student" in role_names:
-            student = Student.objects.filter(user=user).first()
+            student = Student.objects.filter(user=user, is_active=True).first()
             student_class = StudentYearLevel.objects.filter(student=student).last()
             if not student_class:
                 return Response({"error": "Student class not found"}, status=400)
@@ -2626,6 +2626,15 @@ class ExamScheduleView(viewsets.ModelViewSet):
         if not papers:
             return Response({"error": "papers are required"}, status=400)
 
+        # Check for duplicate subject names in request payload
+        raw_names = [p.get("subject_name", "").strip() for p in papers if p.get("subject_name")]
+        dup_names = [name for name, count in Counter(s.lower() for s in raw_names).items() if count > 1]
+        if dup_names:
+            return Response(
+                {"error": f"Duplicate subject(s) in update request: {', '.join(dup_names)}. Each subject can only appear once in timetable update."},
+                status=400
+            )
+
         class_obj = base_schedule.class_name
         term = base_schedule.term
         exam_type = base_schedule.exam_type
@@ -2640,7 +2649,7 @@ class ExamScheduleView(viewsets.ModelViewSet):
             ).first()
 
             if not subject:
-                errors.append({"subject_name": subject_name, "error": "Subject not found"})
+                errors.append({"subject_name": subject_name, "error": f"Subject '{subject_name}' not found"})
                 continue
 
             try:
@@ -2651,7 +2660,13 @@ class ExamScheduleView(viewsets.ModelViewSet):
                     subject=subject
                 )
             except ExamSchedule.DoesNotExist:
-                errors.append({"subject_name": subject_name, "error": "Schedule not found"})
+                errors.append({"subject_name": subject_name, "error": f"Schedule not found for subject '{subject_name}'"})
+                continue
+            except ExamSchedule.MultipleObjectsReturned:
+                errors.append({
+                    "subject_name": subject_name,
+                    "error": f"Multiple schedule records found for subject '{subject_name}' in class '{class_obj.level_name}', {term.year.year_name} - Term {term.term_number}, exam type '{exam_type.name}'. Please clean up duplicate database records."
+                })
                 continue
 
             payload = {}
@@ -2670,15 +2685,12 @@ class ExamScheduleView(viewsets.ModelViewSet):
 
             if serializer.is_valid():
                 obj = serializer.save()
-                obj.day = obj.exam_date.strftime("%A")
-                obj.save()
-
                 updated.append({
-                    "subject_name": subject_name,
+                    "subject_name": subject.subject_name,
                     "exam_date": obj.exam_date,
                     "start_time": obj.start_time,
                     "end_time": obj.end_time,
-                    "day": obj.day
+                    "day": obj.exam_date.strftime("%A")
                 })
             else:
                 errors.append({
@@ -2686,7 +2698,13 @@ class ExamScheduleView(viewsets.ModelViewSet):
                     "error": serializer.errors
                 })
 
-        status_code = 207 if errors else 201
+        if errors and not updated:
+            status_code = 400
+        elif errors:
+            status_code = 207
+        else:
+            status_code = 200
+
         return Response({"updated": updated, "errors": errors}, status=status_code)
 
 

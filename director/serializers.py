@@ -1,11 +1,11 @@
-from datetime import *
+from datetime import date, datetime, timedelta, time as dt_time
 import re
 from rest_framework import serializers
 
 from .utils import send_email_notification
 from .models import *
 from django.core.exceptions import MultipleObjectsReturned
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from student.serializers import *
 # from authentication.serializers import UserSerializer
 from uuid import uuid4
@@ -1176,13 +1176,64 @@ class ExamScheduleSerializer(serializers.Serializer):
     exam_type = serializers.IntegerField()
     papers = ExamPaperItemSerializer(many=True)
 
-    def validate(self, data):
-        from collections import Counter
+    def validate_paper_fields(self, paper):
+        subject_id = paper.get("subject_id")
 
+        try:
+            subject = Subject.objects.get(id=subject_id)
+        except Subject.DoesNotExist:
+            raise serializers.ValidationError(
+                {"subject": f"Subject ID {subject_id} does not exist"}
+            )
+
+        exam_date = paper["exam_date"]
+        start_time = paper["start_time"]
+        end_time = paper["end_time"]
+
+        if exam_date < timezone.localdate():
+            raise serializers.ValidationError(
+                {"exam_date": "Exam date cannot be in the past"}
+            )
+
+        if exam_date.weekday() == 6:
+            raise serializers.ValidationError(
+                {"exam_date": "Exams cannot be scheduled on Sunday"}
+            )
+
+        if start_time >= end_time:
+            raise serializers.ValidationError(
+                {"time": "Start time must be before end time"}
+            )
+
+        start_dt = datetime.combine(exam_date, start_time)
+        end_dt = datetime.combine(exam_date, end_time)
+
+        if end_dt - start_dt > timedelta(hours=3):
+            raise serializers.ValidationError(
+                {"time": "Exam duration cannot exceed 3 hours"}
+            )
+
+        allowed_start = dt_time(8, 0)
+        allowed_end = dt_time(17, 0)
+
+        if not (allowed_start <= start_time <= allowed_end):
+            raise serializers.ValidationError(
+                {"start_time": "Exam must start between 8:00 AM – 5:00 PM"}
+            )
+
+        if not (allowed_start <= end_time <= allowed_end):
+            raise serializers.ValidationError(
+                {"end_time": "Exam must end between 8:00 AM – 5:00 PM"}
+            )
+
+    def validate(self, data):
         class_id = data["class_name"]
         exam_type_id = data["exam_type"]
         term_id = data["term"]
         papers = data.get("papers", [])
+
+        if not papers:
+            raise serializers.ValidationError({"papers": "At least one paper is required"})
 
         # ---- term validation ----
         try:
@@ -1196,17 +1247,38 @@ class ExamScheduleSerializer(serializers.Serializer):
         except YearLevel.DoesNotExist:
             raise serializers.ValidationError({"class_name": "Invalid class selected"})
 
+        # ---- exam type validation ----
+        try:
+            exam_type = ExamType.objects.get(id=exam_type_id)
+        except ExamType.DoesNotExist:
+            raise serializers.ValidationError({"exam_type": "Invalid exam type selected"})
+
         max_per_date = 3 if class_obj.level_order >= 15 else 1
 
-        # ---- duplicate subject check ----
+        # ---- duplicate subject check in payload ----
         subject_ids = [p["subject_id"] for p in papers]
         duplicates = [k for k, v in Counter(subject_ids).items() if v > 1]
         if duplicates:
+            duplicate_names = list(Subject.objects.filter(id__in=duplicates).values_list("subject_name", flat=True))
             raise serializers.ValidationError(
-                {"papers": f"Duplicate subjects found: {duplicates}"}
+                {"papers": f"Duplicate subjects in request: {', '.join(duplicate_names) if duplicate_names else duplicates}. Each subject can only appear once."}
             )
 
-        # ---- existing schedules ----
+        # ---- check if subjects already scheduled in DB for this class, term, exam type ----
+        existing_in_db = ExamSchedule.objects.filter(
+            class_name_id=class_id,
+            exam_type_id=exam_type_id,
+            term_id=term_id,
+            subject_id__in=subject_ids
+        ).select_related("subject")
+
+        if existing_in_db.exists():
+            duplicate_scheduled = [s.subject.subject_name for s in existing_in_db]
+            raise serializers.ValidationError(
+                {"papers": f"Subject(s) already scheduled for {class_obj.level_name} in this term ({exam_type.name}): {', '.join(duplicate_scheduled)}"}
+            )
+
+        # ---- existing schedules total limit ----
         existing_papers = ExamSchedule.objects.filter(
             class_name_id=class_id,
             exam_type_id=exam_type_id,
@@ -1222,22 +1294,26 @@ class ExamScheduleSerializer(serializers.Serializer):
                 }
             )
 
+        # ---- validate individual papers ----
+        for paper in papers:
+            self.validate_paper_fields(paper)
+
         # ---- date-wise validation ----
         date_counter = Counter([str(p.exam_date) for p in existing_papers])
         for p in papers:
             date_counter[str(p["exam_date"])] += 1
 
         if class_obj.level_order < 15:
-            for date, count in date_counter.items():
-                if count != 1:
+            for date_val, count in date_counter.items():
+                if count > 1:
                     raise serializers.ValidationError(
-                        {"papers": f"{class_obj.level_name} can have only 1 exam on {date}"}
+                        {"papers": f"{class_obj.level_name} can have only 1 exam on {date_val}"}
                     )
         else:
             over_limit = [d for d, c in date_counter.items() if c > max_per_date]
             if over_limit:
                 raise serializers.ValidationError(
-                    {"papers": f"Too many exams on {over_limit} (max {max_per_date})"}
+                    {"papers": f"Too many exams on {', '.join(over_limit)} (max {max_per_date})"}
                 )
 
         # ---- same subject on same date ----
@@ -1249,114 +1325,27 @@ class ExamScheduleSerializer(serializers.Serializer):
 
         return data
 
-    def validate_paper(self, paper):
-        subject_id = paper["subject_id"]
-
-        try:
-            subject = Subject.objects.get(id=subject_id)
-        except Subject.DoesNotExist:
-            raise serializers.ValidationError(
-                {"subject": f"Subject {subject_id} does not exist"}
-            )
-
-        exam_date = paper["exam_date"]
-        start_time = paper["start_time"]
-        end_time = paper["end_time"]
-
-        if exam_date < date.today():
-            raise serializers.ValidationError(
-                {"exam_date": "Exam date cannot be in the past"}
-            )
-
-        if exam_date.weekday() == 6:
-            raise serializers.ValidationError(
-                {"exam_date": "Exams cannot be scheduled on Sunday"}
-            )
-
-        if start_time >= end_time:
-            raise serializers.ValidationError(
-                {"time": "Start time must be before end time"}
-            )
-
-        start_dt = datetime.combine(date.today(), start_time)
-        end_dt = datetime.combine(date.today(), end_time)
-
-        if end_dt - start_dt > timedelta(hours=3):
-            raise serializers.ValidationError(
-                {"time": "Exam duration cannot exceed 3 hours"}
-            )
-
-        allowed_start = time(8, 0)
-        allowed_end = time(17, 0)
-
-        if not (allowed_start <= start_time <= allowed_end):
-            raise serializers.ValidationError(
-                {"start_time": "Exam must start between 8:00 AM – 5:00 PM"}
-            )
-
-        if not (allowed_start <= end_time <= allowed_end):
-            raise serializers.ValidationError(
-                {"end_time": "Exam must end between 8:00 AM – 5:00 PM"}
-            )
-
-        class_id = self.initial_data.get("class_name")
-        exam_type_id = self.initial_data.get("exam_type")
-        term_id = self.initial_data.get("term")
-
-        class_obj = YearLevel.objects.get(id=class_id)
-        max_allowed = 3 if class_obj.level_order >= 15 else 1
-
-        existing_count = ExamSchedule.objects.filter(
-            class_name_id=class_id,
-            exam_type_id=exam_type_id,
-            term_id=term_id,
-            exam_date=exam_date
-        ).count()
-
-        if existing_count >= max_allowed:
-            raise serializers.ValidationError(
-                {
-                    "exam_date": f"{class_obj.level_name} can have max "
-                                 f"{max_allowed} exam(s) on {exam_date}"
-                }
-            )
-
     def create(self, validated_data):
         class_id = validated_data["class_name"]
         exam_type_id = validated_data["exam_type"]
         term_id = validated_data["term"]
         papers = validated_data.get("papers", [])
 
-        term = Term.objects.get(id=term_id)
-
-        created = []
-        for paper in papers:
-            self.validate_paper(paper)
-
-            if ExamSchedule.objects.filter(
-                class_name_id=class_id,
-                exam_type_id=exam_type_id,
-                term_id=term_id,
-                subject_id=paper["subject_id"]
-            ).exists():
-                subject = Subject.objects.get(id=paper["subject_id"])
-                raise serializers.ValidationError(
-                    f"{subject.subject_name} already scheduled for this term"
+        with transaction.atomic():
+            created = []
+            for paper in papers:
+                schedule = ExamSchedule.objects.create(
+                    exam_date=paper["exam_date"],
+                    start_time=paper["start_time"],
+                    end_time=paper["end_time"],
+                    exam_type_id=exam_type_id,
+                    class_name_id=class_id,
+                    term_id=term_id,
+                    subject_id=paper["subject_id"],
                 )
+                created.append(schedule)
 
-            schedule = ExamSchedule.objects.create(
-                exam_date=paper["exam_date"],
-                start_time=paper["start_time"],
-                end_time=paper["end_time"],
-                exam_type_id=exam_type_id,
-                class_name_id=class_id,
-                term_id=term_id,
-                subject_id=paper["subject_id"],
-            )
-
-            created.append(schedule)
-
-        return created
+            return created
 
     def update(self, instance, validated_data):
         class_id = validated_data["class_name"]
@@ -1381,49 +1370,49 @@ class ExamScheduleSerializer(serializers.Serializer):
 
         result = []
 
-        for paper in papers:
-            self.validate_paper(paper)
-            subject_id = paper["subject_id"]
+        with transaction.atomic():
+            for paper in papers:
+                self.validate_paper_fields(paper)
+                subject_id = paper["subject_id"]
 
-            try:
-                schedule = ExamSchedule.objects.get(
-                    class_name_id=class_id,
-                    exam_type_id=exam_type_id,
-                    term_id=term_id,
-                    subject_id=subject_id,
+                try:
+                    schedule = ExamSchedule.objects.get(
+                        class_name_id=class_id,
+                        exam_type_id=exam_type_id,
+                        term_id=term_id,
+                        subject_id=subject_id,
+                    )
+                except ExamSchedule.DoesNotExist:
+                    raise serializers.ValidationError(
+                        f"Schedule not found for subject ID {subject_id}"
+                    )
+
+                except ExamSchedule.MultipleObjectsReturned:
+                    subject = Subject.objects.filter(id=subject_id).first()
+                    subject_name = subject.subject_name if subject else f"ID {subject_id}"
+
+                    raise serializers.ValidationError(
+                        f"Duplicate schedule found for subject '{subject_name}' "
+                        f"in class '{level.level_name}', term '{term.term_name}', "
+                        f"and exam type '{exam_type.name}'. Please clean up duplicate database records."
+                    )
+
+                schedule.exam_date = paper["exam_date"]
+                schedule.start_time = paper["start_time"]
+                schedule.end_time = paper["end_time"]
+                schedule.save()
+
+                subject = Subject.objects.get(id=subject_id)
+
+                result.append(
+                    {
+                        "subject_name": subject.subject_name,
+                        "exam_date": schedule.exam_date.isoformat(),
+                        "start_time": schedule.start_time.strftime("%H:%M"),
+                        "end_time": schedule.end_time.strftime("%H:%M"),
+                        "day": schedule.exam_date.strftime("%A"),
+                    }
                 )
-            except ExamSchedule.DoesNotExist:
-                raise serializers.ValidationError(
-                    f"Schedule not found for subject ID {subject_id}"
-                )
-
-            except ExamSchedule.MultipleObjectsReturned:
-                subject = Subject.objects.filter(id=subject_id).first()
-                subject_name = subject.subject_name if subject else f"ID {subject_id}"
-
-                raise serializers.ValidationError(
-                    f"Duplicate schedule found for subject '{subject_name}' "
-                    f"in class '{level.level_name}', term '{term.term_name}', "
-                    f"and exam type '{exam_type.name}'."
-                )
-
-            schedule.exam_date = paper["exam_date"]
-            schedule.start_time = paper["start_time"]
-            schedule.end_time = paper["end_time"]
-            schedule.day = paper["exam_date"].strftime("%A")
-            schedule.save()
-
-            subject = Subject.objects.get(id=subject_id)
-
-            result.append(
-                {
-                    "subject_name": subject.subject_name,
-                    "exam_date": schedule.exam_date.isoformat(),
-                    "start_time": schedule.start_time.strftime("%H:%M"),
-                    "end_time": schedule.end_time.strftime("%H:%M"),
-                    "day": schedule.day,
-                }
-            )
 
         return {
             "class": level.level_name,
@@ -1431,6 +1420,7 @@ class ExamScheduleSerializer(serializers.Serializer):
             "exam_type": exam_type.name,
             "papers": result,
         }
+
 
 class ExamScheduleTimeUpdateSerializer(serializers.ModelSerializer):
     class Meta:
@@ -1469,8 +1459,8 @@ class ExamScheduleTimeUpdateSerializer(serializers.ModelSerializer):
                 "time": "Exam duration cannot exceed 3 hours"
             })
 
-        allowed_start = time(8, 0)
-        allowed_end = time(17, 0)
+        allowed_start = dt_time(8, 0)
+        allowed_end = dt_time(17, 0)
 
         if not (allowed_start <= start_time <= allowed_end):
             raise serializers.ValidationError({
