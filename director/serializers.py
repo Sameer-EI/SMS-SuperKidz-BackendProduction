@@ -783,7 +783,7 @@ class ClassPeriodSerializer(serializers.ModelSerializer):
     yearlevel_id = serializers.PrimaryKeyRelatedField(
         source="year_level",  # map it to the actual FK
         queryset=YearLevel.objects.all(),
-        write_only=True
+        write_only=True,
     )
 
     year_level = serializers.PrimaryKeyRelatedField(read_only=True)  # still return year_level in response
@@ -797,29 +797,37 @@ class ClassPeriodSerializer(serializers.ModelSerializer):
     class Meta:
         model = ClassPeriod
         fields = [
-            'id', 'subject', 'teacher', 'term',
-            'start_time', 'end_time', 'classroom', 'name',
-            'year_level', 'yearlevel_id',  # include both
-            'year_level_name', 'class_period_names'
+            "id",
+            "subject",
+            "teacher",
+            "term",
+            "period",
+            "classroom",
+            "name",
+            "year_level",
+            "yearlevel_id",  # include both
+            "year_level_name",
+            "class_period_names",
         ]
-
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
-        representation['start_time'] = instance.start_time.start_period_time.strftime('%I:%M %p')
-        representation['end_time'] = instance.end_time.end_period_time.strftime('%I:%M %p')
+        if instance.period:
+            representation["start_time"] = instance.period.start_period_time.strftime("%I:%M %p")
+            representation["end_time"] = instance.period.end_period_time.strftime("%I:%M %p")
+        else:
+            representation["start_time"] = None
+            representation["end_time"] = None
         return representation
 
     def validate(self, attrs):
-        teacher = attrs.get('teacher')
-        start_time = attrs.get('start_time')
-        end_time = attrs.get('end_time')
+        teacher = attrs.get("teacher")
+        period = attrs.get("period")
 
-        if teacher and start_time and end_time:
+        if teacher and period:
             overlapping = ClassPeriod.objects.filter(
                 teacher=teacher,
-                start_time__lt=end_time,
-                end_time__gt=start_time,
+                period=period,
             )
 
             if self.instance:
@@ -827,15 +835,19 @@ class ClassPeriodSerializer(serializers.ModelSerializer):
 
             if overlapping.exists():
                 raise serializers.ValidationError(
-                    {"non_field_errors": ["This teacher is already assigned to another class during this time."]}
+                    {
+                        "non_field_errors": [
+                            "This teacher is already assigned to another class during this time."
+                        ]
+                    }
                 )
 
         return attrs
 
     def create(self, validated_data):
         # Handle assignment logic only if year_level_name and class_period_names are present
-        year_level_name = validated_data.pop('year_level_name', None)
-        class_period_names = validated_data.pop('class_period_names', None)
+        year_level_name = validated_data.pop("year_level_name", None)
+        class_period_names = validated_data.pop("class_period_names", None)
 
         if year_level_name and class_period_names:
             try:
@@ -847,15 +859,17 @@ class ClassPeriodSerializer(serializers.ModelSerializer):
             if class_periods.count() != len(class_period_names):
                 raise serializers.ValidationError("Some ClassPeriod names are invalid.")
 
-            student_ids = StudentYearLevel.objects.filter(level=year_level).values_list("student_id", flat=True)
-            students = Student.objects.filter(id__in=student_ids)
+            student_ids = StudentYearLevel.objects.filter(level=year_level).values_list(
+                "student_id", flat=True
+            )
+            students = Student.objects.filter(id__in=student_ids, is_active=True)
 
             for student in students:
                 student.classes.add(*class_periods)
 
             return {
                 "students_updated": students.count(),
-                "class_periods_assigned": [cp.name for cp in class_periods]
+                "class_periods_assigned": [cp.name for cp in class_periods],
             }
 
         # If not an assignment request, create a regular ClassPeriod (fallback)

@@ -266,25 +266,30 @@ class ClassRoom(models.Model):
         db_table = "ClassRoom"
 
 
+
 class ClassPeriod(models.Model):
-    subject = models.ForeignKey(Subject, on_delete=models.DO_NOTHING)
+    DAYS_OF_WEEK = [
+        ('Monday', 'Monday'),
+        ('Tuesday', 'Tuesday'),
+        ('Wednesday', 'Wednesday'),
+        ('Thursday', 'Thursday'),
+        ('Friday', 'Friday'),
+        ('Saturday', 'Saturday'),
+    ]
 
+    subject = models.ForeignKey(Subject, on_delete=models.DO_NOTHING, null=True, blank=True)
     year_level = models.ForeignKey("YearLevel", on_delete=models.DO_NOTHING)
-    teacher = models.ForeignKey("teacher.Teacher", on_delete=models.DO_NOTHING ,related_name="assigned_periods")
-    term = models.ForeignKey(Term, on_delete=models.DO_NOTHING)
-    start_time = models.ForeignKey(
-        Period, on_delete=models.DO_NOTHING, related_name="start_time"
-    )  
-    end_time = models.ForeignKey(
-        Period, on_delete=models.DO_NOTHING, related_name="end_time"
-    )
-    classroom = models.ForeignKey(ClassRoom, on_delete=models.DO_NOTHING)
-    name = models.CharField(max_length=250)
-   
-
+    teacher = models.ForeignKey("teacher.Teacher", on_delete=models.DO_NOTHING, related_name="assigned_periods", null=True, blank=True)
+    term = models.ForeignKey(Term, on_delete=models.DO_NOTHING, null=True, blank=True)
+    day_of_week = models.CharField(max_length=20, choices=DAYS_OF_WEEK, default='Monday')
+    period = models.ForeignKey(Period, on_delete=models.DO_NOTHING, related_name="class_periods", null=True, blank=True)
+    period_index = models.PositiveSmallIntegerField(default=0, help_text="0 to 6 for 1st to 7th period", null=True, blank=True)
+    period_name = models.CharField(max_length=100, default="1st Period", blank=True, null=True)
+    classroom = models.ForeignKey(ClassRoom, on_delete=models.DO_NOTHING, null=True, blank=True)
+    name = models.CharField(max_length=250, null=True, blank=True)
 
     def __str__(self):
-        return self.name
+        return f"{self.year_level} - {self.day_of_week} ({self.period_name}): {self.subject} - {self.teacher}"
 
     class Meta:
         verbose_name = "ClassPeriod"

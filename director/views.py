@@ -178,8 +178,8 @@ def assigned_periods(request):
         assigned_periods.append({
             "subject": str(period.subject),
             "teacher": str(period.teacher),
-            "start_time": period.start_time.start_period_time.strftime('%I:%M %p'),
-            "end_time": period.end_time.end_period_time.strftime('%I:%M %p'),
+            "start_time": period.period.start_period_time.strftime('%I:%M %p') if period.period else None,
+            "end_time": period.period.end_period_time.strftime('%I:%M %p') if period.period else None,
         })
 
     return Response({
@@ -1451,6 +1451,13 @@ class AddressView(viewsets.ModelViewSet):
 class PeriodView(viewsets.ModelViewSet):
     queryset = Period.objects.all()
     serializer_class = PeriodSerializer
+
+    def create(self, request, *args, **kwargs):
+        is_many = isinstance(request.data, list)
+        serializer = self.get_serializer(data=request.data, many=is_many)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 class DirectorView(viewsets.ModelViewSet):
