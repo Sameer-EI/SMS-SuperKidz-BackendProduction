@@ -707,7 +707,7 @@ def student_category(request):
     total_students = Student.objects.filter(is_active=True).count()
 
     # Map category codes to their display names
-    category_display_map = dict(Student._meta.get_field('category').choices or [])
+    category_display_map = dict(Student._meta.get_field('category').choices)
 
     result = [
         {
@@ -3743,10 +3743,96 @@ class FeeStructureViewSet(viewsets.ModelViewSet):
         instance.delete()
 
 
+def get_applicable_discount(student_year, fee_structure):
+    if not student_year or not fee_structure:
+        return None
+    syl_id = getattr(student_year, "id", student_year)
+    discount = AppliedFeeDiscount.objects.filter(
+        student_id=syl_id,
+        fee_type=fee_structure
+    ).first()
+    if not discount and hasattr(student_year, "student_id") and student_year.student_id:
+        discount = AppliedFeeDiscount.objects.filter(
+            student_id=student_year.student_id,
+            fee_type=fee_structure
+        ).first()
+    return discount
+
+
+def refresh_student_fee_totals(student_fee):
+    """
+    Central recalculation for a StudentFee instance:
+    Due Amount = Original Fee - Successful Payments - Applicable Discount (+ penalty)
+    Ensures:
+    - original_amount is stored as the full fee structure fee amount (before discount)
+    - paid_amount includes only successful payments
+    - discount is deducted only once when calculating due_amount
+    - penalty_amount is accessed safely without raising AttributeError
+    - status and applied_discount flags are kept accurate
+    """
+    total_paid = student_fee.payments.filter(status="success").aggregate(
+        total=Sum("amount")
+    )["total"] or Decimal("0.00")
+
+    discount_obj = get_applicable_discount(student_fee.student_year, student_fee.fee_structure)
+    discount_amount = Decimal(str(discount_obj.discount_amount)) if discount_obj else Decimal("0.00")
+    penalty = getattr(student_fee, "penalty_amount", Decimal("0.00")) or Decimal("0.00")
+
+    if student_fee.fee_structure and student_fee.fee_structure.fee_amount:
+        student_fee.original_amount = Decimal(str(student_fee.fee_structure.fee_amount))
+
+    student_fee.paid_amount = total_paid
+    student_fee.applied_discount = bool(discount_amount > Decimal("0.00"))
+    student_fee.due_amount = max(
+        student_fee.original_amount - total_paid - discount_amount + penalty,
+        Decimal("0.00")
+    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    if student_fee.due_amount <= Decimal("0.00"):
+        student_fee.status = "paid"
+    elif total_paid > Decimal("0.00"):
+        student_fee.status = "partial"
+    else:
+        student_fee.status = "pending"
+
+    student_fee.save(update_fields=["original_amount", "paid_amount", "due_amount", "applied_discount", "status"])
+    return student_fee
+
+
+def recalculate_fees_for_discount(student_year, fee_structure):
+    """
+    Recalculates all existing StudentFee records for a given student_year and fee_structure.
+    """
+    if not student_year or not fee_structure:
+        return
+    fees = StudentFee.objects.filter(
+        student_year=student_year,
+        fee_structure=fee_structure
+    )
+    for sf in fees:
+        refresh_student_fee_totals(sf)
+
+
 class FeePaymentView(viewsets.ModelViewSet):
     queryset = FeePayment.objects.all()
     serializer_class = FeePaymentSerializer
     permission_classes = [IsAuthenticated]
+
+    def perform_create(self, serializer):
+        payment = serializer.save()
+        if payment.student_fee:
+            refresh_student_fee_totals(payment.student_fee)
+
+    def perform_update(self, serializer):
+        payment = serializer.save()
+        if payment.student_fee:
+            refresh_student_fee_totals(payment.student_fee)
+
+    def perform_destroy(self, instance):
+        student_fee = instance.student_fee
+        instance.delete()
+        if student_fee:
+            refresh_student_fee_totals(student_fee)
 
 import uuid
 class StudentFeeView(viewsets.ModelViewSet):
@@ -3779,23 +3865,7 @@ class StudentFeeView(viewsets.ModelViewSet):
         )
 
     def _refresh_fee_payment_totals(self, student_fee):
-        total_paid = student_fee.payments.filter(status="success").aggregate(
-            total=Sum("amount")
-        )["total"] or Decimal("0.00")
-
-        student_fee.paid_amount = total_paid
-        student_fee.due_amount = (
-            student_fee.original_amount + student_fee.penalty_amount
-        ) - total_paid
-
-        if student_fee.due_amount <= 0:
-            student_fee.status = "paid"
-        elif total_paid > 0:
-            student_fee.status = "partial"
-        else:
-            student_fee.status = "pending"
-
-        student_fee.save(update_fields=["paid_amount", "due_amount", "status"])
+        return refresh_student_fee_totals(student_fee)
         
     def _decimal_amount(self, value):
         return Decimal(str(value or 0)).quantize(
@@ -4073,7 +4143,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                     sf = paid_fees_dict.get((syl.id, fee.id, None))
                     
                     total_paid = sf.paid_amount if sf else Decimal("0.00")
-                    penalty = sf.penalty_amount if sf else Decimal("0.00")
+                    penalty = (getattr(sf, 'penalty_amount', Decimal("0.00")) or Decimal("0.00")) if sf else Decimal("0.00")
                     due_date = sf.due_date if sf else None
                     fee_id = sf.id if sf else None
 
@@ -4087,7 +4157,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                     response_data.append({
                         "fee_id": fee_id, 
                         "fee_type": fee.fee_type,
-                        "original_amount": str(base_amount),
+                        "original_amount": str(fee.fee_amount),
                         "paid_amount": str(total_paid),
                         "due_amount": str(real_due),
                         "status": status_str,
@@ -4113,7 +4183,7 @@ class StudentFeeView(viewsets.ModelViewSet):
 
                         sf = paid_fees_dict.get((syl.id, fee.id, month_num))
                         total_paid = sf.paid_amount if sf else Decimal("0.00")
-                        penalty = sf.penalty_amount if sf else Decimal("0.00")
+                        penalty = (getattr(sf, 'penalty_amount', Decimal("0.00")) or Decimal("0.00")) if sf else Decimal("0.00")
                         due_date = sf.due_date if sf else None
                         fee_id = sf.id if sf else None
 
@@ -4127,7 +4197,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                         response_data.append({
                             "fee_id": fee_id,
                             "fee_type": fee.fee_type,
-                            "original_amount": str(base_amount),
+                            "original_amount": str(fee.fee_amount),
                             "paid_amount": str(total_paid),
                             "due_amount": str(real_due),
                             "status": status_str,
@@ -4288,10 +4358,16 @@ class StudentFeeView(viewsets.ModelViewSet):
 
                 student_fee.penalty_amount = penalty_amount
                 student_fee.paid_amount = self._successful_fee_paid_amount(student_fee)
+
+                discount_obj = get_applicable_discount(student_fee.student_year, student_fee.fee_structure)
+                discount_for_fee = Decimal(str(discount_obj.discount_amount)) if discount_obj else Decimal("0.00")
+                student_fee.applied_discount = bool(discount_for_fee > Decimal("0.00"))
+
                 student_fee.due_amount = max(
                     student_fee.original_amount
                     - student_fee.paid_amount
-                    + student_fee.penalty_amount,
+                    - discount_for_fee
+                    + (getattr(student_fee, 'penalty_amount', Decimal('0.00')) or Decimal('0.00')),
                     Decimal("0.00")
                 ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 if student_fee.due_amount <= 0:
@@ -4434,10 +4510,8 @@ class StudentFeeView(viewsets.ModelViewSet):
             )
             fees_submitted = []
             for student_fee in created_records:
-                discount_for_fee = AppliedFeeDiscount.objects.filter(
-                    student=student_year,
-                    fee_type=student_fee.fee_structure
-                ).values_list('discount_amount', flat=True).first() or Decimal("0.00")
+                discount_obj = get_applicable_discount(student_year, student_fee.fee_structure)
+                discount_for_fee = Decimal(str(discount_obj.discount_amount)) if discount_obj else Decimal("0.00")
                 
                 month_num = student_fee.month
                 if month_num and isinstance(month_num, int) and 1 <= month_num <= 12:
@@ -4574,10 +4648,8 @@ class StudentFeeView(viewsets.ModelViewSet):
         # Build fees_submitted array with detailed info for each fee
         fees_submitted = []
         for student_fee in created_records:
-            discount_for_fee = AppliedFeeDiscount.objects.filter(
-                student=student_year,
-                fee_type=student_fee.fee_structure
-            ).values_list('discount_amount', flat=True).first() or Decimal("0.00")
+            discount_obj = get_applicable_discount(student_year, student_fee.fee_structure)
+            discount_for_fee = Decimal(str(discount_obj.discount_amount)) if discount_obj else Decimal("0.00")
             
             month_num = student_fee.month
             if month_num and isinstance(month_num, int) and 1 <= month_num <= 12:
@@ -4723,16 +4795,12 @@ class StudentFeeView(viewsets.ModelViewSet):
 
         response_data = []
         for fee in pending_fees:
-            discount_obj = AppliedFeeDiscount.objects.filter(student=fee.student_year, fee_type=fee.fee_structure).first()
-            discount_amount = discount_obj.discount_amount if discount_obj else 0
-
-            adjusted_original_amount = max(fee.original_amount - discount_amount, 0)
-
             response_data.append({
                 "fee_id": fee.id,
                 "fee_type": fee.fee_structure.fee_type,
-                "original_amount": str(adjusted_original_amount),
+                "original_amount": str(fee.original_amount),
                 "paid_amount": str(fee.paid_amount),
+                "due_amount": str(fee.due_amount),
                 "status": fee.status
             })
 
@@ -4849,7 +4917,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                     .first()
                 )
 
-                penalty = sf.penalty_amount if sf else Decimal("0.00")
+                penalty = (getattr(sf, 'penalty_amount', Decimal("0.00")) or Decimal("0.00")) if sf else Decimal("0.00")
 
                 real_due = max(
                     base_amount - total_paid + penalty,
@@ -4867,7 +4935,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                     "fee_id": fee.id,
                     "fee_type": fee.fee_type,
                     "fee_category": "annual",
-                    "original_amount": str(base_amount),
+                    "original_amount": str(fee.fee_amount),
                     "paid_amount": str(total_paid),
                     "status": status_str,
                     "applied_discount": str(discount_total),
@@ -4916,7 +4984,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                     else:
                         status_str = "Pending"
 
-                    cycle_original += base_amount
+                    cycle_original += Decimal(str(fee.fee_amount or 0))
                     cycle_paid += total_paid
                     cycle_due += real_due
                     cycle_penalty += penalty
@@ -4932,7 +5000,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                             selected_school_year,
                             month_number
                         ),
-                        "original_amount": str(base_amount),
+                        "original_amount": str(fee.fee_amount),
                         "paid_amount": str(total_paid),
                         "status": status_str,
                         "penalty": str(penalty),
@@ -5014,6 +5082,10 @@ class StudentFeeView(viewsets.ModelViewSet):
                 school_year = get_current_school_year()  # fallback
 
 
+            applied_disc = get_applicable_discount(student_year, fee_obj)
+            disc_amt = Decimal(str(applied_disc.discount_amount)) if applied_disc else Decimal("0.00")
+            initial_due = max(Decimal(str(fee_obj.fee_amount or 0)) - disc_amt, Decimal("0.00"))
+
             student_fee, created = StudentFee.objects.get_or_create(
                 student_year=student_year,
                 fee_structure=fee_obj,
@@ -5022,11 +5094,14 @@ class StudentFeeView(viewsets.ModelViewSet):
                 defaults={
                     "original_amount": fee_obj.fee_amount,
                     "paid_amount": Decimal("0.00"),
-                    "due_amount": fee_obj.fee_amount,
+                    "due_amount": initial_due,
+                    "applied_discount": bool(disc_amt > Decimal("0.00")),
                     "status": "pending",
                     "receipt_number": receipt_number
                 }
             )
+            if not created:
+                refresh_student_fee_totals(student_fee)
             if student_fee.receipt_number != receipt_number:
                 student_fee.receipt_number = receipt_number
                 student_fee.save(update_fields=["receipt_number"])
@@ -5355,14 +5430,13 @@ class StudentFeeView(viewsets.ModelViewSet):
             elif method == "cheque":
                 receipt_groups[group_receipt_number]["cheque_amount_paid"] += payment.amount
 
+            fee_penalty = getattr(fee, "penalty_amount", Decimal("0.00")) or Decimal("0.00")
             if fee.id not in receipt_groups[group_receipt_number]["_counted_fee_ids"]:
-                receipt_groups[group_receipt_number]["total_penalty"] += fee.penalty_amount
+                receipt_groups[group_receipt_number]["total_penalty"] += fee_penalty
                 receipt_groups[group_receipt_number]["_counted_fee_ids"].add(fee.id)
 
-            discount_value = AppliedFeeDiscount.objects.filter(
-                student=student_year,
-                fee_type=fee.fee_structure
-            ).values_list("discount_amount", flat=True).first() or Decimal("0.00")
+            discount_obj = get_applicable_discount(student_year, fee.fee_structure)
+            discount_value = Decimal(str(discount_obj.discount_amount)) if discount_obj else Decimal("0.00")
 
             month_name = calendar.month_name[fee.month] if fee.month else "Unknown"
 
@@ -5380,7 +5454,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                 "cheque_number": payment.cheque_number,
                 "original_amount": str(fee.original_amount),
                 "discount": str(discount_value),
-                "penalty": str(fee.penalty_amount),
+                "penalty": str(getattr(fee, "penalty_amount", Decimal("0.00")) or Decimal("0.00")),
                 "due_amount": str(fee.due_amount),
                 "status": fee.status,
             })
@@ -5478,11 +5552,12 @@ class StudentFeeView(viewsets.ModelViewSet):
                     "fee_type": [],
                 }
 
-            total = fee.original_amount + fee.penalty_amount
+            fee_penalty = getattr(fee, "penalty_amount", Decimal("0.00")) or Decimal("0.00")
+            total = fee.original_amount + fee_penalty
 
             monthly_map[month]["total_amount"] += total
             monthly_map[month]["paid_amount"] += fee.paid_amount
-            monthly_map[month]["penalty_amount"] += fee.penalty_amount
+            monthly_map[month]["penalty_amount"] += fee_penalty
             monthly_map[month]["fee_type"].append({
                 "type": fee_type,
                 "amount": float(total),
@@ -5633,11 +5708,18 @@ class AppliedFeeDiscountViewSet(viewsets.ModelViewSet):
 
     def list(self, request):
         student_year_id = request.query_params.get("student_year_id")
+        student_id = request.query_params.get("student_id")
 
-        if student_year_id:
+        target_syl_id = student_year_id
+        if not target_syl_id and student_id:
+            syl = StudentYearLevel.objects.filter(student_id=student_id).order_by("-id").first()
+            if syl:
+                target_syl_id = syl.id
+
+        if target_syl_id:
             return Response({
-                "available_fees": self.get_available_fees(student_year_id),
-                "applied_discounts": self.get_applied_discounts(student_year_id)
+                "available_fees": self.get_available_fees(target_syl_id),
+                "applied_discounts": self.get_applied_discounts(target_syl_id)
             })
         else:
             queryset = self.queryset.select_related(
@@ -5645,6 +5727,28 @@ class AppliedFeeDiscountViewSet(viewsets.ModelViewSet):
             )
             serializer = AppliedFeeDiscountSerializer(queryset, many=True)
             return Response(serializer.data)
+
+    def perform_create(self, serializer):
+        discount = serializer.save()
+        recalculate_fees_for_discount(discount.student, discount.fee_type)
+
+    def perform_update(self, serializer):
+        discount = serializer.save()
+        recalculate_fees_for_discount(discount.student, discount.fee_type)
+
+    def perform_destroy(self, instance):
+        student_year = instance.student
+        fee_type = instance.fee_type
+        instance.delete()
+        recalculate_fees_for_discount(student_year, fee_type)
+
+    def destroy(self, request, *args, **kwargs):
+        discount = self.get_object()
+        student_year = discount.student
+        fee_type = discount.fee_type
+        response = super().destroy(request, *args, **kwargs)
+        recalculate_fees_for_discount(student_year, fee_type)
+        return response
 
     def get_available_fees(self, student_year_id):
         fees = StudentFee.objects.filter(
@@ -5724,8 +5828,14 @@ class AppliedFeeDiscountViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        student_year_id = request.data.get("student_year_id") or request.data.get("student_id")
         try:
-            student_year = StudentYearLevel.objects.get(id=student_year_id)
+            try:
+                student_year = StudentYearLevel.objects.get(id=student_year_id)
+            except StudentYearLevel.DoesNotExist:
+                student_year = StudentYearLevel.objects.filter(student_id=student_year_id).order_by("-id").first()
+                if not student_year:
+                    raise StudentYearLevel.DoesNotExist()
             fee_structure = FeeStructure.objects.get(id=fee_structure_id)
         except (StudentYearLevel.DoesNotExist, FeeStructure.DoesNotExist):
             return Response(
@@ -5791,6 +5901,8 @@ class AppliedFeeDiscountViewSet(viewsets.ModelViewSet):
             approved_at=timezone.now(),
         )
 
+        recalculate_fees_for_discount(student_year, fee_structure)
+
         return Response(
             {
                 "detail": "Discount applied successfully",
@@ -5841,6 +5953,8 @@ class AppliedFeeDiscountViewSet(viewsets.ModelViewSet):
         discount.approved_by = user
         discount.approved_at = timezone.now()
         discount.save(update_fields=["discount_name", "discount_amount", "approved_by", "approved_at"])
+
+        recalculate_fees_for_discount(discount.student, discount.fee_type)
 
         return Response({
             "detail": "Discount updated successfully",

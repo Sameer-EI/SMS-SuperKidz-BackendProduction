@@ -2256,6 +2256,7 @@ class FeeStructureSerializer(serializers.ModelSerializer):
 
 class AppliedFeeDiscountSerializer(serializers.ModelSerializer):
     student_name = serializers.SerializerMethodField()
+    student_year_id = serializers.SerializerMethodField()
     fee_type_name = serializers.SerializerMethodField()
     discounted_amount_percent = serializers.SerializerMethodField()
     approved_by_name = serializers.SerializerMethodField()  
@@ -2265,6 +2266,7 @@ class AppliedFeeDiscountSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "student",
+            "student_year_id",
             "student_name",
             "fee_type",
             "fee_type_name",
@@ -2275,6 +2277,22 @@ class AppliedFeeDiscountSerializer(serializers.ModelSerializer):
             "approved_by",
             "approved_at",
         ]
+
+    def to_internal_value(self, data):
+        data = data.copy() if hasattr(data, 'copy') else dict(data)
+        student_val = data.get("student") or data.get("student_year_id") or data.get("student_id")
+        if student_val:
+            from student.models import StudentYearLevel
+            if not StudentYearLevel.objects.filter(id=student_val).exists():
+                syl = StudentYearLevel.objects.filter(student_id=student_val).order_by("-id").first()
+                if syl:
+                    data["student"] = syl.id
+            else:
+                data["student"] = student_val
+        return super().to_internal_value(data)
+
+    def get_student_year_id(self, obj):
+        return obj.student_id
 
     def get_student_name(self, obj):
         student = (
@@ -2414,18 +2432,9 @@ class StudentFeeSerializer(serializers.ModelSerializer):
 
 
     def get_original_amount(self, obj):
-        discount_obj = AppliedFeeDiscount.objects.filter(
-            student=obj.student_year,
-            fee_type=obj.fee_structure
-        ).first()
-
-        discount_amount = Decimal(
-            str(discount_obj.discount_amount if discount_obj else 0)
-        ).quantize(Decimal("0.01"))
-
-        discounted_amount = (obj.original_amount - discount_amount).quantize(Decimal("0.01"))
-
-        return str(discounted_amount)
+        if obj.fee_structure and obj.fee_structure.fee_amount:
+            return str(obj.original_amount if obj.original_amount and obj.original_amount >= obj.fee_structure.fee_amount else obj.fee_structure.fee_amount)
+        return str(obj.original_amount)
 
 
     def create(self, validated_data):
@@ -2453,15 +2462,17 @@ class StudentFeeSerializer(serializers.ModelSerializer):
                 )
 
             applied_discount_obj = AppliedFeeDiscount.objects.filter(
-                student=student_year, fee_type=fee_structure
+                student_id=student_year.id, fee_type=fee_structure
             ).first()
+            if not applied_discount_obj and hasattr(student_year, 'student_id'):
+                applied_discount_obj = AppliedFeeDiscount.objects.filter(
+                    student_id=student_year.student_id, fee_type=fee_structure
+                ).first()
 
-            if applied_discount_obj:
-                discounted_amount = Decimal(fee_structure.fee_amount) - Decimal(applied_discount_obj.discount_amount)
-                discount_applied_flag = True
-            else:
-                discounted_amount = Decimal(fee_structure.fee_amount)
-                discount_applied_flag = False
+            full_original_amount = Decimal(str(fee_structure.fee_amount or 0))
+            discount_amount = Decimal(str(applied_discount_obj.discount_amount or 0)) if applied_discount_obj else Decimal("0.00")
+            discount_applied_flag = bool(applied_discount_obj and discount_amount > 0)
+            initial_due = max(full_original_amount - discount_amount, Decimal("0.00"))
 
             student_fee, created = StudentFee.objects.get_or_create(
                 student_year=student_year,
@@ -2469,44 +2480,29 @@ class StudentFeeSerializer(serializers.ModelSerializer):
                 school_year=school_year,
                 month=month,
                 defaults={
-                    "original_amount": discounted_amount,
+                    "original_amount": full_original_amount,
                     "paid_amount": Decimal("0.00"),
-                    "due_amount": discounted_amount,
+                    "due_amount": initial_due,
                     "penalty_amount": Decimal("0.00"),
                     "applied_discount": discount_applied_flag,
                     "due_date": validated_data.get("due_date"),
                 },
             )
 
-            if not created and applied_discount_obj and not student_fee.applied_discount:
-                student_fee.original_amount = discounted_amount
-                student_fee.due_amount = discounted_amount - student_fee.paid_amount
-                student_fee.applied_discount = True
-                student_fee.save()
-
-            student_fee.due_amount = (
-                student_fee.original_amount 
-                - student_fee.paid_amount 
-                + student_fee.penalty_amount
+            penalty = getattr(student_fee, 'penalty_amount', Decimal('0.00')) or Decimal('0.00')
+            student_fee.original_amount = full_original_amount
+            student_fee.applied_discount = discount_applied_flag
+            student_fee.due_amount = max(
+                full_original_amount - student_fee.paid_amount - discount_amount + penalty,
+                Decimal("0.00")
             )
 
-            # student_fee.paid_amount += amount_paid
-            student_fee.due_amount = max(student_fee.original_amount - student_fee.paid_amount + student_fee.penalty_amount, Decimal("0.00"))
-
-            # payment_mode = request.data.get("payment_method", "").lower()
-
-            # if payment_mode == "online":
-            #     student_fee.status = "pending"
-            # else:
-            #     student_fee.paid_amount += amount_paid
-            #     student_fee.due_amount = student_fee.original_amount - student_fee.paid_amount + student_fee.penalty_amount
-            #     if student_fee.due_amount <= 0:
-            #         student_fee.status = "paid"
-            #     elif student_fee.paid_amount > 0:
-            #         student_fee.status = "partial"
-            #     else:
-            #         student_fee.status = "pending"
-
+            if student_fee.due_amount <= 0:
+                student_fee.status = "paid"
+            elif student_fee.paid_amount > 0:
+                student_fee.status = "partial"
+            else:
+                student_fee.status = "pending"
 
             student_fee.save()
             return student_fee

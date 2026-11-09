@@ -21,7 +21,16 @@ class Student(models.Model):
     # enrolment_date = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     religion = models.CharField(max_length=50,null=True, blank=True)
-    category =models.CharField(max_length=50,null=True, blank=True)
+    category = models.CharField(
+        max_length=10,
+        choices=[
+            ('SC', 'Scheduled Caste'),
+            ('ST', 'Scheduled Tribe'),
+            ('OBC', 'Other Backward Class'),
+            ('GEN', 'General')
+        ],
+        default='GEN'
+    )
     height = models.FloatField(null=True, blank=True)
     weight = models.FloatField(null=True, blank=True)
     blood_group = models.CharField(max_length=5,null=True, blank=True)
