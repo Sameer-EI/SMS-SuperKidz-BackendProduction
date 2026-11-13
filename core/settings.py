@@ -129,19 +129,60 @@ WSGI_APPLICATION = "core.wsgi.application"
 from decouple import config
 
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.mysql",
-        "NAME": os.getenv("DB_NAME"),
-        "USER": os.getenv("DB_USER"),
-        "PASSWORD": os.getenv("DB_PASSWORD"),
-        "HOST": os.getenv("DB_HOST"),
-        "PORT": os.getenv("DB_PORT"),
-        "OPTIONS": {
-            "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
-        },
+# --- Previous Database Configuration (MySQL) ---
+# DATABASES = {
+#     "default": {
+#         "ENGINE": "django.db.backends.mysql",
+#         "NAME": os.getenv("DB_NAME"),
+#         "USER": os.getenv("DB_USER"),
+#         "PASSWORD": os.getenv("DB_PASSWORD"),
+#         "HOST": os.getenv("DB_HOST"),
+#         "PORT": os.getenv("DB_PORT"),
+#         "OPTIONS": {
+#             "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+#         },
+#     }
+# }
+
+# --- Updated Database Configuration (Supports Render PostgreSQL & local MySQL) ---
+import urllib.parse
+
+database_url = os.getenv("DATABASE_URL")
+if database_url:
+    url = urllib.parse.urlparse(database_url)
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": url.path[1:],
+            "USER": url.username,
+            "PASSWORD": url.password,
+            "HOST": url.hostname,
+            "PORT": url.port or 5432,
+        }
     }
-}
+else:
+    db_engine = os.getenv("DB_ENGINE")
+    if not db_engine:
+        if str(os.getenv("DB_PORT", "")).strip() == "5432":
+            db_engine = "django.db.backends.postgresql"
+        else:
+            db_engine = "django.db.backends.mysql"
+
+    db_options = {}
+    if "mysql" in db_engine:
+        db_options["init_command"] = "SET sql_mode='STRICT_TRANS_TABLES'"
+
+    DATABASES = {
+        "default": {
+            "ENGINE": db_engine,
+            "NAME": os.getenv("DB_NAME"),
+            "USER": os.getenv("DB_USER"),
+            "PASSWORD": os.getenv("DB_PASSWORD"),
+            "HOST": os.getenv("DB_HOST"),
+            "PORT": os.getenv("DB_PORT"),
+            "OPTIONS": db_options,
+        }
+    }
 
 # DATABASES = {
 #     "default": {
