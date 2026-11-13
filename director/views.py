@@ -3744,6 +3744,7 @@ class FeeStructureViewSet(viewsets.ModelViewSet):
 
 
 def get_applicable_discount(student_year, fee_structure):
+    # Bug 1 Fix: student FK points to StudentYearLevel, not Student
     if not student_year or not fee_structure:
         return None
     syl_id = getattr(student_year, "id", student_year)
@@ -3751,18 +3752,13 @@ def get_applicable_discount(student_year, fee_structure):
         student_id=syl_id,
         fee_type=fee_structure
     ).first()
-    if not discount and hasattr(student_year, "student_id") and student_year.student_id:
-        discount = AppliedFeeDiscount.objects.filter(
-            student_id=student_year.student_id,
-            fee_type=fee_structure
-        ).first()
     return discount
 
 
 def refresh_student_fee_totals(student_fee):
     """
     Central recalculation for a StudentFee instance:
-    Due Amount = Original Fee - Successful Payments - Applicable Discount (+ penalty)
+    Bug 5 Fix: Use Option A formula (gross - discount - paid + penalty)
     Ensures:
     - original_amount is stored as the full fee structure fee amount (before discount)
     - paid_amount includes only successful payments
@@ -3770,19 +3766,27 @@ def refresh_student_fee_totals(student_fee):
     - penalty_amount is accessed safely without raising AttributeError
     - status and applied_discount flags are kept accurate
     """
-    total_paid = student_fee.payments.filter(status="success").aggregate(
+    # Bug 5 Fix: Account for successful payments minus refunds; do not count pending/failed
+    successful_paid = student_fee.payments.filter(status="success").aggregate(
         total=Sum("amount")
     )["total"] or Decimal("0.00")
+    refunded_paid = student_fee.payments.filter(status="refunded").aggregate(
+        total=Sum("amount")
+    )["total"] or Decimal("0.00")
+    total_paid = max(successful_paid - refunded_paid, Decimal("0.00"))
 
+    # Bug 1 Fix: student FK points to StudentYearLevel, not Student
     discount_obj = get_applicable_discount(student_fee.student_year, student_fee.fee_structure)
     discount_amount = Decimal(str(discount_obj.discount_amount)) if discount_obj else Decimal("0.00")
     penalty = getattr(student_fee, "penalty_amount", Decimal("0.00")) or Decimal("0.00")
 
+    # Bug 2 Fix: original_amount stores gross fee
     if student_fee.fee_structure and student_fee.fee_structure.fee_amount:
         student_fee.original_amount = Decimal(str(student_fee.fee_structure.fee_amount))
 
     student_fee.paid_amount = total_paid
     student_fee.applied_discount = bool(discount_amount > Decimal("0.00"))
+    # Bug 5 Fix: Use Option A formula (gross - discount - paid + penalty)
     student_fee.due_amount = max(
         student_fee.original_amount - total_paid - discount_amount + penalty,
         Decimal("0.00")
@@ -3811,6 +3815,204 @@ def recalculate_fees_for_discount(student_year, fee_structure):
     )
     for sf in fees:
         refresh_student_fee_totals(sf)
+
+
+# Bug 4 Fix: Recalculate all existing fees when discount is applied/updated
+def apply_discount_and_carry_forward(student_year, fee_structure, discount_obj, user=None):
+    """
+    Approach C: Recalculates fees for a student when a discount is applied or updated.
+    If a student has already paid more than the new net billable amount (gross - discount),
+    the excess payment is carried forward to subsequent pending or partial fee(s).
+    """
+    from decimal import Decimal
+    from datetime import date
+    discount_amount = Decimal(str(discount_obj.discount_amount))
+
+    # 1. Fetch all fees for this student and fee type
+    target_fees = StudentFee.objects.filter(
+        student_year=student_year,
+        fee_structure=fee_structure
+    ).order_by("month", "due_date", "id")
+
+    ACADEMIC_MONTHS = [7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6]
+    total_carried_forward = Decimal("0.00")
+
+    for fee in target_fees:
+        fee.applied_discount = True
+        gross_fee = Decimal(fee.fee_structure.fee_amount) if (fee.fee_structure and fee.fee_structure.fee_amount) else fee.original_amount
+        fee.original_amount = gross_fee
+        net_billable = max(gross_fee - discount_amount, Decimal("0.00"))
+
+        if fee.paid_amount > net_billable:
+            # Overpayment case
+            excess_payment = fee.paid_amount - net_billable
+            fee.paid_amount = net_billable
+            fee.due_amount = Decimal("0.00")
+            fee.status = "paid"
+            fee.save()
+
+            # Record transfer out from this fee
+            FeePayment.objects.create(
+                student_fee=fee,
+                amount=excess_payment,
+                payment_method="cash",
+                status="refunded",
+                payment_date=timezone.now(),
+                received_by=user,
+                notes=f"Approach C Adjustment: ₹{excess_payment} excess payment transferred due to discount '{discount_obj.discount_name}'"
+            )
+
+            # 2. Carry forward to other existing pending/partial fees (any fee type)
+            other_pending_fees = StudentFee.objects.filter(
+                student_year=student_year,
+                status__in=["pending", "partial"]
+            ).exclude(id=fee.id).order_by("month", "due_date", "id")
+
+            for next_fee in other_pending_fees:
+                if excess_payment <= Decimal("0.00"):
+                    break
+
+                gross_next = Decimal(next_fee.fee_structure.fee_amount) if (next_fee.fee_structure and next_fee.fee_structure.fee_amount) else next_fee.original_amount
+                # Bug 1 Fix: student FK points to StudentYearLevel, not Student
+                d_obj = AppliedFeeDiscount.objects.filter(
+                    student=student_year,
+                    fee_type=next_fee.fee_structure
+                ).first()
+                d_amt = Decimal(str(d_obj.discount_amount)) if (d_obj and (next_fee.applied_discount or d_obj.id == discount_obj.id)) else Decimal("0.00")
+                # Bug 5 Fix: Use Option A formula (gross - discount - paid)
+                next_net_due = max(gross_next - d_amt - next_fee.paid_amount, Decimal("0.00"))
+
+                if next_net_due <= Decimal("0.00"):
+                    continue
+
+                credit_to_apply = min(excess_payment, next_net_due)
+                next_fee.paid_amount += credit_to_apply
+                next_fee.due_amount = max(gross_next - d_amt - next_fee.paid_amount, Decimal("0.00"))
+                next_fee.status = "paid" if next_fee.due_amount == 0 else "partial"
+                next_fee.save()
+
+                FeePayment.objects.create(
+                    student_fee=next_fee,
+                    amount=credit_to_apply,
+                    payment_method="cash",
+                    status="success",
+                    payment_date=timezone.now(),
+                    received_by=user,
+                    notes=f"Approach C Credit: ₹{credit_to_apply} carried forward from {fee.fee_structure.fee_type} (Month {fee.month or 'Annual'})"
+                )
+
+                total_carried_forward += credit_to_apply
+                excess_payment -= credit_to_apply
+
+            # 3. If monthly fee and excess remains, auto-create next month's fee
+            if excess_payment > Decimal("0.00") and fee.month:
+                curr_month = fee.month
+                school_year = fee.school_year
+                try:
+                    curr_idx = ACADEMIC_MONTHS.index(curr_month)
+                except ValueError:
+                    curr_idx = -1
+
+                if curr_idx != -1:
+                    for next_m in ACADEMIC_MONTHS[curr_idx + 1:]:
+                        if excess_payment <= Decimal("0.00"):
+                            break
+                        if StudentFee.objects.filter(student_year=student_year, fee_structure=fee_structure, month=next_m, school_year=school_year).exists():
+                            continue
+
+                        due_yr = get_fee_due_year(school_year, next_m)
+                        new_gross = Decimal(fee_structure.fee_amount)
+                        new_net_due = max(new_gross - discount_amount, Decimal("0.00"))
+                        credit_to_apply = min(excess_payment, new_net_due)
+                        new_due = max(new_net_due - credit_to_apply, Decimal("0.00"))
+                        new_status = "paid" if new_due == 0 else "partial"
+
+                        new_fee = StudentFee.objects.create(
+                            student_year=student_year,
+                            fee_structure=fee_structure,
+                            school_year=school_year,
+                            month=next_m,
+                            due_date=date(due_yr, next_m, 15),
+                            original_amount=new_gross,
+                            paid_amount=credit_to_apply,
+                            due_amount=new_due,
+                            applied_discount=True,
+                            status=new_status,
+                        )
+
+                        FeePayment.objects.create(
+                            student_fee=new_fee,
+                            amount=credit_to_apply,
+                            payment_method="cash",
+                            status="success",
+                            payment_date=timezone.now(),
+                            received_by=user,
+                            notes=f"Approach C Credit: ₹{credit_to_apply} carried forward from Month {curr_month}"
+                        )
+
+                        total_carried_forward += credit_to_apply
+                        excess_payment -= credit_to_apply
+
+            # 4. Fallback: If excess STILL remains (yearly fee or all months exhausted),
+            #    store it as an 'Advance Credit' fee record
+            if excess_payment > Decimal("0.00"):
+                school_year = fee.school_year
+                year_levels = fee.fee_structure.year_level.all()
+                advance_credit_fs = FeeStructure.objects.filter(
+                    school_year=school_year,
+                    fee_type='Advance Credit'
+                ).first()
+                if not advance_credit_fs:
+                    advance_credit_fs = FeeStructure.objects.create(
+                        school_year=school_year,
+                        master_fee=fee.fee_structure.master_fee,
+                        fee_type='Advance Credit',
+                        fee_amount=Decimal("0.00")
+                    )
+                    advance_credit_fs.year_level.set(year_levels)
+
+                advance_credit_fee, created = StudentFee.objects.get_or_create(
+                    student_year=student_year,
+                    fee_structure=advance_credit_fs,
+                    school_year=school_year,
+                    month=None,
+                    defaults={
+                        'original_amount': Decimal("0.00"),
+                        'paid_amount': excess_payment,
+                        'due_amount': Decimal("0.00"),
+                        'status': 'paid',
+                    }
+                )
+                if not created:
+                    advance_credit_fee.paid_amount += excess_payment
+                    advance_credit_fee.save()
+
+                FeePayment.objects.create(
+                    student_fee=advance_credit_fee,
+                    amount=excess_payment,
+                    payment_method='cash',
+                    status='success',
+                    payment_date=timezone.now(),
+                    received_by=user,
+                    notes=f"Approach C Advance Credit: Rs{excess_payment} excess stored as credit balance"
+                )
+
+                total_carried_forward += excess_payment
+                excess_payment = Decimal("0.00")
+
+        else:
+            # Normal case: paid_amount <= net_billable
+            # Bug 5 Fix: Use Option A formula (gross - discount - paid)
+            fee.due_amount = max(net_billable - fee.paid_amount, Decimal("0.00"))
+            if fee.due_amount == 0 and fee.paid_amount > 0:
+                fee.status = "paid"
+            elif fee.paid_amount > 0:
+                fee.status = "partial"
+            else:
+                fee.status = "pending"
+            fee.save()
+
+    return total_carried_forward
 
 
 class FeePaymentView(viewsets.ModelViewSet):
@@ -3856,13 +4058,16 @@ class StudentFeeView(viewsets.ModelViewSet):
         return f'REC-{today}-{new_number:05d}-{unique_suffix}'
 
     def _successful_fee_paid_amount(self, student_fee):
-        return (
-            FeePayment.objects.filter(
-                student_fee=student_fee,
-                status="success"
-            ).aggregate(total=Sum("amount"))["total"]
-            or Decimal("0.00")
-        )
+        # Bug 5 Fix: Account for successful payments minus refunds
+        successful = FeePayment.objects.filter(
+            student_fee=student_fee,
+            status="success"
+        ).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
+        refunded = FeePayment.objects.filter(
+            student_fee=student_fee,
+            status="refunded"
+        ).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
+        return max(successful - refunded, Decimal("0.00"))
 
     def _refresh_fee_payment_totals(self, student_fee):
         return refresh_student_fee_totals(student_fee)
@@ -4359,6 +4564,7 @@ class StudentFeeView(viewsets.ModelViewSet):
                 student_fee.penalty_amount = penalty_amount
                 student_fee.paid_amount = self._successful_fee_paid_amount(student_fee)
 
+                # Bug 5 Fix: Use Option A formula (gross - discount - paid + penalty)
                 discount_obj = get_applicable_discount(student_fee.student_year, student_fee.fee_structure)
                 discount_for_fee = Decimal(str(discount_obj.discount_amount)) if discount_obj else Decimal("0.00")
                 student_fee.applied_discount = bool(discount_for_fee > Decimal("0.00"))
@@ -4524,7 +4730,9 @@ class StudentFeeView(viewsets.ModelViewSet):
                     "month": month_name,
                     "month_number": month_num,
                     "amount_paid": str(student_fee.paid_amount),
-                    "original_amount": str(student_fee.original_amount),
+                    # Bug 3 Fix: Return gross original_amount; discount shown as separate field
+                    "original_amount": str(student_fee.fee_structure.fee_amount),
+                    "discount_amount": str(discount_for_fee),
                     "discount": str(discount_for_fee),
                     "penalty_amount": str(student_fee.penalty_amount),
                     "due_amount": str(student_fee.due_amount),
@@ -4795,12 +5003,19 @@ class StudentFeeView(viewsets.ModelViewSet):
 
         response_data = []
         for fee in pending_fees:
+            # Bug 3 Fix: Return gross original_amount; discount shown as separate field
+            # Bug 1 Fix: student FK points to StudentYearLevel, not Student
+            discount_obj = get_applicable_discount(fee.student_year, fee.fee_structure)
+            discount_amt = Decimal(str(discount_obj.discount_amount)) if discount_obj else Decimal("0.00")
+            gross_original = fee.fee_structure.fee_amount if fee.fee_structure else fee.original_amount
+            computed_due = max(gross_original - discount_amt - fee.paid_amount, Decimal("0.00"))
             response_data.append({
                 "fee_id": fee.id,
-                "fee_type": fee.fee_structure.fee_type,
-                "original_amount": str(fee.original_amount),
+                "fee_type": fee.fee_structure.fee_type if fee.fee_structure else "",
+                "original_amount": str(gross_original),
+                "discount_amount": str(discount_amt),
                 "paid_amount": str(fee.paid_amount),
-                "due_amount": str(fee.due_amount),
+                "due_amount": str(computed_due),
                 "status": fee.status
             })
 
@@ -5240,6 +5455,17 @@ class StudentFeeView(viewsets.ModelViewSet):
 
             pending_payment = pending_payment_qs.first()
             if not pending_payment:
+                # Bug 5 Fix: Handle duplicate Razorpay callbacks idempotently
+                existing_success = FeePayment.objects.filter(
+                    student_fee=student_fee,
+                    payment_method="online",
+                    status="success",
+                    razorpay_order_id=razorpay_order_id,
+                    razorpay_payment_id=razorpay_payment_id
+                ).first()
+                if existing_success:
+                    created_payments.append(existing_success)
+                    continue
                 return Response(
                     {"error": f"Pending online payment not found for fee_id {fee_id} and month {month}."},
                     status=400
@@ -5250,6 +5476,14 @@ class StudentFeeView(viewsets.ModelViewSet):
                     {"error": f"Confirmed amount ({paid_amount}) must match initiated online amount ({pending_payment.amount}) for fee_id {fee_id}."},
                     status=400
                 )
+
+            # Bug 5 Fix: Use Option A formula (gross - discount - paid)
+            discount_obj = get_applicable_discount(student_fee.student_year, student_fee.fee_structure)
+            discount_amt = Decimal(str(discount_obj.discount_amount)) if discount_obj else Decimal("0.00")
+            gross_amount = student_fee.fee_structure.fee_amount if student_fee.fee_structure else student_fee.original_amount
+            student_fee.original_amount = gross_amount
+            penalty = getattr(student_fee, "penalty_amount", Decimal("0.00")) or Decimal("0.00")
+            student_fee.due_amount = max(gross_amount - discount_amt - student_fee.paid_amount + penalty, Decimal("0.00"))
 
             if paid_amount > student_fee.due_amount:
                 return Response(
@@ -5553,7 +5787,11 @@ class StudentFeeView(viewsets.ModelViewSet):
                 }
 
             fee_penalty = getattr(fee, "penalty_amount", Decimal("0.00")) or Decimal("0.00")
-            total = fee.original_amount + fee_penalty
+            # Bug 5 Fix: Use Option A formula (gross - discount - paid)
+            discount_obj = get_applicable_discount(fee.student_year, fee.fee_structure)
+            discount_amt = Decimal(str(discount_obj.discount_amount)) if discount_obj else Decimal("0.00")
+            gross_amount = fee.fee_structure.fee_amount if fee.fee_structure else fee.original_amount
+            total = max(gross_amount - discount_amt, Decimal("0.00")) + fee_penalty
 
             monthly_map[month]["total_amount"] += total
             monthly_map[month]["paid_amount"] += fee.paid_amount
@@ -5657,8 +5895,13 @@ class StudentFeeView(viewsets.ModelViewSet):
                 matching_fees.aggregate(total=Sum("penalty_amount"))["total"]
                 or Decimal("0.00")
             )
-            total_amount = fee.original_amount + penalty_amount
-            due_amount = max(total_amount - paid_amount, Decimal("0.00"))
+            # Bug 5 Fix: Use Option A formula (gross - discount - paid + penalty)
+            # Bug 1 Fix: student FK points to StudentYearLevel, not Student
+            discount_obj = get_applicable_discount(fee.student_year, fee.fee_structure)
+            discount_amt = Decimal(str(discount_obj.discount_amount)) if discount_obj else Decimal("0.00")
+            gross_amount = Decimal(str(fee.fee_structure.fee_amount)) if fee.fee_structure else fee.original_amount
+            total_amount = gross_amount + penalty_amount
+            due_amount = max(total_amount - paid_amount - discount_amt, Decimal("0.00"))
 
             if min_due and due_amount < Decimal(str(min_due)):
                 continue
@@ -5730,11 +5973,13 @@ class AppliedFeeDiscountViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         discount = serializer.save()
-        recalculate_fees_for_discount(discount.student, discount.fee_type)
+        # Bug 4 Fix: Recalculate all existing fees when discount is applied/updated
+        apply_discount_and_carry_forward(discount.student, discount.fee_type, discount, getattr(self.request, "user", None))
 
     def perform_update(self, serializer):
         discount = serializer.save()
-        recalculate_fees_for_discount(discount.student, discount.fee_type)
+        # Bug 4 Fix: Recalculate all existing fees when discount is applied/updated
+        apply_discount_and_carry_forward(discount.student, discount.fee_type, discount, getattr(self.request, "user", None))
 
     def perform_destroy(self, instance):
         student_year = instance.student
@@ -5764,15 +6009,20 @@ class AppliedFeeDiscountViewSet(viewsets.ModelViewSet):
 
         fee_list = []
         for fee in fees:
-            original_amount = Decimal(str(fee.original_amount))
-            due_amount = Decimal(str(fee.due_amount))
+            # Bug 2 Fix: original_amount now stores gross fee; discount shown separately
+            gross_amount = fee.fee_structure.fee_amount if fee.fee_structure else fee.original_amount
+            # Bug 5 Fix: Use Option A formula (gross - discount - paid)
+            discount_obj = get_applicable_discount(fee.student_year, fee.fee_structure)
+            discount_amt = Decimal(str(discount_obj.discount_amount)) if discount_obj else Decimal("0.00")
+            due_amount = max(gross_amount - discount_amt - fee.paid_amount, Decimal("0.00"))
             fee_list.append({
                 "student_fee_id": fee.id,
                 "student_year_id": fee.student_year.id,
                 "student_class": fee.student_year.level.level_name if fee.student_year.level else None,
                 "school_year": fee.student_year.year.year_name if fee.student_year.year else None,
-                "fee_type": fee.fee_structure.fee_type,
-                "original_amount": float(original_amount),
+                "fee_type": fee.fee_structure.fee_type if fee.fee_structure else "",
+                "original_amount": float(gross_amount),
+                "discount_amount": float(discount_amt),
                 "due_amount": float(due_amount),
                 "student_name": student_display_name(fee.student_year.student)
             })
@@ -5901,7 +6151,8 @@ class AppliedFeeDiscountViewSet(viewsets.ModelViewSet):
             approved_at=timezone.now(),
         )
 
-        recalculate_fees_for_discount(student_year, fee_structure)
+        # Bug 4 Fix: Recalculate all existing fees when discount is applied/updated
+        excess_carried_forward = apply_discount_and_carry_forward(student_year, fee_structure, discount, user=user)
 
         return Response(
             {
@@ -5913,6 +6164,7 @@ class AppliedFeeDiscountViewSet(viewsets.ModelViewSet):
                 "discount_amount": float(final_discount_amount),
                 "discounted_amount_percent": float(discount_percentage),
                 "approved_by": getattr(user, "username", "Admin"),
+                "excess_carried_forward": float(excess_carried_forward),
             },
             status=status.HTTP_200_OK,
         )
@@ -5954,7 +6206,8 @@ class AppliedFeeDiscountViewSet(viewsets.ModelViewSet):
         discount.approved_at = timezone.now()
         discount.save(update_fields=["discount_name", "discount_amount", "approved_by", "approved_at"])
 
-        recalculate_fees_for_discount(discount.student, discount.fee_type)
+        # Bug 4 Fix: Recalculate all existing fees when discount is applied/updated
+        excess_carried_forward = apply_discount_and_carry_forward(discount.student, discount.fee_type, discount, user=user)
 
         return Response({
             "detail": "Discount updated successfully",
@@ -5965,6 +6218,7 @@ class AppliedFeeDiscountViewSet(viewsets.ModelViewSet):
             "discount_amount": float(final_discount_amount),
             "discounted_amount_percent": float(discount_percent),
             "approved_by": getattr(user, "username", "Admin"),
+            "excess_carried_forward": float(excess_carried_forward),
         }, status=200)
 
 

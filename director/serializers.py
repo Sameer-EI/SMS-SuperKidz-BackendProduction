@@ -2336,8 +2336,9 @@ class StudentFeeSerializer(serializers.ModelSerializer):
     student_year = serializers.PrimaryKeyRelatedField(read_only=True)
     fee_structure = serializers.PrimaryKeyRelatedField(read_only=True)
     school_year = serializers.PrimaryKeyRelatedField(read_only=True)
-    # original_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    # Bug 2 Fix: original_amount now stores gross fee; discount shown separately
     original_amount = serializers.SerializerMethodField()
+    discount_amount = serializers.SerializerMethodField()
     paid_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     due_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     penalty_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
@@ -2370,6 +2371,7 @@ class StudentFeeSerializer(serializers.ModelSerializer):
             "fee_type",
             "payment_method_output",
             "original_amount",
+            "discount_amount",
             "paid_amount",
             "due_amount",
             "penalty_amount",
@@ -2390,6 +2392,7 @@ class StudentFeeSerializer(serializers.ModelSerializer):
             "fee_structure",
             "school_year",
             "original_amount",
+            "discount_amount",
             "paid_amount",
             "due_amount",
             "penalty_amount",
@@ -2431,10 +2434,21 @@ class StudentFeeSerializer(serializers.ModelSerializer):
         return obj.school_year.year_name
 
 
+    # Bug 2 Fix: original_amount now returns gross fee from fee_structure
     def get_original_amount(self, obj):
         if obj.fee_structure and obj.fee_structure.fee_amount:
-            return str(obj.original_amount if obj.original_amount and obj.original_amount >= obj.fee_structure.fee_amount else obj.fee_structure.fee_amount)
+            return str(obj.fee_structure.fee_amount)
         return str(obj.original_amount)
+
+    # Bug 2 Fix: discount shown as separate field
+    def get_discount_amount(self, obj):
+        discount_obj = AppliedFeeDiscount.objects.filter(
+            student=obj.student_year,
+            fee_type=obj.fee_structure
+        ).first()
+        if discount_obj:
+            return str(discount_obj.discount_amount)
+        return "0.00"
 
 
     def create(self, validated_data):
@@ -2461,17 +2475,16 @@ class StudentFeeSerializer(serializers.ModelSerializer):
                     f"The selected fee ({fee_structure.fee_type}) does not belong to the student's class ({student_year.level.level_name})."
                 )
 
+            # Bug 1 Fix: student FK points to StudentYearLevel, not Student
             applied_discount_obj = AppliedFeeDiscount.objects.filter(
-                student_id=student_year.id, fee_type=fee_structure
+                student=student_year, fee_type=fee_structure
             ).first()
-            if not applied_discount_obj and hasattr(student_year, 'student_id'):
-                applied_discount_obj = AppliedFeeDiscount.objects.filter(
-                    student_id=student_year.student_id, fee_type=fee_structure
-                ).first()
 
+            # Bug 2 Fix: original_amount stores gross fee; discount applied separately
             full_original_amount = Decimal(str(fee_structure.fee_amount or 0))
             discount_amount = Decimal(str(applied_discount_obj.discount_amount or 0)) if applied_discount_obj else Decimal("0.00")
             discount_applied_flag = bool(applied_discount_obj and discount_amount > 0)
+            # Bug 5 Fix: Use Option A formula (gross - discount - paid)
             initial_due = max(full_original_amount - discount_amount, Decimal("0.00"))
 
             student_fee, created = StudentFee.objects.get_or_create(
@@ -2490,8 +2503,10 @@ class StudentFeeSerializer(serializers.ModelSerializer):
             )
 
             penalty = getattr(student_fee, 'penalty_amount', Decimal('0.00')) or Decimal('0.00')
+            # Bug 2 Fix: original_amount stores gross fee
             student_fee.original_amount = full_original_amount
             student_fee.applied_discount = discount_applied_flag
+            # Bug 5 Fix: Use Option A formula (gross - discount - paid + penalty)
             student_fee.due_amount = max(
                 full_original_amount - student_fee.paid_amount - discount_amount + penalty,
                 Decimal("0.00")

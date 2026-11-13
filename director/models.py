@@ -421,6 +421,7 @@ FEE_TYPE_CHOICES = [
     ("Form Fee", "Form Fee"),
     ("Annual Charges", "Annual Charges"),
     ("Others", "Others"),
+    ("Advance Credit", "Advance Credit"),  # Approach C: Stores excess payment credit
 ]
 class FeeStructure(models.Model):
     school_year = models.ForeignKey(SchoolYear, on_delete=models.PROTECT, related_name="fee_structures")
@@ -431,6 +432,9 @@ class FeeStructure(models.Model):
 
     class Meta:
         db_table = "fee_structure"
+
+    def display_name(self):
+        return self.fee_type
 
     def __str__(self):
         year_levels = ", ".join(
