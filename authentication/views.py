@@ -7,7 +7,7 @@ from .models import User , UserStatusLog
 from .serializers import *
 from rest_framework import status
 from django.contrib.auth import authenticate
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken, BlacklistMixin
 from django.utils.crypto import get_random_string
 from django.core.mail import send_mail
@@ -61,6 +61,7 @@ def ChangePasswordView(request):
 
 
 @api_view(["POST"])
+@permission_classes([AllowAny])
 def LoginView(request):
     if request.method == "POST":
         email = request.data.get("email")
