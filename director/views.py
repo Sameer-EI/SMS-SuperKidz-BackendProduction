@@ -1608,6 +1608,56 @@ class FileView(viewsets.ModelViewSet):
 class DocumentView(viewsets.ModelViewSet):
     queryset = Document.objects.filter(is_active=True).prefetch_related('files', 'document_types')
     serializer_class = DocumentSerializer
+    pagination_class = CreatePagination
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        params = self.request.query_params
+
+        role = params.get('role')
+        if role:
+            role = role.strip().lower().replace('-', '_').replace(' ', '_')
+            role_fields = {
+                'student': 'student',
+                'teacher': 'teacher',
+                'guardian': 'guardian',
+                'office_staff': 'office_staff',
+            }
+            if role not in role_fields:
+                raise ValidationError({
+                    'role': 'Choose student, teacher, guardian, or office_staff.'
+                })
+            queryset = queryset.filter(**{f'{role_fields[role]}__isnull': False})
+
+        class_filter = params.get('class')
+        if class_filter:
+            class_paths = (
+                'student__student_year_levels__level',
+                'teacher__year_levels',
+                'guardian__studentguardian__student__student_year_levels__level',
+            )
+            class_query = Q()
+            for path in class_paths:
+                lookup = f'{path}__id' if class_filter.isdigit() else f'{path}__level_name__iexact'
+                class_query |= Q(**{lookup: class_filter})
+            queryset = queryset.filter(class_query)
+
+        name = params.get('name')
+        if name:
+            name_paths = (
+                'student__user',
+                'teacher__user',
+                'guardian__user',
+                'office_staff__user',
+            )
+            for term in name.split():
+                name_query = Q()
+                for path in name_paths:
+                    for field in ('first_name', 'middle_name', 'last_name'):
+                        name_query |= Q(**{f'{path}__{field}__icontains': term})
+                queryset = queryset.filter(name_query)
+
+        return queryset.distinct()
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):
