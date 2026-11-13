@@ -25,6 +25,8 @@ router.register(r'DocumentType',DocumentTypeView)
 
 router.register(r'File',FileView),
 router.register(r'Document',DocumentView,basename='document'),
+router.register(r'transfer-certificates', TransferCertificateDocumentView, basename='transfer-certificates'),
+router.register(r'inactive-documents', InactiveDocumentView, basename='inactive-documents'),
 router.register(r'subject',subjectView)
 
 router.register(r'Exam-Type',ExamTypeView)
@@ -92,6 +94,7 @@ urlpatterns = [
     path("inactive-user/", list_inactive_users, name="inactive-user"),
     path("notify-defaulters/", DefaulterNotifyView.as_view(), name="notify-defaulters"),
     path("student-fee-dashboard/", student_fee_dashboard, name="student-fee-dashboard-summary"),
+    path('GetTCdata/', get_transfer_certificate_data, name='generate-tc'),
 
 ]
 

@@ -290,6 +290,162 @@ def calculate_penalty(fee_type, school_year, month):
 
 #---------------------------- Transfer Certificate (TC) Utilities --------------------------------------------
 
+
+'''------------------------------------Transfer Certificates Template--------------------------------------------'''
+"""
+POST /d/GenerateTC/
+
+Accepts the filled Transfer Certificate form fields (from the frontend modal),
+renders them into a PDF that visually matches your physical TC layout, 
+and returns that PDF directly in the response.
+
+The frontend does NOT need to save this anywhere separately — it just
+takes the returned PDF blob and attaches it as `files` in the existing
+POST /d/Document/ call, alongside:
+    document_types = <id of "Transfer Certificate" type>
+    identities     = tc_no
+    student        = <student id>
+
+So this endpoint only generates the file. Existing DocumentView
+handles the actual save — nothing there needs to change.
+"""
+
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework import status
+from student.models import Student, StudentYearLevel
+
+REQUIRED_FIELDS = ['tc_no', 'scholar_no', 'student_name', 'date_of_birth', 'from_date', 'to_date']
+
+# Maps our TC field name -> the exact DocumentType.name used as a fallback
+# source when the Student model field itself is empty.
+DOCUMENT_TYPE_FALLBACKS = {
+    'aadhaar_no': 'Aadhaar Number',
+    'apaar_id': 'Apaar ID',
+    'fmid': 'Family ID',
+    'pen_no': 'PEN Number',
+    'sssm_id': 'SSSM ID',
+}
+
+
+def _prefill_from_student(student_id, data):
+    """
+    Fill in anything the frontend didn't send, using the Student record.
+    Anything the frontend already sent (user edited it) takes priority.
+    """
+    from .models import Admission
+
+    if not student_id:
+        return data
+
+    student = Student.objects.filter(id=student_id, is_active=True).select_related('user').first()
+    if not student:
+        return data
+    
+    student_year = (
+        StudentYearLevel.objects.filter(student_id=student_id)
+        .select_related("level", "year")
+        .order_by("-id")
+        .first()
+    )
+    admission = Admission.objects.filter(student=student_year.student).first()
+
+    defaults = {
+        'student_name': f"{student.user.first_name} {student.user.last_name}".strip(),
+        'father_name': student.father_name,
+        'mother_name': student.mother_name,
+        'date_of_birth': student.date_of_birth.strftime('%d-%m-%Y') if student.date_of_birth else '',
+        "year_level": student_year.level.level_name if student_year and student_year.level else "",
+        "school_year": student_year.year.year_name if student_year and student_year.year else "",
+        'scholar_no': student.scholar_number,
+        'aadhaar_no': student.aadhaar_number,
+        'fmid': student.FMID_number,
+        'apaar_id': student.apaar_number,
+        'pen_no': student.PEN_number,
+        'admission_date': admission.admission_date,
+    }
+
+    for key, val in defaults.items():
+        if not data.get(key) and val:
+            data[key] = val
+
+    return data
+
+
+def _prefill_from_documents(student_id, data):
+    """
+    Backup source, used only for whatever is STILL missing after the
+    Student model pass — e.g. the Student record never had `aadhaar_number`
+    filled in, but a parent uploaded an "Aadhaar Number" document earlier,
+    and that document's `identities` value holds the actual number.
+    """
+    from .models import Document
+    if not student_id:
+        return data
+
+    still_missing = [f for f in DOCUMENT_TYPE_FALLBACKS if not data.get(f)]
+    if not still_missing:
+        return data
+
+    type_names = [DOCUMENT_TYPE_FALLBACKS[f] for f in still_missing]
+
+    docs = (
+        Document.objects.filter(
+            student_id=student_id,
+            document_types__name__in=type_names,
+            is_active=True,
+        )
+        .prefetch_related('document_types')
+        .distinct()
+    )
+
+    # Build type_name -> identity value, in case a student has multiple docs
+    by_type = {}
+    for doc in docs:
+        if not doc.identities:
+            continue
+        for dt in doc.document_types.all():
+            if dt.name in type_names and dt.name not in by_type:
+                # identities can be a comma-joined string if multiple were
+                # submitted together — take the first meaningful value
+                by_type[dt.name] = doc.identities.split(',')[0].strip()
+
+    for field in still_missing:
+        type_name = DOCUMENT_TYPE_FALLBACKS[field]
+        if type_name in by_type:
+            data[field] = by_type[type_name]
+
+    return data
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def get_transfer_certificate_data(request):
+    student_id = request.query_params.get("student_id")
+
+    if not student_id:
+        return Response(
+            {"error": "student_id is required"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    student = Student.objects.filter(id=student_id).first()
+    if not student:
+        return Response(
+            {"error": "Student not found"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    data = {"student_id": student_id}
+
+    # 1. Fill from Student model
+    data = _prefill_from_student(student_id, data)
+
+    # 2. Fill remaining missing fields from Document
+    data = _prefill_from_documents(student_id, data)
+
+    return Response(data, status=status.HTTP_200_OK)
+
+
 def is_tc_document_type(doc_type):
     """
     Check if a DocumentType instance or its name represents a Transfer Certificate / TC.
