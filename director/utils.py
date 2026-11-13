@@ -287,3 +287,102 @@ def calculate_penalty(fee_type, school_year, month):
 
     return Decimal("0.00")
 
+
+#---------------------------- Transfer Certificate (TC) Utilities --------------------------------------------
+
+def is_tc_document_type(doc_type):
+    """
+    Check if a DocumentType instance or its name represents a Transfer Certificate / TC.
+    """
+    if not doc_type:
+        return False
+    name = (getattr(doc_type, 'name', None) or str(doc_type) or '').strip().lower()
+    if 'transfer' in name or name == 'tc':
+        return True
+    import re
+    tokens = re.split(r'[^a-zA-Z0-9]+', name)
+    return 'tc' in tokens
+
+
+def is_tc_document(document):
+    """
+    Check if a Document instance has any document type that is a TC.
+    """
+    if not document:
+        return False
+    return any(is_tc_document_type(dt) for dt in document.document_types.all())
+
+
+def deactivate_student_on_tc_issue(student, tc_document=None, reason="TC Issued"):
+    """
+    Deactivates a student when a TC (Transfer Certificate) is issued.
+    Sets reason to "TC Issued", deactivates user, admissions, addresses,
+    banking details, creates UserStatusLog, and deactivates other non-TC documents.
+    """
+    if not student:
+        return
+
+    from django.utils import timezone
+    from django.db import transaction, models
+    from authentication.models import UserStatusLog
+    from director.models import Admission, Address, BankingDetail, Document
+
+    with transaction.atomic():
+        # 1. Deactivate student
+        student.is_active = False
+        student.save(update_fields=['is_active'])
+
+        # 2. Deactivate user and set deactivation reason
+        user = student.user
+        if user:
+            user.is_active = False
+            user.deactivation_reason = reason
+            user.deactivation_date = timezone.now()
+            user.reactivation_date = None
+            user.save(update_fields=['is_active', 'deactivation_reason', 'deactivation_date', 'reactivation_date'])
+
+            # 3. Deactivate addresses
+            Address.objects.all_including_inactive().filter(user=user).update(is_active=False)
+
+            # 4. Deactivate banking details
+            BankingDetail.objects.all_including_inactive().filter(user=user).update(is_active=False)
+
+            # 5. Log status change
+            UserStatusLog.objects.create(
+                user=user,
+                status='TERMINATED',
+                reason=reason
+            )
+
+        # 6. Deactivate admissions
+        Admission.objects.all_including_inactive().filter(student=student).update(is_active=False)
+
+        # 7. Deactivate non-TC documents
+        non_tc_docs = Document.objects.all_including_inactive().filter(student=student)
+        if tc_document and getattr(tc_document, 'id', None):
+            non_tc_docs = non_tc_docs.exclude(id=tc_document.id)
+        non_tc_docs = non_tc_docs.exclude(
+            models.Q(document_types__name__icontains='transfer') |
+            models.Q(document_types__name__iexact='tc')
+        )
+        non_tc_docs.update(is_active=False)
+
+        # 8. Ensure TC document itself remains active
+        if tc_document and getattr(tc_document, 'id', None) and not tc_document.is_active:
+            tc_document.is_active = True
+            tc_document.save(update_fields=['is_active'])
+
+
+def check_and_deactivate_student_for_tc(document, reason="TC Issued"):
+    """
+    Given a Document instance, checks if it is for a student and includes a TC document type.
+    If so, deactivates the student with the specified reason.
+    """
+    if not document or not document.student_id:
+        return
+
+    if is_tc_document(document):
+        from student.models import Student
+        student = Student.objects.all_including_inactive().filter(id=document.student_id).first()
+        if student:
+            deactivate_student_on_tc_issue(student, tc_document=document, reason=reason)

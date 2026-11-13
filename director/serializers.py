@@ -37,6 +37,30 @@ class SchoolYearSerializer(serializers.ModelSerializer):
         model = SchoolYear
         fields = "__all__"
 
+    def validate(self, attrs):
+        start_date = attrs.get(
+            "start_date", getattr(self.instance, "start_date", None)
+        )
+        end_date = attrs.get("end_date", getattr(self.instance, "end_date", None))
+
+        if start_date and end_date:
+            if start_date > end_date:
+                raise serializers.ValidationError(
+                    {"end_date": "End date must be on or after the start date."}
+                )
+
+            overlapping_years = SchoolYear.objects.filter(
+                start_date__lte=end_date,
+                end_date__gte=start_date,
+            )
+            if self.instance:
+                overlapping_years = overlapping_years.exclude(pk=self.instance.pk)
+            if overlapping_years.exists():
+                raise serializers.ValidationError(
+                    {"start_date": "School years cannot overlap."}
+                )
+
+        return attrs
 
 class DepartmentSerializer(serializers.ModelSerializer):
     class Meta:
@@ -206,13 +230,7 @@ class AddressSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
             user = self.context['request'].user  # assuming request is passed in context
             return Address.objects.create(user=user, **validated_data)
-
-
-
-class SchoolYearSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = SchoolYear
-        fields = "__all__"
+    
 
 
 class PeriodSerializer(serializers.ModelSerializer):
@@ -237,6 +255,41 @@ class TermSerializer(serializers.ModelSerializer):
     class Meta:
         model = Term
         fields = ["id", "year", "term_number", "start_date", "end_date"]
+    
+    def validate(self, attrs):
+        year = attrs.get("year", getattr(self.instance, "year", None))
+        start_date = attrs.get(
+            "start_date", getattr(self.instance, "start_date", None)
+        )
+        end_date = attrs.get("end_date", getattr(self.instance, "end_date", None))
+
+        if start_date and end_date and start_date > end_date:
+            raise serializers.ValidationError(
+                {"end_date": "End date must be on or after the start date."}
+            )
+
+        if year and start_date and end_date:
+            if start_date < year.start_date or end_date > year.end_date:
+                raise serializers.ValidationError(
+                    {
+                        "start_date": (
+                            "Term dates must fall within the selected school year."
+                        )
+                    }
+                )
+
+            overlapping_terms = Term.objects.filter(
+                start_date__lte=end_date,
+                end_date__gte=start_date,
+            )
+            if self.instance:
+                overlapping_terms = overlapping_terms.exclude(pk=self.instance.pk)
+            if overlapping_terms.exists():
+                raise serializers.ValidationError(
+                    {"start_date": "Terms cannot overlap."}
+                )
+
+        return attrs
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
@@ -1036,6 +1089,7 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
         representation['address_data'] = AddressSerializer(last_address).data if last_address else None
 
         representation.update({
+            "user_id": instance.user.id if instance.user else None,
             "first_name": instance.user.first_name if instance.user else "",
             "middle_name": instance.user.middle_name if instance.user else "",
             "last_name": instance.user.last_name if instance.user else "",
@@ -1083,6 +1137,9 @@ from .models import Document, DocumentType
 
 
 class DocumentSerializer(serializers.ModelSerializer):
+    student = serializers.PrimaryKeyRelatedField(
+        queryset=Student.objects.all_including_inactive(), required=False, allow_null=True
+    )
     document_types = serializers.PrimaryKeyRelatedField(
         many=True,
         queryset=DocumentType.objects.all(),
@@ -1121,8 +1178,23 @@ class DocumentSerializer(serializers.ModelSerializer):
         
         if document_types:
             instance.document_types.set(document_types)
+
+        from director.utils import check_and_deactivate_student_for_tc
+        check_and_deactivate_student_for_tc(instance)
         
         # Handle file creation separately in the view
+        return instance
+
+    def update(self, instance, validated_data):
+        document_types = validated_data.pop("document_types", None)
+        instance = super().update(instance, validated_data)
+
+        if document_types is not None:
+            instance.document_types.set(document_types)
+
+        from director.utils import check_and_deactivate_student_for_tc
+        check_and_deactivate_student_for_tc(instance)
+
         return instance
     
     def to_representation(self, instance):

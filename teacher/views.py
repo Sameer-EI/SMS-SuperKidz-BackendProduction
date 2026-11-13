@@ -1252,7 +1252,7 @@ class TeacherWorkloadView(APIView):
 class SaveTimetableSlotView(APIView):
     """
     Assigns or updates a specific period slot for a class.
-    Supports gender/stream tagging (e.g. Boys, Girls, [Girls][PCM]).
+    Supports section-specific timetable assignments (e.g. Section A or Section B).
     Checks teacher availability to avoid duplicate simultaneous assignments.
     """
     def post(self, request):

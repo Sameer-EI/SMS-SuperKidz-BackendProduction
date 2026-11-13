@@ -228,24 +228,84 @@ def SendOtpView(request):
 
     if email_serialzer.is_valid():
         email = email_serialzer.validated_data["email"]
+
+        if not User.objects.filter(email__iexact=email).exists():
+            return Response({"Message": "No account found with this email."}, status=status.HTTP_404_NOT_FOUND)
+
         otp = get_random_string(length=6, allowed_chars="1234567890")
-        cache.set(email, otp, timeout=300)
+        cache.set(email.lower(), otp, timeout=300)
 
-        if email is not None:
-            from django.conf import settings
+        from django.core.mail import send_mail
+        from django.conf import settings
+        from django.utils.html import strip_tags
 
-            send_mail(
-                "Reset your Password",
-                f"Your Otp for Forgot Password {otp}",
-                settings.EMAIL_HOST_USER,
-                [email],
-                fail_silently=False,
-            )
+        subject = "EduEthical - Password Reset Request"
 
-            return Response(
-                {"Message": "Otp Sent to your Email"}, status=status.HTTP_200_OK
-            )
-        return Response({"Message": "Invalid Email"}, status=status.HTTP_204_NO_CONTENT)
+        # Plain text fallback (agar email client HTML support na kare)
+        html_message = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    color: #333333;
+                    line-height: 1.6;
+                }}
+                .container {{
+                    max-width: 600px;
+                    margin: 0 auto;
+                    padding: 20px;
+                    border: 1px solid #e0e0e0;
+                    border-radius: 8px;
+                    background-color: #f9f9f9;
+                }}
+                .otp-box {{
+                    font-size: 24px;
+                    font-weight: bold;
+                    color: #2b6cb0;
+                    background: #eef2f7;
+                    padding: 10px 15px;
+                    display: inline-block;
+                    border-radius: 5px;
+                    margin: 15px 0;
+                    letter-spacing: 2px;
+                }}
+                .footer {{
+                    margin-top: 20px;
+                    font-size: 12px;
+                    color: #777777;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <p>Dear User,</p>
+                <p>We received a request to reset the password for your <strong>EduEthical</strong> account.</p>
+                <p>Your One-Time Password (OTP) for the password reset is:</p>
+                <div class="otp-box">{otp}</div>
+                <p>This OTP is valid for a limited time. If you did not request a password reset, please ignore this email or contact support if you have concerns regarding your account security.</p>
+                <p>Best regards,<br><strong>EduEthical Support Team</strong></p>
+            </div>
+        </body>
+        </html>
+        """
+
+        # Plain text version HTML tags hata kar generate karna
+        plain_message = strip_tags(html_message)
+
+        send_mail(
+            subject=subject,
+            message=plain_message,
+            from_email=settings.EMAIL_HOST_USER,
+            recipient_list=[email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+
+        return Response(
+            {"Message": "Otp Sent to your Email"}, status=status.HTTP_200_OK
+        )
 
     return Response(email_serialzer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -259,26 +319,25 @@ def ForgotPasswordView(request):
         otp = serializer_data.validated_data["otp"]
         new_password = serializer_data.validated_data["new_password"]
 
-        cached_otp = cache.get(email)
+        try:
+            user = User.objects.get(email__iexact=email)
+        except User.DoesNotExist:
+            return Response({"Message": "No account found with this email."}, status=status.HTTP_404_NOT_FOUND)
+
+        if user.check_password(new_password):
+            return Response({"Message": "New password must be different from your current password."}, status=status.HTTP_400_BAD_REQUEST)
+
+        cached_otp = cache.get(email.lower())
 
         if cached_otp == otp:
-            try:
-                user = User.objects.get(email=email)
-
-            except User.DoesNotExist:
-
-                return Response(
-                    {"error": "User Not Found"}, status=status.HTTP_404_NOT_FOUND
-                )
-
             user.set_password(new_password)
             user.save()
-            cache.delete(email)
+            cache.delete(email.lower())
 
             return Response(
-                {"Message": "Password changed Successfull"}, status=status.HTTP_200_OK
+                {"Message": "Password changed Successfully"}, status=status.HTTP_200_OK
             )
-        return Response({"Message": "Invalid OTP "}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"Message": "Invalid OTP"}, status=status.HTTP_400_BAD_REQUEST)
 
     return Response(serializer_data.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -296,6 +355,7 @@ class UserStatusLogView(viewsets.ModelViewSet):
     serializer_class = UserStatusLogSerializer
     pagination_class = CreatePagination
 
+    
 
 # with permissions working fine
 from django.contrib.sessions.models import Session
@@ -364,129 +424,3 @@ class LoggedInUsersAPIView(APIView):
         }, status=status.HTTP_200_OK)
         
         
-        
-# without permissions
-
-# User = get_user_model()
-
-# class LoggedInUsersAPIView(APIView):
-#     """
-#     API to get all currently logged-in users
-#     No permission required - accessible to anyone
-#     """
-    
-#     def get(self, request):
-#         """
-#         Get all logged-in users
-#         """
-#         # Get all active sessions
-#         sessions = Session.objects.filter(expire_date__gte=timezone.now())
-        
-#         logged_in_users = []
-#         user_ids = set()
-        
-#         for session in sessions:
-#             session_data = session.get_decoded()
-            
-#             # Check if user is authenticated in this session
-#             if '_auth_user_id' in session_data:
-#                 user_id = session_data['_auth_user_id']
-                
-#                 # Avoid duplicates
-#                 if user_id not in user_ids:
-#                     user_ids.add(user_id)
-                    
-#                     try:
-#                         user = User.objects.get(id=user_id, is_active=True)
-                        
-#                         # Get user roles
-#                         roles = [role.name for role in user.role.all()]
-                        
-#                         # Build full name
-#                         full_name = f"{user.first_name} {user.middle_name or ''} {user.last_name}".strip()
-                        
-#                         # Build profile URL
-#                         profile_url = None
-#                         if user.user_profile:
-#                             profile_url = request.build_absolute_uri(user.user_profile.url)
-                        
-#                         logged_in_users.append({
-#                             'id': user.id,
-#                             'email': user.email,
-#                             'first_name': user.first_name,
-#                             'middle_name': user.middle_name,
-#                             'last_name': user.last_name,
-#                             'full_name': full_name,
-#                             'roles': roles,
-#                             'last_login': user.last_login,
-#                             'user_profile': profile_url,
-#                         })
-#                     except User.DoesNotExist:
-#                         pass
-        
-#         return Response({
-#             'count': len(logged_in_users),
-#             'users': logged_in_users
-#         }, status=status.HTTP_200_OK)
-
-
-# ------- Added as of 03Sep25 at 11:59 PM ------- #
-# *********** LoggedInUsersView ******** #
-
-# class LoggedInUsersView(viewsets.ViewSet):
-#     permission_classes = [LoggedInUsersPermissions]
-    
-#     @action(detail=False, methods=['get'], url_path='')
-#     def active_users(self, request):
-#         """
-#         Custom action to get all logged-in users
-#         """
-#         # Get all active sessions
-#         sessions = Session.objects.filter(expire_date__gte=timezone.now())
-        
-#         logged_in_users = []
-#         user_ids = set()
-        
-#         for session in sessions:
-#             session_data = session.get_decoded()
-            
-#             # Check if user is authenticated in this session
-#             if '_auth_user_id' in session_data:
-#                 user_id = session_data['_auth_user_id']
-                
-#                 # Avoid duplicates
-#                 if user_id not in user_ids:
-#                     user_ids.add(user_id)
-                    
-#                     try:
-#                         user = User.objects.get(id=user_id, is_active=True)
-                        
-#                         # Get user roles
-#                         roles = [role.name for role in user.role.all()]
-                        
-#                         # Build full name
-#                         full_name = f"{user.first_name} {user.middle_name or ''} {user.last_name}".strip()
-                        
-#                         # Build profile URL
-#                         profile_url = None
-#                         if user.user_profile:
-#                             profile_url = request.build_absolute_uri(user.user_profile.url)
-                        
-#                         logged_in_users.append({
-#                             'id': user.id,
-#                             'email': user.email,
-#                             'first_name': user.first_name,
-#                             'middle_name': user.middle_name,
-#                             'last_name': user.last_name,
-#                             'full_name': full_name,
-#                             'roles': roles,
-#                             'last_login': user.last_login,
-#                             'user_profile': profile_url,
-#                         })
-#                     except User.DoesNotExist:
-#                         pass
-        
-#         return Response({
-#             'count': len(logged_in_users),
-#             'users': logged_in_users
-#         }, status=status.HTTP_200_OK)

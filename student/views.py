@@ -1,17 +1,13 @@
 from argparse import Action
 from django.db import transaction
-from django.db.models import ObjectDoesNotExist
-from django.db import transaction
-from django.db.models import ObjectDoesNotExist
+from django.db.models import ObjectDoesNotExist,Q
 from django.shortcuts import get_object_or_404
 from rest_framework.decorators import api_view
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.response import Response
 
 from authentication.models import UserStatusLog
-from authentication.models import UserStatusLog
 from director.models import *
-from director.models import Address, Admission, BankingDetail, Role, YearLevel
 from director.serializers import BankingDetailsSerializer
 
 from .models import GuardianType, Student, StudentYearLevel, StudentGuardian
@@ -150,7 +146,8 @@ class StudentView(ModelViewSet):
 
     search_fields = [
         'user__email', 
-        'user__first_name'
+        'user__first_name',
+        'user__last_name',
         "student__first_name",
         "student__last_name",
         "guardian__first_name",
@@ -256,6 +253,7 @@ class StudentView(ModelViewSet):
     @action(detail=False, methods=['get'], url_path='student_details')
     def get_student_details(self, request):
         student_id = request.query_params.get('student_id')
+        student_name = request.query_params.get('student_name')
 
         # If specific student id is given
         if student_id:
@@ -265,6 +263,13 @@ class StudentView(ModelViewSet):
             students = [student]
         else:
             students = Student.objects.filter(is_active=True)
+
+        if student_name:
+            for name_part in student_name.split():
+                students_qs = students_qs.filter(
+                    Q(user__first_name__icontains=name_part)
+                    | Q(user__last_name__icontains=name_part)
+                )
 
         data = []
         for student in students:
@@ -405,8 +410,8 @@ class StudentYearLevelView(viewsets.ModelViewSet):
     serializer_class = StudentYearLevelSerializer
 
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
-    filterset_fields = ['level__id','year__year_name']  #  GET /student-year-levels/?level__id=2
-    search_fields = ['level__level_name','year__year_name']  #  GET /student-year-levels/?search=Nursery
+    filterset_fields = ['level__id','year__year_name','section']  #  GET /student-year-levels/?level__id=2
+    search_fields = ['level__level_name','year__year_name','section']  #  GET /student-year-levels/?search=Nursery
     
     # combine search endpoint GET /student-year-levels/?level__id=2&search=Nursery
 

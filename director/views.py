@@ -203,6 +203,7 @@ def Director_Dashboard_Summary(request):
         .order_by('-start_date')
         .first()
     )
+    current_school_year_name = current_school_year.year_name if current_school_year else None
 
     if current_school_year:
         new_admissions_count = Admission.objects.filter(school_year=current_school_year).count()
@@ -212,11 +213,13 @@ def Director_Dashboard_Summary(request):
     summary = {
         "new_admissions": new_admissions_count,
         "students": Student.objects.filter(is_active=True).count(),
-        "teachers": Teacher.objects.filter(is_active=True).count()
+        "teachers": Teacher.objects.filter(is_active=True).count(),
+        "office_staff": OfficeStaff.objects.filter(is_active=True).count()
     }
 
     student_total = summary["students"]
     teacher_total = summary["teachers"]
+    office_staff_total = summary["office_staff"]
 
     # Gender count
     student_male = Student.objects.filter(is_active=True, gender__iexact="Male").count()
@@ -224,6 +227,9 @@ def Director_Dashboard_Summary(request):
 
     teacher_male = Teacher.objects.filter(is_active=True, gender__iexact="Male").count()
     teacher_female = Teacher.objects.filter(is_active=True, gender__iexact="Female").count()
+
+    office_staff_male = OfficeStaff.objects.filter(is_active=True, gender__iexact="Male").count()
+    office_staff_female = OfficeStaff.objects.filter(is_active=True, gender__iexact="Female").count()
 
     def get_percentage(count, total):
         return round((count / total) * 100, 2) if total else 0
@@ -248,6 +254,16 @@ def Director_Dashboard_Summary(request):
                 "male": get_percentage(teacher_male, teacher_total),
                 "female": get_percentage(teacher_female, teacher_total)
             },
+        },
+        "office_staff": {
+            "count": {
+                "male": office_staff_male,
+                "female": office_staff_female
+            },
+            "percentage": {
+                "male": get_percentage(office_staff_male, office_staff_total),
+                "female": get_percentage(office_staff_female, office_staff_total)
+            }
         }
     }
 
@@ -1003,7 +1019,10 @@ def SchoolYearView(request, pk=None):
                 status=status.HTTP_201_CREATED,
             )
 
-        return Response({"Message": "Invalid Data"}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+                    {"Message": "Invalid Data", "errors": serializerData.errors},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
     elif request.method == "PUT":
         try:
@@ -1018,7 +1037,8 @@ def SchoolYearView(request, pk=None):
                 )
 
             return Response(
-                {"message": "Invalid Data"}, status=status.HTTP_400_BAD_REQUEST
+                {"message": "Invalid Data", "errors": Updated_SchoolYear.errors},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         except SchoolYear.DoesNotExist:
@@ -1606,7 +1626,7 @@ class FileView(viewsets.ModelViewSet):
     serializer_class = FileSerializer 
 
 class DocumentView(viewsets.ModelViewSet):
-    queryset = Document.objects.filter(is_active=True).prefetch_related('files', 'document_types')
+    queryset = Document.objects.prefetch_related('files', 'document_types')
     serializer_class = DocumentSerializer
     pagination_class = CreatePagination
 
@@ -1661,18 +1681,32 @@ class DocumentView(viewsets.ModelViewSet):
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):
+        from director.utils import check_and_deactivate_student_for_tc
+
         # Validate files
         files = request.FILES.getlist('files')
         has_files = bool(files)
 
-        # Get and validate document types
-        doc_types = request.data.getlist('document_types', []) or [request.data.get('document_types')]
+        # Get and validate document types (supporting both QueryDict and standard dict)
+        doc_types = (
+            request.data.getlist('document_types')
+            if hasattr(request.data, 'getlist')
+            else request.data.get('document_types', [])
+        )
+        if not isinstance(doc_types, list):
+            doc_types = [doc_types] if doc_types is not None else []
         doc_types = [dt for dt in doc_types if dt and str(dt).isdigit()]
         if not doc_types:
             return Response({"error": "Valid document types required"}, status=status.HTTP_400_BAD_REQUEST)
 
         # Handle identities - accept both single value and array
-        identities = request.data.getlist('identities', []) or [request.data.get('identities')]
+        identities = (
+            request.data.getlist('identities')
+            if hasattr(request.data, 'getlist')
+            else request.data.get('identities', [])
+        )
+        if not isinstance(identities, list):
+            identities = [identities] if identities is not None else []
         identities = [i for i in identities if i]  # Remove empty values
         identities_str = ", ".join(identities) if identities else None
 
@@ -1705,6 +1739,8 @@ class DocumentView(viewsets.ModelViewSet):
                     File.objects.create(document=existing, file=file)
                 msg_parts.append("Files replaced")
 
+            check_and_deactivate_student_for_tc(existing)
+
             # If no files or identity changes → show message
             if not msg_parts:
                 return Response({
@@ -1718,7 +1754,7 @@ class DocumentView(viewsets.ModelViewSet):
                 "message": " and ".join(msg_parts) + " successfully.",
                 "document": self.get_serializer(existing, context={'request': request}).data
             }, status=status.HTTP_200_OK)
-        
+
         # --- CASE 2: No existing doc → create new one ---
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
@@ -1726,6 +1762,8 @@ class DocumentView(viewsets.ModelViewSet):
 
         for file in files:
             File.objects.create(document=doc, file=file)
+
+        check_and_deactivate_student_for_tc(doc)
 
         return Response({
             "status": "created",
@@ -1740,7 +1778,7 @@ class DocumentView(viewsets.ModelViewSet):
             if data.get(f) is not None
         }
 
-        existing_docs = Document.objects.filter(**filter_params).prefetch_related('document_types')
+        existing_docs = Document.objects.all_including_inactive().filter(**filter_params).prefetch_related('document_types')
 
         for doc in existing_docs:
             existing_types = set(doc.document_types.values_list('id', flat=True))
@@ -1750,6 +1788,47 @@ class DocumentView(viewsets.ModelViewSet):
 
         return None
 
+class TransferCertificateDocumentView(viewsets.ModelViewSet):
+    """
+    API specifically for Transfer Certificates, including those for deactivated students.
+    """
+    # Fetch all documents (including deactivated) where the document type contains "transfer" or "tc"
+    queryset = Document.objects.all_including_inactive().filter(
+        models.Q(document_types__name__icontains='transfer') |
+        models.Q(document_types__name__iexact='tc')
+    ).prefetch_related('files', 'document_types').distinct()
+    serializer_class = DocumentSerializer
+    pagination_class = CreatePagination
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['student__id', 'is_active']
+    search_fields = ['student__user__first_name', 'student__user__last_name', 'student__scholar_number', 'identities']
+
+    @transaction.atomic
+    def perform_create(self, serializer):
+        doc = serializer.save()
+        files = self.request.FILES.getlist('files')
+        for file in files:
+            File.objects.create(document=doc, file=file)
+        from director.utils import check_and_deactivate_student_for_tc
+        check_and_deactivate_student_for_tc(doc)
+
+
+class InactiveDocumentView(viewsets.ReadOnlyModelViewSet):
+    """
+    API specifically for all OTHER documents belonging to deactivated students/staff.
+    This excludes Transfer Certificates, which have their own view.
+    """
+    queryset = Document.objects.all_including_inactive().filter(is_active=False).exclude(
+        models.Q(document_types__name__icontains='transfer') |
+        models.Q(document_types__name__iexact='tc')
+    ).prefetch_related('files', 'document_types').distinct()
+    
+    serializer_class = DocumentSerializer
+    pagination_class = CreatePagination
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['student__id']
+    search_fields = ['student__user__first_name', 'student__user__last_name', 'student__scholar_number', 'identities']
 
 
 # **************Assignment ClassPeriod for Student behalf of YearLevel(standard)****************   
