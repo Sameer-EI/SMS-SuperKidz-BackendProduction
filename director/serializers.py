@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta, time as dt_time
 import re
+import secrets
 from rest_framework import serializers
 
 from .utils import send_email_notification
@@ -438,11 +439,14 @@ class AdmissionSerializer(serializers.ModelSerializer):
     section_input = serializers.ChoiceField(
         choices=SECTION_CHOICES, required=False, allow_null=True, write_only=True
     )
+    class_section = serializers.ChoiceField(
+        choices=SECTION_CHOICES, required=False, allow_null=True, write_only=True
+    )
     section = serializers.SerializerMethodField(read_only=True)
 
     # These are write-only inputs for creating/updating admission
-    student = StudentSerializer(write_only=True, required=False)
-    guardian = GuardianSerializer(write_only=True, required=False)
+    student = StudentSerializer(write_only=True, required=True)
+    guardian = GuardianSerializer(write_only=True, required=True)
     address_input = AddressSerializer(write_only=True, required=False, allow_null=True)
     banking_detail_input = BankingDetailsSerializer(write_only=True, required=False, allow_null=True)
 
@@ -455,7 +459,7 @@ class AdmissionSerializer(serializers.ModelSerializer):
             'student', 'guardian',  # write-only input nested data
             'address_input', 'banking_detail_input',
             'guardian_type', 'guardian_type_input',
-            'year_level', 'school_year', 'section', 'section_input',
+            'year_level', 'school_year', 'section', 'section_input', 'class_section',
             'admission_date', 'previous_school_name', 'previous_standard_studied',
             'tc_letter', 'emergency_contact_no', 'entire_road_distance_from_home_to_school',
             'obtain_marks', 'total_marks', 'previous_percentage','enrollment_no','is_rte', 'rte_number'
@@ -471,6 +475,15 @@ class AdmissionSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
+        class_section = attrs.pop('class_section', None)
+        if class_section is not None:
+            section_input = attrs.get('section_input')
+            if section_input is not None and section_input != class_section:
+                raise serializers.ValidationError({
+                    'class_section': "Must match section_input when both are provided."
+                })
+            attrs['section_input'] = class_section
+
         student_data = attrs.get("student") or {}
         student_email = student_data.get("email", "").strip()
         if student_email and User.objects.all_including_inactive().filter(
@@ -481,7 +494,7 @@ class AdmissionSerializer(serializers.ModelSerializer):
                     "email": "This email address is already registered. Please use a different email."
                 }
             })
-
+        
         level = attrs.get('year_level') or getattr(self.instance, 'year_level', None)
         section = attrs.get('section_input')
 
@@ -526,6 +539,21 @@ class AdmissionSerializer(serializers.ModelSerializer):
         except (StudentGuardian.DoesNotExist, AttributeError):
             return None
 
+    def _create_admission_user(self, user_data):
+        password = user_data.pop('password', None)
+        user_profile = user_data.pop('user_profile', None)
+        if user_profile is not None:
+            user_data['user_profile'] = user_profile
+
+        user = User.objects.create_user(
+            password=password or secrets.token_urlsafe(32),
+            **user_data
+        )
+        if not password:
+            user.set_unusable_password()
+            user.save(update_fields=['password'])
+        return user
+        
     @transaction.atomic
     def create(self, validated_data):
         is_rte = validated_data.pop('is_rte', False)
@@ -577,7 +605,7 @@ class AdmissionSerializer(serializers.ModelSerializer):
             user_data['email'] = f"{scholar_number}@school.local"
 
         role, _ = Role.objects.get_or_create(name='student')
-        user = User.objects.create_user(**user_data)
+        user = self._create_admission_user(user_data)
         user.role.add(role)
 
 
@@ -609,9 +637,9 @@ class AdmissionSerializer(serializers.ModelSerializer):
         guardian_user = User.objects.filter(email__iexact=guardian_user_data['email']).first()
         
         if not guardian_user:
-            # New guardian - create with password
+            # New guardian account may not have a password supplied at admission.
             role, _ = Role.objects.get_or_create(name='guardian')
-            guardian_user = User.objects.create_user(**guardian_user_data)
+            guardian_user = self._create_admission_user(guardian_user_data)
             guardian_user.role.add(role)
         else:
             # Existing guardian - update details but DON'T change password

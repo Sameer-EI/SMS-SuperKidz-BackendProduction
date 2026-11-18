@@ -32,6 +32,9 @@ def custom_exception_handler(exc, context):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    if response.status_code == status.HTTP_401_UNAUTHORIZED:
+        response.data = {"detail": "Please sign in to access this resource."}
+
     if request is not None:
         try:
             user = getattr(request, "user", None)
