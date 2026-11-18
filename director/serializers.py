@@ -13,6 +13,7 @@ from django.utils import timezone
 from decimal import Decimal
 from collections import defaultdict
 from django.db.models import Max
+from authentication.models import User
 
 
 from django.utils import timezone
@@ -470,6 +471,17 @@ class AdmissionSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
+        student_data = attrs.get("student") or {}
+        student_email = student_data.get("email", "").strip()
+        if student_email and User.objects.all_including_inactive().filter(
+            email__iexact=student_email
+        ).exists():
+            raise serializers.ValidationError({
+                "student": {
+                    "email": "This email address is already registered. Please use a different email."
+                }
+            })
+
         level = attrs.get('year_level') or getattr(self.instance, 'year_level', None)
         section = attrs.get('section_input')
 
@@ -514,6 +526,7 @@ class AdmissionSerializer(serializers.ModelSerializer):
         except (StudentGuardian.DoesNotExist, AttributeError):
             return None
 
+    @transaction.atomic
     def create(self, validated_data):
         is_rte = validated_data.pop('is_rte', False)
         rte_number = validated_data.pop('rte_number', None)

@@ -33,10 +33,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv("SECRET_KEY")
 
-# SECURITY WARNING: don't run with debug turned on in production!
-# DEBUG = True
-
-DEBUG = os.getenv("DEBUG")== True
+# Never expose Django's technical error pages to clients.
+DEBUG = False
 
 
 ALLOWED_HOSTS = [
@@ -139,6 +137,9 @@ DATABASES = {
 
 
 REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
     'DEFAULT_PERMISSION_CLASSES': [
         # 'rest_framework.permissions.AllowAny',
         'rest_framework.permissions.IsAuthenticated',
@@ -195,14 +196,6 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-
-
-REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
-    )
-    
-}
 
 
 from datetime import timedelta

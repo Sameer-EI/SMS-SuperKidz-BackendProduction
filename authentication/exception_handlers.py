@@ -1,43 +1,52 @@
-# yourapp/exception_handlers.py
-
-from rest_framework.views import exception_handler
-from .models import ErrorLog
+import logging
 import traceback
 
+from django.db import IntegrityError
+from rest_framework import status
+from rest_framework.response import Response
+from rest_framework.views import exception_handler
+
+from .models import ErrorLog
+
+
+logger = logging.getLogger(__name__)
+
+
 def custom_exception_handler(exc, context):
-    print("Custom Exception Handler Triggered")  # ✅ Entry point
     response = exception_handler(exc, context)
     request = context.get("request")
 
-    if request:
-        print("Request object found")
+    if response is None:
+        if isinstance(exc, IntegrityError):
+            response = Response(
+                {"detail": "Some of the information is already in use. Please check the details and try again."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        else:
+            logger.error(
+                "Unhandled API exception",
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+            response = Response(
+                {"detail": "We couldn't complete your request. Please try again later."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    if request is not None:
         try:
-            user = request.user if request.user.is_authenticated else None
-            endpoint = request.path
-            method = request.method
-            status_code = response.status_code if response else 500
-            error_type = exc.__class__.__name__
-            error_message = str(exc)
-            # traceback_info = "".join(traceback.format_exception(None, exc, exc.__traceback__))
-            traceback_info = "".join(
-                traceback.format_exception(type(exc), exc, getattr(exc, '__traceback__', None))
-            )
-
-
-            print("Attempting to save error log to database...")
+            user = getattr(request, "user", None)
             ErrorLog.objects.create(
-                user=user,
-                endpoint=endpoint,
-                method=method,
-                status_code=status_code,
-                error_type=error_type,
-                error_message=error_message,
-                traceback_info=traceback_info
+                user=user if user and user.is_authenticated else None,
+                endpoint=request.path,
+                method=request.method,
+                status_code=response.status_code,
+                error_type=exc.__class__.__name__,
+                error_message=str(exc),
+                traceback_info="".join(
+                    traceback.format_exception(type(exc), exc, exc.__traceback__)
+                ),
             )
-            print("Error log saved successfully")
-        except Exception as e:
-            print("Failed to save error log:", str(e))
-    else:
-        print("Request object not found in context")
+        except Exception:
+            logger.exception("Failed to save API error log")
 
     return response
