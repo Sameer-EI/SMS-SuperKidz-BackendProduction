@@ -1,5 +1,13 @@
 import traceback
+import logging
+
+from django.http import JsonResponse
+
 from .models import ErrorLog
+
+
+logger = logging.getLogger(__name__)
+
 
 class GlobalErrorLoggingMiddleware:
     def __init__(self, get_response):
@@ -10,9 +18,15 @@ class GlobalErrorLoggingMiddleware:
         try:
             response = self.get_response(request)
         except Exception as exc:
-            # Agar server error aaye, use bhi log karo
             self.log_error(request, exc, 500)
-            raise  # error ko dobara raise karna zaroori hai
+            logger.error(
+                "Unhandled request exception",
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+            return JsonResponse(
+                {"detail": "We couldn't complete your request. Please try again later."},
+                status=500,
+            )
 
         # Agar response 4xx ya 5xx hai, use bhi log karo
         if response.status_code >= 400:
@@ -36,6 +50,5 @@ class GlobalErrorLoggingMiddleware:
                 error_message=error_message,
                 traceback_info=traceback_info
             )
-            print(f"Logged error {status_code} at {request.path}")
-        except Exception as e:
-            print(f"Failed to log error: {e}")
+        except Exception:
+            logger.exception("Failed to save request error log")

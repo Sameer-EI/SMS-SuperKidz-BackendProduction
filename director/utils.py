@@ -3,90 +3,6 @@
 # ***********************************2222**************************
 
 
-# from django.db import models
-# import os
-# def Document_folder(instance, filename):
-#     base_path = "Document_folder"
-
-#     if instance.document and instance.document.student:
-#         user = instance.document.student.user
-#         year_level = (
-#             instance.document.student.studentyearlevel_set.first().level.level_name
-#             if instance.document.student.studentyearlevel_set.exists()
-#             else "unknown_level"
-#         )
-#         folder_path = f"student/{year_level}/{user.first_name}_{user.last_name}"
-
-#     elif instance.document and instance.document.teacher:
-#         user = instance.document.teacher.user
-#         folder_path = f"teacher/{user.first_name}_{user.last_name}"
-
-#     elif instance.document and instance.document.guardian:
-#         user = instance.document.guardian.user
-#         folder_path = f"guardian/{user.first_name}_{user.last_name}"
-
-#     elif instance.document and instance.document.office_staff:
-#         user = instance.document.office_staff.user
-#         folder_path = f"office_staff/{user.first_name}_{user.last_name}"
-
-#     else:
-#         folder_path = "unknown"
-
-#     # Debugging print statements
-#     print(f"DEBUG: ROLE DETECTED: {folder_path.split('/')[0]}")
-#     print(f"DEBUG: FULL FOLDER PATH: {os.path.join(base_path, folder_path)}")
-#     print(f"DEBUG: FILE PATH: {os.path.join(base_path, folder_path, filename)}")
-
-#     return os.path.join(base_path, folder_path, filename)
-
-#### commented as of 19 june25 at 11:11 PM till here
-
-
-
-
-
-
-
-
-
-
-#### added as of 19 june25 at 11:11 PM from here
-
-# import os
-
-# def Document_folder(instance, filename):
-#     try:
-#         document = instance.document  # access the FK to Document
-#     except Exception as e:
-#         print(" No document attached to file:", e)
-#         return f"Document_folder/unknown/{filename}"
-
-#     base_path = "Document_folder"
-
-
-#     if document.student:
-#         user = document.student.user
-#         year_level = (
-#             document.student.studentyearlevel_set.first().level.level_name
-#             if document.student.studentyearlevel_set.exists()
-#             else "unknown_level"
-#         )
-#         folder_path = f"student/{year_level}/{user.first_name}_{user.last_name}"
-#     elif document.teacher:
-#         user = document.teacher.user
-#         folder_path = f"teacher/{user.first_name}_{user.last_name}"
-#     elif document.guardian:
-#         user = document.guardian.user
-#         folder_path = f"guardian/{user.first_name}_{user.last_name}"
-#     elif document.office_staff:
-#         user = document.office_staff.user
-#         folder_path = f"office_staff/{user.first_name}_{user.last_name}"
-#     else:
-#         folder_path = "unknown"
-
-#     return os.path.join(base_path, folder_path, filename)
-
-
 from datetime import datetime
 import os
 from datetime import datetime
@@ -206,17 +122,26 @@ def expense_attachments(instance, filename):
 
 
 
+import logging
 from django.core.mail import send_mail
 from django.conf import settings
 
+logger = logging.getLogger(__name__)
+
 def send_email_notification(to_email, subject, message):
-    send_mail(
-        subject=subject,
-        message=message,
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[to_email],
-        fail_silently=False,
-    )
+    try:
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[to_email],
+            fail_silently=False,
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send email to {to_email}: {e}")
+        return False
+    
 
 
 def normalize_phone(num):
@@ -362,3 +287,258 @@ def calculate_penalty(fee_type, school_year, month):
 
     return Decimal("0.00")
 
+
+#---------------------------- Transfer Certificate (TC) Utilities --------------------------------------------
+
+
+'''------------------------------------Transfer Certificates Template--------------------------------------------'''
+"""
+POST /d/GenerateTC/
+
+Accepts the filled Transfer Certificate form fields (from the frontend modal),
+renders them into a PDF that visually matches your physical TC layout, 
+and returns that PDF directly in the response.
+
+The frontend does NOT need to save this anywhere separately — it just
+takes the returned PDF blob and attaches it as `files` in the existing
+POST /d/Document/ call, alongside:
+    document_types = <id of "Transfer Certificate" type>
+    identities     = tc_no
+    student        = <student id>
+
+So this endpoint only generates the file. Existing DocumentView
+handles the actual save — nothing there needs to change.
+"""
+
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework import status
+from student.models import Student, StudentYearLevel
+
+REQUIRED_FIELDS = ['tc_no', 'scholar_no', 'student_name', 'date_of_birth', 'from_date', 'to_date']
+
+# Maps our TC field name -> the exact DocumentType.name used as a fallback
+# source when the Student model field itself is empty.
+DOCUMENT_TYPE_FALLBACKS = {
+    'aadhaar_no': 'Aadhaar Number',
+    'apaar_id': 'Apaar ID',
+    'fmid': 'Family ID',
+    'pen_no': 'PEN Number',
+    'sssm_id': 'SSSM ID',
+}
+
+
+def _prefill_from_student(student_id, data):
+    """
+    Fill in anything the frontend didn't send, using the Student record.
+    Anything the frontend already sent (user edited it) takes priority.
+    """
+    from .models import Admission
+
+    if not student_id:
+        return data
+
+    student = Student.objects.filter(id=student_id, is_active=True).select_related('user').first()
+    if not student:
+        return data
+    
+    student_year = (
+        StudentYearLevel.objects.filter(student_id=student_id)
+        .select_related("level", "year")
+        .order_by("-id")
+        .first()
+    )
+    admission = Admission.objects.filter(student=student_year.student).first()
+
+    defaults = {
+        'student_name': f"{student.user.first_name} {student.user.last_name}".strip(),
+        'father_name': student.father_name,
+        'mother_name': student.mother_name,
+        'date_of_birth': student.date_of_birth.strftime('%d-%m-%Y') if student.date_of_birth else '',
+        "year_level": student_year.level.level_name if student_year and student_year.level else "",
+        "school_year": student_year.year.year_name if student_year and student_year.year else "",
+        'scholar_no': student.scholar_number,
+        'aadhaar_no': student.aadhaar_number,
+        'fmid': student.FMID_number,
+        'apaar_id': student.apaar_number,
+        'pen_no': student.PEN_number,
+        'admission_date': admission.admission_date,
+    }
+
+    for key, val in defaults.items():
+        if not data.get(key) and val:
+            data[key] = val
+
+    return data
+
+
+def _prefill_from_documents(student_id, data):
+    """
+    Backup source, used only for whatever is STILL missing after the
+    Student model pass — e.g. the Student record never had `aadhaar_number`
+    filled in, but a parent uploaded an "Aadhaar Number" document earlier,
+    and that document's `identities` value holds the actual number.
+    """
+    from .models import Document
+    if not student_id:
+        return data
+
+    still_missing = [f for f in DOCUMENT_TYPE_FALLBACKS if not data.get(f)]
+    if not still_missing:
+        return data
+
+    type_names = [DOCUMENT_TYPE_FALLBACKS[f] for f in still_missing]
+
+    docs = (
+        Document.objects.filter(
+            student_id=student_id,
+            document_types__name__in=type_names,
+            is_active=True,
+        )
+        .prefetch_related('document_types')
+        .distinct()
+    )
+
+    # Build type_name -> identity value, in case a student has multiple docs
+    by_type = {}
+    for doc in docs:
+        if not doc.identities:
+            continue
+        for dt in doc.document_types.all():
+            if dt.name in type_names and dt.name not in by_type:
+                # identities can be a comma-joined string if multiple were
+                # submitted together — take the first meaningful value
+                by_type[dt.name] = doc.identities.split(',')[0].strip()
+
+    for field in still_missing:
+        type_name = DOCUMENT_TYPE_FALLBACKS[field]
+        if type_name in by_type:
+            data[field] = by_type[type_name]
+
+    return data
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def get_transfer_certificate_data(request):
+    student_id = request.query_params.get("student_id")
+
+    if not student_id:
+        return Response(
+            {"error": "student_id is required"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    student = Student.objects.filter(id=student_id).first()
+    if not student:
+        return Response(
+            {"error": "Student not found"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    data = {"student_id": student_id}
+
+    # 1. Fill from Student model
+    data = _prefill_from_student(student_id, data)
+
+    # 2. Fill remaining missing fields from Document
+    data = _prefill_from_documents(student_id, data)
+
+    return Response(data, status=status.HTTP_200_OK)
+
+
+def is_tc_document_type(doc_type):
+    """
+    Check if a DocumentType instance or its name represents a Transfer Certificate / TC.
+    """
+    if not doc_type:
+        return False
+    name = (getattr(doc_type, 'name', None) or str(doc_type) or '').strip().lower()
+    if 'transfer' in name or name == 'tc':
+        return True
+    import re
+    tokens = re.split(r'[^a-zA-Z0-9]+', name)
+    return 'tc' in tokens
+
+
+def is_tc_document(document):
+    """
+    Check if a Document instance has any document type that is a TC.
+    """
+    if not document:
+        return False
+    return any(is_tc_document_type(dt) for dt in document.document_types.all())
+
+
+def deactivate_student_on_tc_issue(student, tc_document=None, reason="TC Issued"):
+    """
+    Deactivates a student when a TC (Transfer Certificate) is issued.
+    Sets reason to "TC Issued", deactivates user, admissions, addresses,
+    banking details, creates UserStatusLog, and deactivates other non-TC documents.
+    """
+    if not student:
+        return
+
+    from django.utils import timezone
+    from django.db import transaction, models
+    from authentication.models import UserStatusLog
+    from director.models import Admission, Address, BankingDetail, Document
+
+    with transaction.atomic():
+        # 1. Deactivate student
+        student.is_active = False
+        student.save(update_fields=['is_active'])
+
+        # 2. Deactivate user and set deactivation reason
+        user = student.user
+        if user:
+            user.is_active = False
+            user.deactivation_reason = reason
+            user.deactivation_date = timezone.now()
+            user.reactivation_date = None
+            user.save(update_fields=['is_active', 'deactivation_reason', 'deactivation_date', 'reactivation_date'])
+
+            # 3. Deactivate addresses
+            Address.objects.all_including_inactive().filter(user=user).update(is_active=False)
+
+            # 4. Deactivate banking details
+            BankingDetail.objects.all_including_inactive().filter(user=user).update(is_active=False)
+
+            # 5. Log status change
+            UserStatusLog.objects.create(
+                user=user,
+                status='TERMINATED',
+                reason=reason
+            )
+
+        # 6. Deactivate admissions
+        Admission.objects.all_including_inactive().filter(student=student).update(is_active=False)
+
+        # 7. Deactivate non-TC documents
+        non_tc_docs = Document.objects.all_including_inactive().filter(student=student)
+        if tc_document and getattr(tc_document, 'id', None):
+            non_tc_docs = non_tc_docs.exclude(id=tc_document.id)
+        non_tc_docs = non_tc_docs.exclude(
+            models.Q(document_types__name__icontains='transfer') |
+            models.Q(document_types__name__iexact='tc')
+        )
+        non_tc_docs.update(is_active=False)
+
+        # 8. Ensure TC document itself remains active
+        if tc_document and getattr(tc_document, 'id', None) and not tc_document.is_active:
+            tc_document.is_active = True
+            tc_document.save(update_fields=['is_active'])
+
+
+def check_and_deactivate_student_for_tc(document, reason="TC Issued"):
+    """
+    Given a Document instance, checks if it is for a student and includes a TC document type.
+    If so, deactivates the student with the specified reason.
+    """
+    if not document or not document.student_id:
+        return
+
+    if is_tc_document(document):
+        from student.models import Student
+        student = Student.objects.all_including_inactive().filter(id=document.student_id).first()
+        if student:
+            deactivate_student_on_tc_issue(student, tc_document=document, reason=reason)

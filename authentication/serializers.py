@@ -1,5 +1,6 @@
 from rest_framework.exceptions import ValidationError
 from rest_framework import serializers
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 from authentication.models import ErrorLog, User, UserStatusLog
 from director.models import Director, OfficeStaff, Role,YearLevel, SchoolYear, ClassPeriod, Director, Guardian
@@ -75,42 +76,6 @@ class UserSerializer(serializers.ModelSerializer):
                 raise ValidationError({field: "This field is required for students." for field in missing_fields})
 
         return attrs
-        
-    # def validate(self, attrs):            user with multiple roles
-    #     validate_password(attrs["password"])
-
-    #     roles = attrs.get("role", [])
-    #     if not roles:
-    #         raise ValidationError({"role": "This field is required."})
-
-    #     role_names = [r.name.lower() for r in roles]
-
-    #     request = self.context.get("request", None)
-    #     if request is None or not hasattr(request, "user"):
-    #         raise ValidationError({"error": "Request context is missing or invalid."})
-
-    #     user = request.user
-    #     if not user.is_authenticated:
-    #         raise ValidationError({"error": "Authentication required to create users."})
-
-    #     user_roles = user.role.all()
-    #     user_role = user_roles[0].name.lower() if user_roles else None
-
-    #     if user_role not in ["director", "office staff"]:
-    #         raise ValidationError({"error": "You are not allowed to create users."})
-
-    #     if user_role == "office staff":
-    #         if not all(r in ["student", "guardian"] for r in role_names):
-    #             raise ValidationError({"error": "Office staff can only register students and guardians."})
-
-    #     if "student" in role_names:
-    #         required_fields = ["year_level", "school_year", "gender", "date_of_birth"]
-    #         missing_fields = [field for field in required_fields if not attrs.get(field)]
-    #         if missing_fields:
-    #             raise ValidationError({field: "This field is required for students." for field in missing_fields})
-
-    #     return attrs
-
 
 
     def create(self, validated_data):
@@ -165,71 +130,6 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 
-    # def create(self, validated_data):         user with multiple roles
-    #     roles = validated_data.pop("role", [])
-    #     year_level = validated_data.pop("year_level", None)
-    #     school_year = validated_data.pop("school_year", None)
-    #     gender = validated_data.pop("gender", None)
-    #     date_of_birth = validated_data.pop("date_of_birth", None)
-    #     user_profile = validated_data.pop("user_profile", None)
-
-    #     user = User.objects.create_user(
-    #         first_name=validated_data["first_name"],
-    #         last_name=validated_data["last_name"],
-    #         email=validated_data["email"],
-    #         password=validated_data["password"],
-    #     )
-
-    #     if user_profile:
-    #         user.user_profile = user_profile
-    #         user.save()
-
-    #     #multiple roles assign
-    #     user.role.set(roles)
-
-    #     for role in roles:
-    #         role_name = role.name.lower()
-    #         if role_name == "student":
-    #             student = Student.objects.create(
-    #                 user=user,
-    #                 gender=gender,
-    #                 date_of_birth=date_of_birth,
-    #             )
-    #             StudentYearLevel.objects.create(
-    #                 student=student,
-    #                 level=year_level,
-    #                 year=school_year
-    #             )
-    #         elif role_name == "teacher":
-    #             Teacher.objects.create(user=user)
-    #         elif role_name == "director":
-    #             Director.objects.create(user=user)
-    #         elif role_name == "guardian":
-    #             Guardian.objects.create(user=user)
-    #         elif role_name == "office staff":
-    #             OfficeStaff.objects.create(user=user)
-
-    #         if student:
-    #             StudentYearLevel.objects.create(
-    #                 student=student,
-    #                 level=year_level,
-    #                 year=school_year
-    #             )
-
-
-    #     return user
-
-
-
-
-
-
-# class ChangePasswordSerializer(serializers.Serializer):
-#     current_password=serializers.CharField(min_length=8)
-#     change_password = serializers.CharField(min_length=8)
-#     email=serializers.EmailField()
-
-
 class ChangePasswordSerializer(serializers.Serializer):     # Added as of 29Aug25 at 12:49 PM
     current_password = serializers.CharField(min_length=8)
     change_password = serializers.CharField(min_length=8)
@@ -253,14 +153,22 @@ class OtpSerializers(serializers.Serializer):
 
 
 class ForgotSerializers(serializers.Serializer):
-    email=serializers.EmailField()
-    otp=serializers.CharField(max_length=6)
-    new_password=serializers.CharField(min_length=8,write_only=True)
-    confirm_password=serializers.CharField(min_length=8, write_only=True)
+    email = serializers.EmailField()
+    otp = serializers.CharField(max_length=6)
+    new_password = serializers.CharField(min_length=8, write_only=True)
+    confirm_password = serializers.CharField(min_length=8, write_only=True)
 
     def validate(self, data):
-        if data ['new_password'] != data['confirm_password']:
-            raise serializers.ValidationError('Passswrod dont match')
+        new_password = data.get("new_password")
+
+        if new_password != data.get("confirm_password"):
+            raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
+
+        try:
+            validate_password(new_password)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({"new_password": exc.messages})
+
         return data
 
 # ******************ErrorLog************************

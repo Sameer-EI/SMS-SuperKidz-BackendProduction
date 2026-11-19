@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta, time as dt_time
 import re
+import secrets
 from rest_framework import serializers
 
 from .utils import send_email_notification
@@ -13,6 +14,7 @@ from django.utils import timezone
 from decimal import Decimal
 from collections import defaultdict
 from django.db.models import Max
+from authentication.models import User
 
 
 from django.utils import timezone
@@ -37,6 +39,30 @@ class SchoolYearSerializer(serializers.ModelSerializer):
         model = SchoolYear
         fields = "__all__"
 
+    def validate(self, attrs):
+        start_date = attrs.get(
+            "start_date", getattr(self.instance, "start_date", None)
+        )
+        end_date = attrs.get("end_date", getattr(self.instance, "end_date", None))
+
+        if start_date and end_date:
+            if start_date > end_date:
+                raise serializers.ValidationError(
+                    {"end_date": "End date must be on or after the start date."}
+                )
+
+            overlapping_years = SchoolYear.objects.filter(
+                start_date__lte=end_date,
+                end_date__gte=start_date,
+            )
+            if self.instance:
+                overlapping_years = overlapping_years.exclude(pk=self.instance.pk)
+            if overlapping_years.exists():
+                raise serializers.ValidationError(
+                    {"start_date": "School years cannot overlap."}
+                )
+
+        return attrs
 
 class DepartmentSerializer(serializers.ModelSerializer):
     class Meta:
@@ -206,13 +232,7 @@ class AddressSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
             user = self.context['request'].user  # assuming request is passed in context
             return Address.objects.create(user=user, **validated_data)
-
-
-
-class SchoolYearSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = SchoolYear
-        fields = "__all__"
+    
 
 
 class PeriodSerializer(serializers.ModelSerializer):
@@ -237,6 +257,41 @@ class TermSerializer(serializers.ModelSerializer):
     class Meta:
         model = Term
         fields = ["id", "year", "term_number", "start_date", "end_date"]
+    
+    def validate(self, attrs):
+        year = attrs.get("year", getattr(self.instance, "year", None))
+        start_date = attrs.get(
+            "start_date", getattr(self.instance, "start_date", None)
+        )
+        end_date = attrs.get("end_date", getattr(self.instance, "end_date", None))
+
+        if start_date and end_date and start_date > end_date:
+            raise serializers.ValidationError(
+                {"end_date": "End date must be on or after the start date."}
+            )
+
+        if year and start_date and end_date:
+            if start_date < year.start_date or end_date > year.end_date:
+                raise serializers.ValidationError(
+                    {
+                        "start_date": (
+                            "Term dates must fall within the selected school year."
+                        )
+                    }
+                )
+
+            overlapping_terms = Term.objects.filter(
+                start_date__lte=end_date,
+                end_date__gte=start_date,
+            )
+            if self.instance:
+                overlapping_terms = overlapping_terms.exclude(pk=self.instance.pk)
+            if overlapping_terms.exists():
+                raise serializers.ValidationError(
+                    {"start_date": "Terms cannot overlap."}
+                )
+
+        return attrs
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
@@ -384,11 +439,14 @@ class AdmissionSerializer(serializers.ModelSerializer):
     section_input = serializers.ChoiceField(
         choices=SECTION_CHOICES, required=False, allow_null=True, write_only=True
     )
+    class_section = serializers.ChoiceField(
+        choices=SECTION_CHOICES, required=False, allow_null=True, write_only=True
+    )
     section = serializers.SerializerMethodField(read_only=True)
 
     # These are write-only inputs for creating/updating admission
-    student = StudentSerializer(write_only=True, required=False)
-    guardian = GuardianSerializer(write_only=True, required=False)
+    student = StudentSerializer(write_only=True, required=True)
+    guardian = GuardianSerializer(write_only=True, required=True)
     address_input = AddressSerializer(write_only=True, required=False, allow_null=True)
     banking_detail_input = BankingDetailsSerializer(write_only=True, required=False, allow_null=True)
 
@@ -401,7 +459,7 @@ class AdmissionSerializer(serializers.ModelSerializer):
             'student', 'guardian',  # write-only input nested data
             'address_input', 'banking_detail_input',
             'guardian_type', 'guardian_type_input',
-            'year_level', 'school_year', 'section', 'section_input',
+            'year_level', 'school_year', 'section', 'section_input', 'class_section',
             'admission_date', 'previous_school_name', 'previous_standard_studied',
             'tc_letter', 'emergency_contact_no', 'entire_road_distance_from_home_to_school',
             'obtain_marks', 'total_marks', 'previous_percentage','enrollment_no','is_rte', 'rte_number'
@@ -417,6 +475,26 @@ class AdmissionSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
+        class_section = attrs.pop('class_section', None)
+        if class_section is not None:
+            section_input = attrs.get('section_input')
+            if section_input is not None and section_input != class_section:
+                raise serializers.ValidationError({
+                    'class_section': "Must match section_input when both are provided."
+                })
+            attrs['section_input'] = class_section
+
+        student_data = attrs.get("student") or {}
+        student_email = student_data.get("email", "").strip()
+        if student_email and User.objects.all_including_inactive().filter(
+            email__iexact=student_email
+        ).exists():
+            raise serializers.ValidationError({
+                "student": {
+                    "email": "This email address is already registered. Please use a different email."
+                }
+            })
+        
         level = attrs.get('year_level') or getattr(self.instance, 'year_level', None)
         section = attrs.get('section_input')
 
@@ -461,6 +539,22 @@ class AdmissionSerializer(serializers.ModelSerializer):
         except (StudentGuardian.DoesNotExist, AttributeError):
             return None
 
+    def _create_admission_user(self, user_data):
+        password = user_data.pop('password', None)
+        user_profile = user_data.pop('user_profile', None)
+        if user_profile is not None:
+            user_data['user_profile'] = user_profile
+
+        user = User.objects.create_user(
+            password=password or secrets.token_urlsafe(32),
+            **user_data
+        )
+        if not password:
+            user.set_unusable_password()
+            user.save(update_fields=['password'])
+        return user
+        
+    @transaction.atomic
     def create(self, validated_data):
         is_rte = validated_data.pop('is_rte', False)
         rte_number = validated_data.pop('rte_number', None)
@@ -511,7 +605,7 @@ class AdmissionSerializer(serializers.ModelSerializer):
             user_data['email'] = f"{scholar_number}@school.local"
 
         role, _ = Role.objects.get_or_create(name='student')
-        user = User.objects.create_user(**user_data)
+        user = self._create_admission_user(user_data)
         user.role.add(role)
 
 
@@ -543,9 +637,9 @@ class AdmissionSerializer(serializers.ModelSerializer):
         guardian_user = User.objects.filter(email__iexact=guardian_user_data['email']).first()
         
         if not guardian_user:
-            # New guardian - create with password
+            # New guardian account may not have a password supplied at admission.
             role, _ = Role.objects.get_or_create(name='guardian')
-            guardian_user = User.objects.create_user(**guardian_user_data)
+            guardian_user = self._create_admission_user(guardian_user_data)
             guardian_user.role.add(role)
         else:
             # Existing guardian - update details but DON'T change password
@@ -783,7 +877,7 @@ class ClassPeriodSerializer(serializers.ModelSerializer):
     yearlevel_id = serializers.PrimaryKeyRelatedField(
         source="year_level",  # map it to the actual FK
         queryset=YearLevel.objects.all(),
-        write_only=True
+        write_only=True,
     )
 
     year_level = serializers.PrimaryKeyRelatedField(read_only=True)  # still return year_level in response
@@ -797,29 +891,37 @@ class ClassPeriodSerializer(serializers.ModelSerializer):
     class Meta:
         model = ClassPeriod
         fields = [
-            'id', 'subject', 'teacher', 'term',
-            'start_time', 'end_time', 'classroom', 'name',
-            'year_level', 'yearlevel_id',  # include both
-            'year_level_name', 'class_period_names'
+            "id",
+            "subject",
+            "teacher",
+            "term",
+            "period",
+            "classroom",
+            "name",
+            "year_level",
+            "yearlevel_id",  # include both
+            "year_level_name",
+            "class_period_names",
         ]
-
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
-        representation['start_time'] = instance.start_time.start_period_time.strftime('%I:%M %p')
-        representation['end_time'] = instance.end_time.end_period_time.strftime('%I:%M %p')
+        if instance.period:
+            representation["start_time"] = instance.period.start_period_time.strftime("%I:%M %p")
+            representation["end_time"] = instance.period.end_period_time.strftime("%I:%M %p")
+        else:
+            representation["start_time"] = None
+            representation["end_time"] = None
         return representation
 
     def validate(self, attrs):
-        teacher = attrs.get('teacher')
-        start_time = attrs.get('start_time')
-        end_time = attrs.get('end_time')
+        teacher = attrs.get("teacher")
+        period = attrs.get("period")
 
-        if teacher and start_time and end_time:
+        if teacher and period:
             overlapping = ClassPeriod.objects.filter(
                 teacher=teacher,
-                start_time__lt=end_time,
-                end_time__gt=start_time,
+                period=period,
             )
 
             if self.instance:
@@ -827,15 +929,19 @@ class ClassPeriodSerializer(serializers.ModelSerializer):
 
             if overlapping.exists():
                 raise serializers.ValidationError(
-                    {"non_field_errors": ["This teacher is already assigned to another class during this time."]}
+                    {
+                        "non_field_errors": [
+                            "This teacher is already assigned to another class during this time."
+                        ]
+                    }
                 )
 
         return attrs
 
     def create(self, validated_data):
         # Handle assignment logic only if year_level_name and class_period_names are present
-        year_level_name = validated_data.pop('year_level_name', None)
-        class_period_names = validated_data.pop('class_period_names', None)
+        year_level_name = validated_data.pop("year_level_name", None)
+        class_period_names = validated_data.pop("class_period_names", None)
 
         if year_level_name and class_period_names:
             try:
@@ -847,15 +953,17 @@ class ClassPeriodSerializer(serializers.ModelSerializer):
             if class_periods.count() != len(class_period_names):
                 raise serializers.ValidationError("Some ClassPeriod names are invalid.")
 
-            student_ids = StudentYearLevel.objects.filter(level=year_level).values_list("student_id", flat=True)
-            students = Student.objects.filter(id__in=student_ids)
+            student_ids = StudentYearLevel.objects.filter(level=year_level).values_list(
+                "student_id", flat=True
+            )
+            students = Student.objects.filter(id__in=student_ids, is_active=True)
 
             for student in students:
                 student.classes.add(*class_periods)
 
             return {
                 "students_updated": students.count(),
-                "class_periods_assigned": [cp.name for cp in class_periods]
+                "class_periods_assigned": [cp.name for cp in class_periods],
             }
 
         # If not an assignment request, create a regular ClassPeriod (fallback)
@@ -1022,6 +1130,7 @@ class OfficeStaffSerializer(serializers.ModelSerializer):
         representation['address_data'] = AddressSerializer(last_address).data if last_address else None
 
         representation.update({
+            "user_id": instance.user.id if instance.user else None,
             "first_name": instance.user.first_name if instance.user else "",
             "middle_name": instance.user.middle_name if instance.user else "",
             "last_name": instance.user.last_name if instance.user else "",
@@ -1069,6 +1178,9 @@ from .models import Document, DocumentType
 
 
 class DocumentSerializer(serializers.ModelSerializer):
+    student = serializers.PrimaryKeyRelatedField(
+        queryset=Student.objects.all_including_inactive(), required=False, allow_null=True
+    )
     document_types = serializers.PrimaryKeyRelatedField(
         many=True,
         queryset=DocumentType.objects.all(),
@@ -1107,8 +1219,23 @@ class DocumentSerializer(serializers.ModelSerializer):
         
         if document_types:
             instance.document_types.set(document_types)
+
+        from director.utils import check_and_deactivate_student_for_tc
+        check_and_deactivate_student_for_tc(instance)
         
         # Handle file creation separately in the view
+        return instance
+
+    def update(self, instance, validated_data):
+        document_types = validated_data.pop("document_types", None)
+        instance = super().update(instance, validated_data)
+
+        if document_types is not None:
+            instance.document_types.set(document_types)
+
+        from director.utils import check_and_deactivate_student_for_tc
+        check_and_deactivate_student_for_tc(instance)
+
         return instance
     
     def to_representation(self, instance):
@@ -2242,6 +2369,7 @@ class FeeStructureSerializer(serializers.ModelSerializer):
 
 class AppliedFeeDiscountSerializer(serializers.ModelSerializer):
     student_name = serializers.SerializerMethodField()
+    student_year_id = serializers.SerializerMethodField()
     fee_type_name = serializers.SerializerMethodField()
     discounted_amount_percent = serializers.SerializerMethodField()
     approved_by_name = serializers.SerializerMethodField()  
@@ -2251,6 +2379,7 @@ class AppliedFeeDiscountSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "student",
+            "student_year_id",
             "student_name",
             "fee_type",
             "fee_type_name",
@@ -2261,6 +2390,22 @@ class AppliedFeeDiscountSerializer(serializers.ModelSerializer):
             "approved_by",
             "approved_at",
         ]
+
+    def to_internal_value(self, data):
+        data = data.copy() if hasattr(data, 'copy') else dict(data)
+        student_val = data.get("student") or data.get("student_year_id") or data.get("student_id")
+        if student_val:
+            from student.models import StudentYearLevel
+            if not StudentYearLevel.objects.filter(id=student_val).exists():
+                syl = StudentYearLevel.objects.filter(student_id=student_val).order_by("-id").first()
+                if syl:
+                    data["student"] = syl.id
+            else:
+                data["student"] = student_val
+        return super().to_internal_value(data)
+
+    def get_student_year_id(self, obj):
+        return obj.student_id
 
     def get_student_name(self, obj):
         student = (
@@ -2304,8 +2449,9 @@ class StudentFeeSerializer(serializers.ModelSerializer):
     student_year = serializers.PrimaryKeyRelatedField(read_only=True)
     fee_structure = serializers.PrimaryKeyRelatedField(read_only=True)
     school_year = serializers.PrimaryKeyRelatedField(read_only=True)
-    # original_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    # Bug 2 Fix: original_amount now stores gross fee; discount shown separately
     original_amount = serializers.SerializerMethodField()
+    discount_amount = serializers.SerializerMethodField()
     paid_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     due_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     penalty_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
@@ -2338,6 +2484,7 @@ class StudentFeeSerializer(serializers.ModelSerializer):
             "fee_type",
             "payment_method_output",
             "original_amount",
+            "discount_amount",
             "paid_amount",
             "due_amount",
             "penalty_amount",
@@ -2358,6 +2505,7 @@ class StudentFeeSerializer(serializers.ModelSerializer):
             "fee_structure",
             "school_year",
             "original_amount",
+            "discount_amount",
             "paid_amount",
             "due_amount",
             "penalty_amount",
@@ -2399,19 +2547,21 @@ class StudentFeeSerializer(serializers.ModelSerializer):
         return obj.school_year.year_name
 
 
+    # Bug 2 Fix: original_amount now returns gross fee from fee_structure
     def get_original_amount(self, obj):
+        if obj.fee_structure and obj.fee_structure.fee_amount:
+            return str(obj.fee_structure.fee_amount)
+        return str(obj.original_amount)
+
+    # Bug 2 Fix: discount shown as separate field
+    def get_discount_amount(self, obj):
         discount_obj = AppliedFeeDiscount.objects.filter(
             student=obj.student_year,
             fee_type=obj.fee_structure
         ).first()
-
-        discount_amount = Decimal(
-            str(discount_obj.discount_amount if discount_obj else 0)
-        ).quantize(Decimal("0.01"))
-
-        discounted_amount = (obj.original_amount - discount_amount).quantize(Decimal("0.01"))
-
-        return str(discounted_amount)
+        if discount_obj:
+            return str(discount_obj.discount_amount)
+        return "0.00"
 
 
     def create(self, validated_data):
@@ -2438,16 +2588,17 @@ class StudentFeeSerializer(serializers.ModelSerializer):
                     f"The selected fee ({fee_structure.fee_type}) does not belong to the student's class ({student_year.level.level_name})."
                 )
 
+            # Bug 1 Fix: student FK points to StudentYearLevel, not Student
             applied_discount_obj = AppliedFeeDiscount.objects.filter(
                 student=student_year, fee_type=fee_structure
             ).first()
 
-            if applied_discount_obj:
-                discounted_amount = Decimal(fee_structure.fee_amount) - Decimal(applied_discount_obj.discount_amount)
-                discount_applied_flag = True
-            else:
-                discounted_amount = Decimal(fee_structure.fee_amount)
-                discount_applied_flag = False
+            # Bug 2 Fix: original_amount stores gross fee; discount applied separately
+            full_original_amount = Decimal(str(fee_structure.fee_amount or 0))
+            discount_amount = Decimal(str(applied_discount_obj.discount_amount or 0)) if applied_discount_obj else Decimal("0.00")
+            discount_applied_flag = bool(applied_discount_obj and discount_amount > 0)
+            # Bug 5 Fix: Use Option A formula (gross - discount - paid)
+            initial_due = max(full_original_amount - discount_amount, Decimal("0.00"))
 
             student_fee, created = StudentFee.objects.get_or_create(
                 student_year=student_year,
@@ -2455,44 +2606,31 @@ class StudentFeeSerializer(serializers.ModelSerializer):
                 school_year=school_year,
                 month=month,
                 defaults={
-                    "original_amount": discounted_amount,
+                    "original_amount": full_original_amount,
                     "paid_amount": Decimal("0.00"),
-                    "due_amount": discounted_amount,
+                    "due_amount": initial_due,
                     "penalty_amount": Decimal("0.00"),
                     "applied_discount": discount_applied_flag,
                     "due_date": validated_data.get("due_date"),
                 },
             )
 
-            if not created and applied_discount_obj and not student_fee.applied_discount:
-                student_fee.original_amount = discounted_amount
-                student_fee.due_amount = discounted_amount - student_fee.paid_amount
-                student_fee.applied_discount = True
-                student_fee.save()
-
-            student_fee.due_amount = (
-                student_fee.original_amount 
-                - student_fee.paid_amount 
-                + student_fee.penalty_amount
+            penalty = getattr(student_fee, 'penalty_amount', Decimal('0.00')) or Decimal('0.00')
+            # Bug 2 Fix: original_amount stores gross fee
+            student_fee.original_amount = full_original_amount
+            student_fee.applied_discount = discount_applied_flag
+            # Bug 5 Fix: Use Option A formula (gross - discount - paid + penalty)
+            student_fee.due_amount = max(
+                full_original_amount - student_fee.paid_amount - discount_amount + penalty,
+                Decimal("0.00")
             )
 
-            # student_fee.paid_amount += amount_paid
-            student_fee.due_amount = max(student_fee.original_amount - student_fee.paid_amount + student_fee.penalty_amount, Decimal("0.00"))
-
-            # payment_mode = request.data.get("payment_method", "").lower()
-
-            # if payment_mode == "online":
-            #     student_fee.status = "pending"
-            # else:
-            #     student_fee.paid_amount += amount_paid
-            #     student_fee.due_amount = student_fee.original_amount - student_fee.paid_amount + student_fee.penalty_amount
-            #     if student_fee.due_amount <= 0:
-            #         student_fee.status = "paid"
-            #     elif student_fee.paid_amount > 0:
-            #         student_fee.status = "partial"
-            #     else:
-            #         student_fee.status = "pending"
-
+            if student_fee.due_amount <= 0:
+                student_fee.status = "paid"
+            elif student_fee.paid_amount > 0:
+                student_fee.status = "partial"
+            else:
+                student_fee.status = "pending"
 
             student_fee.save()
             return student_fee

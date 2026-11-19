@@ -68,8 +68,19 @@ class TeacherSerializer(serializers.ModelSerializer):
     gender = serializers.ChoiceField(
         choices=[("Male", "Male"), ("Female", "Female"), ("Other", "Other")],
         required=False,
-        error_messages={"invalid_choice": "Gender must be Male, Female, or Other."},
     )
+    cadre = serializers.ChoiceField(
+        choices=[("PRT", "PRT"), ("TGT", "TGT"), ("PGT", "PGT")],
+        required=False,
+        allow_null=True,
+    )
+    subject = serializers.PrimaryKeyRelatedField(
+        queryset=Subject.objects.all(), required=False, allow_null=True
+    )
+    subject_name = serializers.CharField(
+        source="subject.subject_name", read_only=True, default=None
+    )
+    display_name = serializers.SerializerMethodField(read_only=True)
     address_input = AddressSerializer(write_only=True, required=False, allow_null=True)
     banking_detail_input = BankingDetailsSerializer(
         write_only=True, required=False, allow_null=True
@@ -89,12 +100,19 @@ class TeacherSerializer(serializers.ModelSerializer):
             "adhaar_no",
             "pan_no",
             "qualification",
+            "cadre",
+            "subject",
+            "subject_name",
+            "display_name",
             "user_profile",
             "joining_date",
             "is_active",
             "banking_detail_input",
             "address_input",
         ]
+
+    def get_display_name(self, obj):
+        return str(obj)
 
     def get_address(self, obj):
         address = Address.objects.filter(user=obj.student.user).first()
@@ -220,6 +238,9 @@ class TeacherSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Email already exists.")
 
         # Update teacher fields
+        instance.cadre = validated_data.get("cadre", instance.cadre)
+        if "subject" in validated_data:
+            instance.subject = validated_data.get("subject")
         instance.phone_no = validated_data.get("phone_no", instance.phone_no)
         instance.gender = validated_data.get("gender", instance.gender)
         instance.adhaar_no = validated_data.get("adhaar_no", instance.adhaar_no)
@@ -251,6 +272,7 @@ class TeacherSerializer(serializers.ModelSerializer):
 
         representation.update(
             {
+                "user_id": instance.user.id if instance.user else None,
                 "first_name": instance.user.first_name if instance.user else "",
                 "middle_name": instance.user.middle_name if instance.user else "",
                 "last_name": instance.user.last_name if instance.user else "",
@@ -265,11 +287,31 @@ class TeacherSerializer(serializers.ModelSerializer):
                 "adhaar_no": instance.adhaar_no,
                 "pan_no": instance.pan_no,
                 "qualification": instance.qualification,
+                "cadre": instance.cadre,
+                "subject_id": instance.subject.id if instance.subject else None,
+                "subject_name": instance.subject.subject_name if instance.subject else None,
+                "display_name": str(instance),
             }
         )
         return representation
 
 
+class TeacherDropdownSerializer(serializers.ModelSerializer):
+    name = serializers.SerializerMethodField()
+    subject_name = serializers.CharField(source="subject.subject_name", read_only=True, default=None)
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Teacher
+        fields = ['id', 'name', 'cadre', 'subject', 'subject_name', 'display_name']
+
+    def get_name(self, obj):
+        if obj.user:
+            return f"{obj.user.first_name} {obj.user.last_name}".strip()
+        return f"Teacher {obj.id}"
+
+    def get_display_name(self, obj):
+        return str(obj)
 
 
 # ******************TeacherYearLevelSerializer***********************************
@@ -318,7 +360,7 @@ class TeacherYearLevelSerializer(serializers.ModelSerializer):
             teacher_name = f"{assigned_teacher.user.get_full_name()}" if assigned_teacher and hasattr(assigned_teacher, 'user') else str(assigned_teacher)
             raise serializers.ValidationError({
                 'year_level': [
-                    f"Class '{year_level}' is already assigned to teacher '{teacher_name}'.",
+                    f"'{year_level}' is already assigned to teacher '{teacher_name}'.",
                     "Cannot assign the same class to another teacher."
                 ]
             })
@@ -331,22 +373,31 @@ from django.utils import timezone
 class SubstituteAssignmentSerializer(serializers.ModelSerializer):
     absent_teacher_name = serializers.SerializerMethodField()
     substitute_teacher_name = serializers.SerializerMethodField()
-    
+    absent_teacher_subject = serializers.CharField(source="absent_teacher.subject.subject_name", read_only=True, default=None)
+    substitute_teacher_subject = serializers.CharField(source="substitute_teacher.subject.subject_name", read_only=True, default=None)
+    absent_teacher_cadre = serializers.CharField(source="absent_teacher.cadre", read_only=True, default=None)
+    substitute_teacher_cadre = serializers.CharField(source="substitute_teacher.cadre", read_only=True, default=None)
+    year_level_name = serializers.CharField(source="year_level.level_name", read_only=True, default=None)
+
     class Meta:
         model = SubstituteAssignment
         fields = [
-            'id', 'period', 'date', 'absent_teacher', 'substitute_teacher',
-            'year_level', 'absent_teacher_name', 'substitute_teacher_name'
+            'id', 'period', 'day_of_week', 'date', 'reason', 'absent_teacher', 'substitute_teacher',
+            'year_level', 'year_level_name', 'absent_teacher_name', 'substitute_teacher_name',
+            'absent_teacher_subject', 'substitute_teacher_subject',
+            'absent_teacher_cadre', 'substitute_teacher_cadre'
         ]
         extra_kwargs = {
-            "date": {"required": False}  # <- date ko optional banaya
+            "date": {"required": False},
+            "reason": {"required": False},
+            "day_of_week": {"required": False}
         }
 
     def get_absent_teacher_name(self, obj):
-        return f"{obj.absent_teacher.user.first_name} {obj.absent_teacher.user.last_name}"
+        return f"{obj.absent_teacher.user.first_name} {obj.absent_teacher.user.last_name}".strip() if obj.absent_teacher.user else f"Teacher {obj.absent_teacher.id}"
     
     def get_substitute_teacher_name(self, obj):
-        return f"{obj.substitute_teacher.user.first_name} {obj.substitute_teacher.user.last_name}"
+        return f"{obj.substitute_teacher.user.first_name} {obj.substitute_teacher.user.last_name}".strip() if obj.substitute_teacher.user else f"Teacher {obj.substitute_teacher.id}"
 
     def validate(self, attrs):
         absent_teacher = attrs.get("absent_teacher")
@@ -392,4 +443,24 @@ class SubstituteAssignmentSerializer(serializers.ModelSerializer):
             })
 
         return attrs
+
+
+class ClassPeriodTimetableSerializer(serializers.ModelSerializer):
+    subject_name = serializers.CharField(source="subject.subject_name", read_only=True, default=None)
+    teacher_name = serializers.SerializerMethodField()
+    teacher_subject = serializers.CharField(source="teacher.subject.subject_name", read_only=True, default=None)
+    teacher_cadre = serializers.CharField(source="teacher.cadre", read_only=True, default=None)
+    year_level_name = serializers.CharField(source="year_level.level_name", read_only=True, default=None)
+
+    class Meta:
+        model = ClassPeriod
+        fields = [
+            'id', 'year_level', 'year_level_name', 'day_of_week', 'period_index', 'period_name',
+            'subject', 'subject_name', 'teacher', 'teacher_name', 'teacher_subject', 'teacher_cadre'
+        ]
+
+    def get_teacher_name(self, obj):
+        if obj.teacher and obj.teacher.user:
+            return f"{obj.teacher.user.first_name} {obj.teacher.user.last_name}".strip()
+        return None
 
