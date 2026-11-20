@@ -254,22 +254,57 @@ class StudentView(ModelViewSet):
     def get_student_details(self, request):
         student_id = request.query_params.get('student_id')
         student_name = request.query_params.get('student_name')
+        school_year_id = request.query_params.get('school_year_id')
+        level_id = request.query_params.get('level_id') or request.query_params.get('year_level_id')
 
-        # If specific student id is given
-        if student_id:
-            student = Student.objects.filter(id=student_id, is_active=True).first()
-            if not student:
-                return Response({"error": "Student not found"}, status=status.HTTP_404_NOT_FOUND)
-            students = [student]
-        else:
-            students = Student.objects.filter(is_active=True)
+        students = Student.objects.filter(is_active=True)
+
+        if school_year_id is not None:
+            try:
+                school_year_id = int(school_year_id)
+            except (TypeError, ValueError):
+                return Response(
+                    {"error": "school_year_id must be a valid integer"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if school_year_id < 1:
+                return Response(
+                    {"error": "school_year_id must be a positive integer"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            students = students.filter(
+                student_year_levels__year_id=school_year_id
+            ).distinct()
+
+        if level_id is not None:
+            try:
+                level_id = int(level_id)
+            except (TypeError, ValueError):
+                return Response(
+                    {"error": "level_id must be a valid integer"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if level_id < 1:
+                return Response(
+                    {"error": "level_id must be a positive integer"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            students = students.filter(
+                student_year_levels__level_id=level_id
+            ).distinct()
 
         if student_name:
             for name_part in student_name.split():
-                students_qs = students_qs.filter(
+                students = students.filter(
                     Q(user__first_name__icontains=name_part)
                     | Q(user__last_name__icontains=name_part)
                 )
+
+        if student_id:
+            student = students.filter(id=student_id).first()
+            if not student:
+                return Response({"error": "Student not found"}, status=status.HTTP_404_NOT_FOUND)
+            students = [student]
 
         data = []
         for student in students:
@@ -286,7 +321,19 @@ class StudentView(ModelViewSet):
                 if address_obj else "N/A"
             )
 
-            admission = Admission.objects.filter(student=student, is_active=True).first()
+            student_years = StudentYearLevel.objects.filter(student=student)
+            if school_year_id is not None:
+                student_years = student_years.filter(year_id=school_year_id)
+            if level_id is not None:
+                student_years = student_years.filter(level_id=level_id)
+            student_year = student_years.order_by(
+                '-year__start_date', '-pk'
+            ).first()
+
+            admissions = Admission.objects.filter(student=student, is_active=True)
+            if student_year:
+                admissions = admissions.filter(school_year_id=student_year.year_id)
+            admission = admissions.order_by('-admission_date', '-pk').first()
             guardian_name = (
                 admission.guardian.user.get_full_name()
                 if admission and getattr(admission, 'guardian', None) and getattr(admission.guardian, 'user', None)
@@ -307,8 +354,6 @@ class StudentView(ModelViewSet):
             def annual_income(student):
                 guardian = Guardian.objects.filter(studentguardian__student=student, is_active=True).first()
                 return getattr(guardian, 'annual_income', "N/A") if guardian else "N/A"
-
-            student_year = StudentYearLevel.objects.filter(student=student).first()
 
             data.append({
                 "student_id": student.id,
@@ -335,6 +380,7 @@ class StudentView(ModelViewSet):
                 "is_active": student.is_active,
                 "is_rte": getattr(admission, 'is_rte', "N/A"),
                 "rte number": getattr(admission, 'rte_number', "N/A"),
+                "admission_date": getattr(admission, 'admission_date', "N/A"),
                 "school year": getattr(getattr(student_year, 'year', None), 'year_name', "N/A"),
                 "category": getattr(student, "category", "N/A"),
             })
